@@ -36,6 +36,8 @@ export interface ElectronAPI {
   getAppSettings: () => Promise<AppSettings>
   updateAppSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>
   onAppSettingsChanged: (callback: (settings: AppSettings) => void) => () => void
+  showAnswerPreview: () => Promise<void>
+  onShowAnswerPreview: (callback: () => void) => () => void
   getCurrentLlmConfig: () => Promise<{ provider: string; model: string }>
   getAvailableLlmModels: () => Promise<Array<{ id: string; name: string }>>
   setCurrentLlmModel: (model: string) => Promise<{ provider: string; model: string }>
@@ -53,6 +55,7 @@ export interface AppSettings {
   responseType: ResponseType
   codingLanguage: string
   responseLanguage: string
+  answerHeight: number
 }
 
 declare global {

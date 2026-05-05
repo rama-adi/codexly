@@ -15,6 +15,8 @@ export const appSettingsSchema = z.object({
   // Optional natural language for the response (e.g. "English", "Spanish", "Japanese").
   // Empty string means no preference — let the model decide based on the input.
   responseLanguage: z.string().default(""),
+  // Max height of the solutions/answer panel in pixels.
+  answerHeight: z.number().min(200).max(1400).default(600),
 });
 
 export type AppSettings = z.infer<typeof appSettingsSchema>;

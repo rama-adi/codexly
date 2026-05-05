@@ -47,6 +47,9 @@ interface ElectronAPI {
   updateAppSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>
   onAppSettingsChanged: (callback: (settings: AppSettings) => void) => () => void
 
+  showAnswerPreview: () => Promise<void>
+  onShowAnswerPreview: (callback: () => void) => () => void
+
   // LLM Model Management
   getCurrentLlmConfig: () => Promise<{ provider: string; model: string }>
   getAvailableLlmModels: () => Promise<Array<{ id: string; name: string }>>
@@ -68,6 +71,7 @@ type AppSettings = {
   responseType: ResponseType
   codingLanguage: string
   responseLanguage: string
+  answerHeight: number
 }
 
 export const PROCESSING_EVENTS = {
@@ -227,6 +231,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("app-settings-changed", subscription)
     return () => {
       ipcRenderer.removeListener("app-settings-changed", subscription)
+    }
+  },
+
+  showAnswerPreview: () => ipcRenderer.invoke("show-answer-preview"),
+  onShowAnswerPreview: (callback: () => void) => {
+    const subscription = () => callback()
+    ipcRenderer.on("show-answer-preview", subscription)
+    return () => {
+      ipcRenderer.removeListener("show-answer-preview", subscription)
     }
   },
 

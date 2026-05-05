@@ -186,6 +186,22 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
   const [customContent, setCustomContent] = useState<string | null>(null)
   const [mode, setMode] = useState<"simpleQA" | "coding">("simpleQA")
   const [responseType, setResponseType] = useState<"concise" | "thorough">("concise")
+  const [answerHeight, setAnswerHeight] = useState<number>(600)
+  const [isPreview, setIsPreview] = useState(false)
+
+  useEffect(() => {
+    if (!isPreview || !contentRef.current) return
+    const push = () => {
+      if (!contentRef.current) return
+      window.electronAPI.updateContentDimensions({
+        width: contentRef.current.scrollWidth,
+        height: contentRef.current.scrollHeight
+      })
+    }
+    push()
+    const id = requestAnimationFrame(push)
+    return () => cancelAnimationFrame(id)
+  }, [isPreview, answerHeight, answerData, mode])
 
   const [toastOpen, setToastOpen] = useState(false)
   const [toastMessage, setToastMessage] = useState<ToastMessage>({
@@ -283,7 +299,11 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
         refetch()
         refetchInitialScreenshots()
       }),
+      window.electronAPI.onShowAnswerPreview(() => {
+        setIsPreview(true)
+      }),
       window.electronAPI.onResetView(() => {
+        setIsPreview(false)
         // Set resetting state first
         setIsResetting(true)
 
@@ -301,6 +321,7 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
         }, 0)
       }),
       window.electronAPI.onSolutionStart(() => {
+        setIsPreview(false)
         setSolutionData(null)
         setAnswerData(null)
         setThoughtsData(null)
@@ -408,10 +429,12 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
     window.electronAPI.getAppSettings().then(settings => {
       setMode(settings.mode)
       setResponseType(settings.responseType)
+      setAnswerHeight(settings.answerHeight)
     })
     const unsubscribeSettings = window.electronAPI.onAppSettingsChanged(settings => {
       setMode(settings.mode)
       setResponseType(settings.responseType)
+      setAnswerHeight(settings.answerHeight)
     })
 
     setProblemStatementData(
@@ -499,7 +522,14 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
           )}
 
           {/* Main Content - Modified width constraints */}
-          <div className="w-full text-sm text-black bg-black/60 rounded-md max-h-[calc(100vh-4rem)] overflow-y-auto">
+          <div
+            className="w-full text-sm text-black bg-black/60 rounded-md overflow-y-auto"
+            style={
+              isPreview
+                ? { height: `${answerHeight}px` }
+                : { maxHeight: `${answerHeight}px` }
+            }
+          >
             <div className="rounded-lg overflow-hidden">
               <div className="px-3 py-2.5 space-y-3 max-w-full">
                 {mode === "simpleQA" ? (

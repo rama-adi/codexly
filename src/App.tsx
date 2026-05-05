@@ -69,6 +69,7 @@ declare global {
         responseType: "concise" | "thorough"
         codingLanguage: string
         responseLanguage: string
+        answerHeight: number
 }>
       updateAppSettings: (patch: Partial<{
         model: string
@@ -77,6 +78,7 @@ declare global {
         responseType: "concise" | "thorough"
         codingLanguage: string
         responseLanguage: string
+        answerHeight: number
 }>) => Promise<{
         model: string
         stealthEnabled: boolean
@@ -84,6 +86,7 @@ declare global {
         responseType: "concise" | "thorough"
         codingLanguage: string
         responseLanguage: string
+        answerHeight: number
 }>
       onAppSettingsChanged: (callback: (settings: {
         model: string
@@ -92,8 +95,12 @@ declare global {
         responseType: "concise" | "thorough"
         codingLanguage: string
         responseLanguage: string
+        answerHeight: number
 }) => void) => () => void
       
+      showAnswerPreview: () => Promise<void>
+      onShowAnswerPreview: (callback: () => void) => () => void
+
       // LLM Model Management
       getCurrentLlmConfig: () => Promise<{ provider: string; model: string }>
       getAvailableLlmModels: () => Promise<Array<{ id: string; name: string }>>
@@ -261,6 +268,28 @@ const App: React.FC = () => {
         console.log("Problem extracted successfully")
         queryClient.invalidateQueries(["problem_statement"])
         queryClient.setQueryData(["problem_statement"], data)
+      }),
+      window.electronAPI.onShowAnswerPreview(() => {
+        const existingSolution = queryClient.getQueryData(["solution"])
+        if (!existingSolution) {
+          queryClient.setQueryData(["solution"], {
+            answer:
+              "This is a preview of how your answer will appear. Adjust the answer view height in settings to find a size that works for you. The panel scrolls when content exceeds the configured height, so longer responses stay readable without resizing the overlay window.",
+            code: "function preview() {\n  const items = [1, 2, 3, 4, 5]\n  return items.reduce((sum, n) => sum + n, 0)\n}\n\npreview()",
+            thoughts: [
+              "Identify the input shape and constraints.",
+              "Pick a straightforward approach first, then optimize.",
+              "Verify edge cases before finalizing the answer."
+            ],
+            time_complexity: "O(n)",
+            space_complexity: "O(1)"
+          })
+          queryClient.setQueryData(["problem_statement"], {
+            problem_statement:
+              "Sample problem statement shown for preview purposes."
+          })
+        }
+        navigate(viewToPath.solutions)
       })
     ]
     return () => cleanupFunctions.forEach((cleanup) => cleanup())

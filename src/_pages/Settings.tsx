@@ -39,6 +39,7 @@ const Settings: React.FC = () => {
   const [responseType, setResponseType] = useState<ResponseType>("concise")
   const [codingLanguage, setCodingLanguage] = useState<string>("javascript")
   const [responseLanguage, setResponseLanguage] = useState<string>("")
+  const [answerHeight, setAnswerHeight] = useState<number>(600)
   const [loadingConfig, setLoadingConfig] = useState(true)
   const [savingModel, setSavingModel] = useState(false)
   const [savingStealth, setSavingStealth] = useState(false)
@@ -60,6 +61,7 @@ const Settings: React.FC = () => {
         setResponseType(settings.responseType)
         setCodingLanguage(settings.codingLanguage ?? "")
         setResponseLanguage(settings.responseLanguage ?? "")
+        setAnswerHeight(settings.answerHeight ?? 600)
       } catch (error) {
         console.error("Error loading LLM config:", error)
       } finally {
@@ -149,6 +151,25 @@ const Settings: React.FC = () => {
       const settings = await window.electronAPI.updateAppSettings({ codingLanguage: trimmed })
       setCodingLanguage(settings.codingLanguage ?? "")
     } catch (error) {
+      setErrorMessage(String(error))
+      setStatus("error")
+    }
+  }
+
+  const ANSWER_HEIGHT_MIN = 200
+  const ANSWER_HEIGHT_MAX = 1400
+  const ANSWER_HEIGHT_STEP = 50
+
+  const changeAnswerHeight = async (nextHeight: number) => {
+    const clamped = Math.min(ANSWER_HEIGHT_MAX, Math.max(ANSWER_HEIGHT_MIN, Math.round(nextHeight)))
+    if (clamped === answerHeight) return
+    const previous = answerHeight
+    setAnswerHeight(clamped)
+    try {
+      const settings = await window.electronAPI.updateAppSettings({ answerHeight: clamped })
+      setAnswerHeight(settings.answerHeight ?? clamped)
+    } catch (error) {
+      setAnswerHeight(previous)
       setErrorMessage(String(error))
       setStatus("error")
     }
@@ -271,6 +292,52 @@ const Settings: React.FC = () => {
               disabled={loadingConfig}
               onCommit={changeResponseLanguage}
             />
+            <div className="flex min-h-12 items-center justify-between gap-4 border-b border-black/10 px-3 py-2">
+              <div className="min-w-0">
+                <div className="text-sm font-medium">Answer view height</div>
+                <div className="mt-0.5 truncate text-xs text-[#5f6368]">
+                  Max height of the solutions panel
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                <button
+                  type="button"
+                  aria-label="Decrease answer height"
+                  disabled={loadingConfig || answerHeight <= ANSWER_HEIGHT_MIN}
+                  onClick={() => changeAnswerHeight(answerHeight - ANSWER_HEIGHT_STEP)}
+                  className="flex h-7 w-7 items-center justify-center rounded-md border border-black/15 bg-[#f7f7f5] text-sm leading-none text-[#1f2328] transition-colors hover:bg-[#eeeeea] disabled:cursor-default disabled:opacity-60"
+                >
+                  −
+                </button>
+                <div className="w-16 text-center font-mono text-xs tabular-nums text-[#1f2328]">
+                  {answerHeight}px
+                </div>
+                <button
+                  type="button"
+                  aria-label="Increase answer height"
+                  disabled={loadingConfig || answerHeight >= ANSWER_HEIGHT_MAX}
+                  onClick={() => changeAnswerHeight(answerHeight + ANSWER_HEIGHT_STEP)}
+                  className="flex h-7 w-7 items-center justify-center rounded-md border border-black/15 bg-[#f7f7f5] text-sm leading-none text-[#1f2328] transition-colors hover:bg-[#eeeeea] disabled:cursor-default disabled:opacity-60"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+            <div className="flex min-h-12 items-center justify-between gap-4 border-b border-black/10 px-3 py-2">
+              <div className="min-w-0">
+                <div className="text-sm font-medium">Answer view preview</div>
+                <div className="mt-0.5 truncate text-xs text-[#5f6368]">
+                  Open the overlay with sample content to test the height
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => window.electronAPI.showAnswerPreview()}
+                className="inline-flex h-8 shrink-0 items-center rounded-md border border-black/15 bg-[#f7f7f5] px-3 text-xs font-medium text-[#1f2328] transition-colors hover:bg-[#eeeeea]"
+              >
+                Show preview
+              </button>
+            </div>
             <div className="flex min-h-12 items-center justify-between gap-4 px-3 py-2">
               <div>
                 <div className="text-sm font-medium">Stealth behavior</div>

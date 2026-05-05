@@ -127,6 +127,20 @@ export function initializeIpcHandlers(appState: AppState): void {
     appState.centerAndShowWindow()
   })
 
+  ipcMain.handle("show-answer-preview", async () => {
+    const settings = getAppSettings()
+    const main = appState.getMainWindow()
+    if (main && !main.isDestroyed()) {
+      const bounds = main.getBounds()
+      // Reserve room for header/commands above the answer panel.
+      appState.setWindowDimensions(bounds.width, settings.answerHeight + 120)
+    }
+    appState.centerAndShowWindow()
+    if (main && !main.isDestroyed()) {
+      main.webContents.send("show-answer-preview")
+    }
+  })
+
   ipcMain.handle("open-settings-window", async () => {
     appState.openSettingsWindow()
   })
