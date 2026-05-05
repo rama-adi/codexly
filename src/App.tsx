@@ -100,7 +100,6 @@ declare global {
       
       showAnswerPreview: () => Promise<void>
       onShowAnswerPreview: (callback: () => void) => () => void
-      onCancelAnswerPreview: (callback: () => void) => () => void
 
       // LLM Model Management
       getCurrentLlmConfig: () => Promise<{ provider: string; model: string }>
@@ -291,12 +290,6 @@ const App: React.FC = () => {
           })
         }
         navigate(viewToPath.solutions)
-      }),
-      window.electronAPI.onCancelAnswerPreview(() => {
-        queryClient.removeQueries(["solution"])
-        queryClient.removeQueries(["problem_statement"])
-        queryClient.removeQueries(["new_solution"])
-        navigate(viewToPath.queue)
       })
     ]
     return () => cleanupFunctions.forEach((cleanup) => cleanup())

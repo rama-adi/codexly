@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from "react"
 import { useQuery, useQueryClient } from "react-query"
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter"
 import { dracula } from "react-syntax-highlighter/dist/esm/styles/prism"
+import { X } from "lucide-react"
 
 import ScreenshotQueue from "../components/Queue/ScreenshotQueue"
 import ChatHistoryButton from "../components/ChatHistoryButton"
@@ -522,6 +523,27 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
           )}
 
           {/* Main Content - Modified width constraints */}
+          <div className="relative w-full">
+            <button
+              type="button"
+              aria-label="Close answer"
+              onClick={() => {
+                queryClient.removeQueries(["solution"])
+                queryClient.removeQueries(["problem_statement"])
+                queryClient.removeQueries(["new_solution"])
+                setIsPreview(false)
+                setAnswerData(null)
+                setSolutionData(null)
+                setProblemStatementData(null)
+                setThoughtsData(null)
+                setTimeComplexityData(null)
+                setSpaceComplexityData(null)
+                setView("queue")
+              }}
+              className="absolute right-1.5 top-1.5 z-10 flex h-6 w-6 items-center justify-center rounded-md bg-black/40 text-white/80 transition-colors hover:bg-black/60 hover:text-white"
+            >
+              <X className="h-3.5 w-3.5" strokeWidth={2} />
+            </button>
           <div
             className="w-full text-sm text-black bg-black/60 rounded-md overflow-y-auto"
             style={
@@ -539,7 +561,9 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
                       content={answerData || problemStatementData?.problem_statement}
                       isLoading={!answerData && !problemStatementData}
                     />
-                    <ScreenshotGallery screenshots={initialScreenshots} />
+                    {!answerData && (
+                      <ScreenshotGallery screenshots={initialScreenshots} />
+                    )}
                   </>
                 ) : (
                   <>
@@ -551,13 +575,15 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
                       />
                     )}
                     {!answerData && !solutionData && (
-                      <div className="mt-4 flex">
-                        <p className="text-xs bg-gradient-to-r from-gray-300 via-gray-100 to-gray-300 bg-clip-text text-transparent animate-pulse">
-                          Generating solutions...
-                        </p>
-                      </div>
+                      <>
+                        <div className="mt-4 flex">
+                          <p className="text-xs bg-gradient-to-r from-gray-300 via-gray-100 to-gray-300 bg-clip-text text-transparent animate-pulse">
+                            Generating solutions...
+                          </p>
+                        </div>
+                        <ScreenshotGallery screenshots={initialScreenshots} />
+                      </>
                     )}
-                    <ScreenshotGallery screenshots={initialScreenshots} />
                     {(answerData || solutionData) && (
                       <>
                         {responseType === "thorough" && thoughtsData && thoughtsData.length > 0 && (
@@ -606,6 +632,7 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
                 )}
               </div>
             </div>
+          </div>
           </div>
         </div>
       )}

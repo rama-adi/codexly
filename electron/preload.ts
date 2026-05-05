@@ -49,7 +49,6 @@ interface ElectronAPI {
 
   showAnswerPreview: () => Promise<void>
   onShowAnswerPreview: (callback: () => void) => () => void
-  onCancelAnswerPreview: (callback: () => void) => () => void
 
   // LLM Model Management
   getCurrentLlmConfig: () => Promise<{ provider: string; model: string }>
@@ -241,13 +240,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("show-answer-preview", subscription)
     return () => {
       ipcRenderer.removeListener("show-answer-preview", subscription)
-    }
-  },
-  onCancelAnswerPreview: (callback: () => void) => {
-    const subscription = () => callback()
-    ipcRenderer.on("cancel-answer-preview", subscription)
-    return () => {
-      ipcRenderer.removeListener("cancel-answer-preview", subscription)
     }
   },
 

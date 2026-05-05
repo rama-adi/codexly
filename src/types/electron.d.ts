@@ -38,7 +38,6 @@ export interface ElectronAPI {
   onAppSettingsChanged: (callback: (settings: AppSettings) => void) => () => void
   showAnswerPreview: () => Promise<void>
   onShowAnswerPreview: (callback: () => void) => () => void
-  onCancelAnswerPreview: (callback: () => void) => () => void
   getCurrentLlmConfig: () => Promise<{ provider: string; model: string }>
   getAvailableLlmModels: () => Promise<Array<{ id: string; name: string }>>
   setCurrentLlmModel: (model: string) => Promise<{ provider: string; model: string }>
