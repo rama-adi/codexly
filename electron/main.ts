@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Tray, Menu, nativeImage, systemPreferences, dialog, shell, desktopCapturer } from "electron"
 import { initializeIpcHandlers } from "./ipcHandlers"
 import { WindowHelper } from "./WindowHelper"
-import { ScreenshotHelper } from "./ScreenshotHelper"
+import { ScreenshotCaptureMode, ScreenshotHelper } from "./ScreenshotHelper"
 import { ShortcutsHelper } from "./shortcuts"
 import { ProcessingHelper } from "./ProcessingHelper"
 
@@ -142,12 +142,15 @@ export class AppState {
   }
 
   // Screenshot management methods
-  public async takeScreenshot(): Promise<string> {
+  public async takeScreenshot(
+    mode: ScreenshotCaptureMode = "fullscreen"
+  ): Promise<string> {
     if (!this.getMainWindow()) throw new Error("No main window available")
 
     const screenshotPath = await this.screenshotHelper.takeScreenshot(
       () => this.hideMainWindow(),
-      () => this.showMainWindow()
+      () => this.showMainWindow(),
+      mode
     )
 
     return screenshotPath

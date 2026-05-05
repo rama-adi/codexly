@@ -245,7 +245,9 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
               {chatMessages.length === 0 ? (
                 <div className="text-xs text-white/50 text-center py-6">
                   Chat with <span className="font-mono text-white/70">{currentModel.model}</span>
-                  <div className="mt-1 text-[11px] text-white/35">Take a screenshot (⌘H) for auto-analysis</div>
+                  <div className="mt-1 text-[11px] text-white/35">
+                    Take a screenshot (⌘H) or select an area (⇧⌘H) for auto-analysis
+                  </div>
                 </div>
               ) : (
                 chatMessages.map((msg, idx) => (

@@ -4,15 +4,46 @@ import path from "node:path"
 import fs from "node:fs"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
-import { app } from "electron"
+import { app, BrowserWindow, screen } from "electron"
 import { v4 as uuidv4 } from "uuid"
+import sharp from "sharp"
 
 const execFileP = promisify(execFile)
 
-async function captureScreen(filePath: string): Promise<void> {
+export type ScreenshotCaptureMode = "fullscreen" | "selection"
+
+type CaptureBounds = {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+async function captureScreen(
+  filePath: string,
+  mode: ScreenshotCaptureMode = "fullscreen"
+): Promise<void> {
   if (process.platform === "darwin") {
-    await execFileP("screencapture", ["-x", "-t", "png", filePath])
-  } else if (process.platform === "win32") {
+    const args =
+      mode === "selection"
+        ? ["-i", "-x", "-t", "png", filePath]
+        : ["-x", "-t", "png", filePath]
+
+    await execFileP("screencapture", args)
+    return
+  }
+
+  if (mode === "selection") {
+    const bounds = await getSelectionBounds()
+    await captureBounds(filePath, bounds)
+    return
+  }
+
+  await captureFullscreen(filePath)
+}
+
+async function captureFullscreen(filePath: string): Promise<void> {
+  if (process.platform === "win32") {
     const escapedPath = filePath.replace(/\\/g, "\\\\").replace(/'/g, "''")
     const script = `
       Add-Type -AssemblyName System.Windows.Forms
@@ -29,6 +60,165 @@ async function captureScreen(filePath: string): Promise<void> {
   } else {
     const screenshot = (await import("screenshot-desktop")).default
     await screenshot({ filename: filePath, format: "png" })
+  }
+}
+
+async function captureBounds(
+  filePath: string,
+  bounds: CaptureBounds
+): Promise<void> {
+  const normalizedBounds = {
+    x: Math.round(bounds.x),
+    y: Math.round(bounds.y),
+    width: Math.round(bounds.width),
+    height: Math.round(bounds.height)
+  }
+
+  if (normalizedBounds.width < 1 || normalizedBounds.height < 1) {
+    throw new Error("Selection is too small")
+  }
+
+  if (process.platform === "win32") {
+    const escapedPath = filePath.replace(/\\/g, "\\\\").replace(/'/g, "''")
+    const script = `
+      Add-Type -AssemblyName System.Windows.Forms
+      Add-Type -AssemblyName System.Drawing
+      $bitmap = New-Object System.Drawing.Bitmap ${normalizedBounds.width}, ${normalizedBounds.height}
+      $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+      $graphics.CopyFromScreen(${normalizedBounds.x}, ${normalizedBounds.y}, 0, 0, $bitmap.Size)
+      $bitmap.Save('${escapedPath}')
+      $graphics.Dispose()
+      $bitmap.Dispose()
+    `
+    await execFileP("powershell", ["-NoProfile", "-NonInteractive", "-Command", script])
+    return
+  }
+
+  const temporaryPath = path.join(app.getPath("temp"), `${uuidv4()}.png`)
+  await captureFullscreen(temporaryPath)
+  await sharp(temporaryPath)
+    .extract({
+      left: normalizedBounds.x,
+      top: normalizedBounds.y,
+      width: normalizedBounds.width,
+      height: normalizedBounds.height
+    })
+    .png()
+    .toFile(filePath)
+  await fs.promises.unlink(temporaryPath).catch((): void => undefined)
+}
+
+async function getSelectionBounds(): Promise<CaptureBounds> {
+  const display = screen.getPrimaryDisplay()
+  const selectionWindow = new BrowserWindow({
+    x: display.bounds.x,
+    y: display.bounds.y,
+    width: display.bounds.width,
+    height: display.bounds.height,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    focusable: true,
+    hasShadow: false,
+    webPreferences: {
+      backgroundThrottling: false,
+      nodeIntegration: false,
+      contextIsolation: true
+    }
+  })
+
+  selectionWindow.setAlwaysOnTop(true, "screen-saver", 1)
+  selectionWindow.setIgnoreMouseEvents(false)
+
+  const html = encodeURIComponent(`
+    <!doctype html>
+    <html>
+      <head>
+        <style>
+          html, body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            cursor: crosshair;
+            user-select: none;
+            background: rgba(0, 0, 0, 0.18);
+          }
+          #box {
+            position: fixed;
+            display: none;
+            border: 2px solid #7dd3fc;
+            background: rgba(125, 211, 252, 0.14);
+            box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.22);
+          }
+        </style>
+      </head>
+      <body>
+        <div id="box"></div>
+        <script>
+          const box = document.getElementById("box")
+          let start = null
+
+          window.addEventListener("keydown", event => {
+            if (event.key === "Escape") {
+              window.__selectionDone(null)
+            }
+          })
+
+          window.addEventListener("mousedown", event => {
+            start = { x: event.screenX, y: event.screenY, clientX: event.clientX, clientY: event.clientY }
+            box.style.display = "block"
+          })
+
+          window.addEventListener("mousemove", event => {
+            if (!start) return
+            const left = Math.min(start.clientX, event.clientX)
+            const top = Math.min(start.clientY, event.clientY)
+            const width = Math.abs(event.clientX - start.clientX)
+            const height = Math.abs(event.clientY - start.clientY)
+            box.style.left = left + "px"
+            box.style.top = top + "px"
+            box.style.width = width + "px"
+            box.style.height = height + "px"
+          })
+
+          window.addEventListener("mouseup", event => {
+            if (!start) return
+            const x = Math.min(start.x, event.screenX)
+            const y = Math.min(start.y, event.screenY)
+            const width = Math.abs(event.screenX - start.x)
+            const height = Math.abs(event.screenY - start.y)
+            window.__selectionDone({ x, y, width, height })
+          })
+        </script>
+      </body>
+    </html>
+  `)
+
+  try {
+    await selectionWindow.loadURL(`data:text/html;charset=utf-8,${html}`)
+    const bounds = await selectionWindow.webContents.executeJavaScript(`
+      new Promise(resolve => {
+        window.__selectionDone = resolve
+      })
+    `)
+
+    if (!bounds) {
+      throw new Error("Selection canceled")
+    }
+
+    return bounds
+  } finally {
+    if (!selectionWindow.isDestroyed()) {
+      selectionWindow.close()
+    }
+    await new Promise((resolve) => setTimeout(resolve, process.platform === "win32" ? 200 : 100))
   }
 }
 
@@ -97,7 +287,8 @@ export class ScreenshotHelper {
 
   public async takeScreenshot(
     hideMainWindow: () => void,
-    showMainWindow: () => void
+    showMainWindow: () => void,
+    mode: ScreenshotCaptureMode = "fullscreen"
   ): Promise<string> {
     try {
       hideMainWindow()
@@ -109,7 +300,7 @@ export class ScreenshotHelper {
 
       if (this.view === "queue") {
         screenshotPath = path.join(this.screenshotDir, `${uuidv4()}.png`)
-        await captureScreen(screenshotPath)
+        await captureScreen(screenshotPath, mode)
 
         this.screenshotQueue.push(screenshotPath)
         if (this.screenshotQueue.length > this.MAX_SCREENSHOTS) {
@@ -124,7 +315,7 @@ export class ScreenshotHelper {
         }
       } else {
         screenshotPath = path.join(this.extraScreenshotDir, `${uuidv4()}.png`)
-        await captureScreen(screenshotPath)
+        await captureScreen(screenshotPath, mode)
 
         this.extraScreenshotQueue.push(screenshotPath)
         if (this.extraScreenshotQueue.length > this.MAX_SCREENSHOTS) {
