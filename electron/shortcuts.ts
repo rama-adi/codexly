@@ -60,6 +60,7 @@ export class ShortcutsHelper {
 
       // Cancel ongoing API requests
       this.appState.processingHelper.cancelOngoingRequests()
+      this.appState.processingHelper.getLLMHelper().clearChatHistory()
 
       // Clear both screenshot queues
       this.appState.clearQueues()
