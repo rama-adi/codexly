@@ -138,12 +138,15 @@
     "@google/generative-ai": "^0.2.1",
     "@radix-ui/react-dialog": "^1.1.2",
     "@radix-ui/react-toast": "^1.2.2",
+    "ai": "^6.0.175",
     "axios": "^1.7.7",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
     "diff": "^7.0.0",
+    "dotenv": "^17.4.2",
     "form-data": "^4.0.1",
     "lucide-react": "^0.460.0",
+    "openai-oauth-provider": "^1.0.3",
     "react": "^18.3.1",
     "react-code-blocks": "^0.1.6",
     "react-dom": "^18.3.1",
@@ -154,6 +157,7 @@
     "sharp": "^0.33.5",
     "tailwind-merge": "^2.5.4",
     "tesseract.js": "^5.0.5",
-    "uuid": "^11.0.3"
+    "uuid": "^11.0.3",
+    "zod": "^4.4.3"
   }
 }
