@@ -1,5 +1,6 @@
 import { globalShortcut, app } from "electron"
 import { AppState } from "./main" // Adjust the import path if necessary
+import { ScreenshotCanceledError } from "./ScreenshotHelper"
 
 export class ShortcutsHelper {
   private appState: AppState
@@ -44,6 +45,10 @@ export class ShortcutsHelper {
             preview
           })
         } catch (error) {
+          if (error instanceof ScreenshotCanceledError) {
+            console.log("Selected screenshot canceled.")
+            return
+          }
           console.error("Error capturing selected screenshot:", error)
         }
       }

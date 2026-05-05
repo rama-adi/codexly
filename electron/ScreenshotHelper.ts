@@ -12,6 +12,13 @@ const execFileP = promisify(execFile)
 
 export type ScreenshotCaptureMode = "fullscreen" | "selection"
 
+export class ScreenshotCanceledError extends Error {
+  constructor() {
+    super("Screenshot canceled")
+    this.name = "ScreenshotCanceledError"
+  }
+}
+
 type CaptureBounds = {
   x: number
   y: number
@@ -30,11 +37,22 @@ async function captureScreen(
         : ["-x", "-t", "png", filePath]
 
     await execFileP("screencapture", args)
+    if (mode === "selection" && !fs.existsSync(filePath)) {
+      throw new ScreenshotCanceledError()
+    }
     return
   }
 
   if (mode === "selection") {
-    const bounds = await getSelectionBounds()
+    let bounds: CaptureBounds
+    try {
+      bounds = await getSelectionBounds()
+    } catch (error) {
+      if (error instanceof Error && error.message === "Selection canceled") {
+        throw new ScreenshotCanceledError()
+      }
+      throw error
+    }
     await captureBounds(filePath, bounds)
     return
   }
