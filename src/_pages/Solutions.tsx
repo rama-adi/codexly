@@ -499,7 +499,7 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
           )}
 
           {/* Main Content - Modified width constraints */}
-          <div className="w-full text-sm text-black bg-black/60 rounded-md max-h-[70vh] overflow-y-auto">
+          <div className="w-full text-sm text-black bg-black/60 rounded-md max-h-[calc(100vh-4rem)] overflow-y-auto">
             <div className="rounded-lg overflow-hidden">
               <div className="px-3 py-2.5 space-y-3 max-w-full">
                 {mode === "simpleQA" ? (
