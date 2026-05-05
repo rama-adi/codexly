@@ -5,6 +5,8 @@ import { AppState } from "./main"
 import { getAppSettings, updateAppSettings } from "./AppSettings"
 
 export function initializeIpcHandlers(appState: AppState): void {
+  let answerPreviewActive = false
+
   ipcMain.handle(
     "update-content-dimensions",
     async (event, { width, height }: { width: number; height: number }) => {
@@ -139,6 +141,7 @@ export function initializeIpcHandlers(appState: AppState): void {
     if (main && !main.isDestroyed()) {
       main.webContents.send("show-answer-preview")
     }
+    answerPreviewActive = true
   })
 
   ipcMain.handle("open-settings-window", async () => {
@@ -146,6 +149,13 @@ export function initializeIpcHandlers(appState: AppState): void {
   })
 
   ipcMain.handle("close-settings-window", async () => {
+    if (answerPreviewActive) {
+      const main = appState.getMainWindow()
+      if (main && !main.isDestroyed()) {
+        main.webContents.send("cancel-answer-preview")
+      }
+      answerPreviewActive = false
+    }
     appState.closeSettingsWindow()
   })
 

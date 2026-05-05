@@ -189,7 +189,7 @@ const Settings: React.FC = () => {
   return (
     <main className="min-h-screen bg-[#f7f7f5] text-[#1f2328]" data-clickable-root>
       <header
-        className={`draggable-area flex h-12 items-center justify-between gap-2 border-b border-black/10 bg-white ${
+        className={`draggable-area sticky top-0 z-10 flex h-12 items-center justify-between gap-2 border-b border-black/10 bg-white ${
           isMac ? "pl-[78px]" : ""
         }`}
       >
