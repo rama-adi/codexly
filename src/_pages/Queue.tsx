@@ -113,6 +113,12 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       }
     };
     loadCurrentModel();
+
+    const unsubscribe = window.electronAPI.onLlmConfigChanged((config) => {
+      setCurrentModel({ provider: config.provider, model: config.model });
+    });
+
+    return unsubscribe;
   }, []);
 
   useEffect(() => {

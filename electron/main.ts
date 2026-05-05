@@ -4,6 +4,7 @@ import { WindowHelper } from "./WindowHelper"
 import { ScreenshotCaptureMode, ScreenshotHelper } from "./ScreenshotHelper"
 import { ShortcutsHelper } from "./shortcuts"
 import { ProcessingHelper } from "./ProcessingHelper"
+import { getAppSettings, updateAppSettings } from "./AppSettings"
 
 export class AppState {
   private static instance: AppState | null = null
@@ -123,6 +124,23 @@ export class AppState {
 
   public closeSettingsWindow(): void {
     this.windowHelper.closeSettingsWindow()
+  }
+
+  public getStealthEnabled(): boolean {
+    return getAppSettings().stealthEnabled
+  }
+
+  public setStealthEnabled(enabled: boolean): { stealthEnabled: boolean } {
+    const settings = updateAppSettings({ stealthEnabled: enabled })
+    const mainWindow = this.getMainWindow()
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setContentProtection(settings.stealthEnabled)
+      if (!settings.stealthEnabled) {
+        mainWindow.setOpacity(1)
+        mainWindow.setIgnoreMouseEvents(false)
+      }
+    }
+    return { stealthEnabled: settings.stealthEnabled }
   }
 
   public quitApp(): void {

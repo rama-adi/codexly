@@ -48,10 +48,16 @@ declare global {
       openSettingsWindow: () => Promise<void>
       closeSettingsWindow: () => Promise<void>
       setIgnoreMouseEvents: (ignore: boolean) => Promise<void>
+      getStealthEnabled: () => Promise<{ stealthEnabled: boolean }>
+      setStealthEnabled: (enabled: boolean) => Promise<{ stealthEnabled: boolean }>
+      onStealthChanged: (callback: (config: { stealthEnabled: boolean }) => void) => () => void
       
       // LLM Model Management
       getCurrentLlmConfig: () => Promise<{ provider: string; model: string }>
+      getAvailableLlmModels: () => Promise<Array<{ id: string; name: string }>>
+      setCurrentLlmModel: (model: string) => Promise<{ provider: string; model: string }>
       testLlmConnection: () => Promise<{ success: boolean; error?: string }>
+      onLlmConfigChanged: (callback: (config: { provider: string; model: string }) => void) => () => void
       
       invoke: (channel: string, ...args: any[]) => Promise<any>
     }

@@ -2,6 +2,7 @@
 import { BrowserWindow, screen } from "electron"
 import { AppState } from "main"
 import path from "node:path"
+import { getAppSettings } from "./AppSettings"
 
 const isDev = process.env.NODE_ENV === "development"
 
@@ -212,7 +213,8 @@ export class WindowHelper {
   private applyCaptureProtection(): void {
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return
 
-    this.mainWindow.setContentProtection(true)
+    const stealthEnabled = getAppSettings().stealthEnabled
+    this.mainWindow.setContentProtection(stealthEnabled)
     this.mainWindow.setSkipTaskbar(true)
     this.mainWindow.setAlwaysOnTop(true, "screen-saver", 1)
 
@@ -265,10 +267,12 @@ export class WindowHelper {
     const bounds = this.mainWindow.getBounds()
     this.windowPosition = { x: bounds.x, y: bounds.y }
     this.windowSize = { width: bounds.width, height: bounds.height }
-    this.mainWindow.setOpacity(0)
-    this.mainWindow.setIgnoreMouseEvents(true, { forward: true })
-    this.mainWindow.hide()
-    this.isWindowVisible = false
+    if (getAppSettings().stealthEnabled) {
+      this.mainWindow.setOpacity(0)
+      this.mainWindow.setIgnoreMouseEvents(true, { forward: true })
+      this.mainWindow.hide()
+      this.isWindowVisible = false
+    }
   }
 
   public showMainWindow(): void {
@@ -288,7 +292,9 @@ export class WindowHelper {
 
     this.mainWindow.setOpacity(1)
     this.mainWindow.setIgnoreMouseEvents(false)
-    this.mainWindow.showInactive()
+    if (!this.mainWindow.isVisible()) {
+      this.mainWindow.showInactive()
+    }
     this.applyCaptureProtection()
 
     this.isWindowVisible = true

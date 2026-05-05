@@ -1,6 +1,6 @@
 // ipcHandlers.ts
 
-import { ipcMain, app } from "electron"
+import { BrowserWindow, ipcMain, app } from "electron"
 import { AppState } from "./main"
 
 export function initializeIpcHandlers(appState: AppState): void {
@@ -129,6 +129,18 @@ export function initializeIpcHandlers(appState: AppState): void {
     appState.closeSettingsWindow()
   })
 
+  ipcMain.handle("get-stealth-enabled", async () => {
+    return { stealthEnabled: appState.getStealthEnabled() }
+  })
+
+  ipcMain.handle("set-stealth-enabled", async (_event, enabled: boolean) => {
+    const result = appState.setStealthEnabled(Boolean(enabled))
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send("stealth-changed", result)
+    }
+    return result
+  })
+
   // LLM Model Management Handlers
   ipcMain.handle("get-current-llm-config", async () => {
     try {
@@ -139,6 +151,30 @@ export function initializeIpcHandlers(appState: AppState): void {
       };
     } catch (error: any) {
       console.error("Error getting current LLM config:", error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle("get-available-llm-models", async () => {
+    try {
+      const llmHelper = appState.processingHelper.getLLMHelper();
+      return await llmHelper.getAvailableModels();
+    } catch (error: any) {
+      console.error("Error getting available LLM models:", error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle("set-current-llm-model", async (_event, model: string) => {
+    try {
+      const llmHelper = appState.processingHelper.getLLMHelper();
+      const config = llmHelper.setCurrentModel(model);
+      for (const window of BrowserWindow.getAllWindows()) {
+        window.webContents.send("llm-config-changed", config);
+      }
+      return config;
+    } catch (error: any) {
+      console.error("Error setting current LLM model:", error);
       throw error;
     }
   });

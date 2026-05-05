@@ -35,10 +35,20 @@ interface ElectronAPI {
   openSettingsWindow: () => Promise<void>
   closeSettingsWindow: () => Promise<void>
   setIgnoreMouseEvents: (ignore: boolean) => Promise<void>
+  getStealthEnabled: () => Promise<{ stealthEnabled: boolean }>
+  setStealthEnabled: (enabled: boolean) => Promise<{ stealthEnabled: boolean }>
+  onStealthChanged: (
+    callback: (config: { stealthEnabled: boolean }) => void
+  ) => () => void
 
   // LLM Model Management
   getCurrentLlmConfig: () => Promise<{ provider: string; model: string }>
+  getAvailableLlmModels: () => Promise<Array<{ id: string; name: string }>>
+  setCurrentLlmModel: (model: string) => Promise<{ provider: string; model: string }>
   testLlmConnection: () => Promise<{ success: boolean; error?: string }>
+  onLlmConfigChanged: (
+    callback: (config: { provider: string; model: string }) => void
+  ) => () => void
 
   invoke: (channel: string, ...args: any[]) => Promise<any>
 }
@@ -178,10 +188,34 @@ contextBridge.exposeInMainWorld("electronAPI", {
   openSettingsWindow: () => ipcRenderer.invoke("open-settings-window"),
   closeSettingsWindow: () => ipcRenderer.invoke("close-settings-window"),
   setIgnoreMouseEvents: (ignore: boolean) => ipcRenderer.invoke("set-ignore-mouse-events", ignore),
+  getStealthEnabled: () => ipcRenderer.invoke("get-stealth-enabled"),
+  setStealthEnabled: (enabled: boolean) => ipcRenderer.invoke("set-stealth-enabled", enabled),
+  onStealthChanged: (
+    callback: (config: { stealthEnabled: boolean }) => void
+  ) => {
+    const subscription = (_: any, config: { stealthEnabled: boolean }) =>
+      callback(config)
+    ipcRenderer.on("stealth-changed", subscription)
+    return () => {
+      ipcRenderer.removeListener("stealth-changed", subscription)
+    }
+  },
 
   // LLM Model Management
   getCurrentLlmConfig: () => ipcRenderer.invoke("get-current-llm-config"),
+  getAvailableLlmModels: () => ipcRenderer.invoke("get-available-llm-models"),
+  setCurrentLlmModel: (model: string) => ipcRenderer.invoke("set-current-llm-model", model),
   testLlmConnection: () => ipcRenderer.invoke("test-llm-connection"),
+  onLlmConfigChanged: (
+    callback: (config: { provider: string; model: string }) => void
+  ) => {
+    const subscription = (_: any, config: { provider: string; model: string }) =>
+      callback(config)
+    ipcRenderer.on("llm-config-changed", subscription)
+    return () => {
+      ipcRenderer.removeListener("llm-config-changed", subscription)
+    }
+  },
 
   invoke: (channel: string, ...args: any[]) => ipcRenderer.invoke(channel, ...args)
 } as ElectronAPI)
