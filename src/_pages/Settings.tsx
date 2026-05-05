@@ -10,6 +10,8 @@ import {
 } from "lucide-react"
 
 type ConnectionStatus = "idle" | "testing" | "success" | "error"
+type AppMode = "simpleQA" | "coding"
+type ResponseType = "concise" | "thorough"
 
 interface ModelConfig {
   provider: string
@@ -33,6 +35,10 @@ const Settings: React.FC = () => {
   const [config, setConfig] = useState<ModelConfig | null>(null)
   const [models, setModels] = useState<ModelOption[]>([])
   const [stealthEnabled, setStealthEnabled] = useState(true)
+  const [mode, setMode] = useState<AppMode>("simpleQA")
+  const [responseType, setResponseType] = useState<ResponseType>("concise")
+  const [codingLanguage, setCodingLanguage] = useState<string>("javascript")
+  const [responseLanguage, setResponseLanguage] = useState<string>("")
   const [loadingConfig, setLoadingConfig] = useState(true)
   const [savingModel, setSavingModel] = useState(false)
   const [savingStealth, setSavingStealth] = useState(false)
@@ -42,14 +48,18 @@ const Settings: React.FC = () => {
   useEffect(() => {
     ;(async () => {
       try {
-        const [currentConfig, availableModels, stealthConfig] = await Promise.all([
+        const [currentConfig, availableModels, settings] = await Promise.all([
           window.electronAPI.getCurrentLlmConfig(),
           window.electronAPI.getAvailableLlmModels(),
-          window.electronAPI.getStealthEnabled()
+          window.electronAPI.getAppSettings()
         ])
         setConfig(currentConfig)
         setModels(availableModels)
-        setStealthEnabled(stealthConfig.stealthEnabled)
+        setStealthEnabled(settings.stealthEnabled)
+        setMode(settings.mode)
+        setResponseType(settings.responseType)
+        setCodingLanguage(settings.codingLanguage ?? "")
+        setResponseLanguage(settings.responseLanguage ?? "")
       } catch (error) {
         console.error("Error loading LLM config:", error)
       } finally {
@@ -106,6 +116,52 @@ const Settings: React.FC = () => {
       setStatus("error")
     } finally {
       setSavingStealth(false)
+    }
+  }
+
+  const changeMode = async (nextMode: AppMode) => {
+    setMode(nextMode)
+    try {
+      const settings = await window.electronAPI.updateAppSettings({ mode: nextMode })
+      setMode(settings.mode)
+    } catch (error) {
+      setMode(mode)
+      setErrorMessage(String(error))
+      setStatus("error")
+    }
+  }
+
+  const changeResponseType = async (nextResponseType: ResponseType) => {
+    setResponseType(nextResponseType)
+    try {
+      const settings = await window.electronAPI.updateAppSettings({ responseType: nextResponseType })
+      setResponseType(settings.responseType)
+    } catch (error) {
+      setResponseType(responseType)
+      setErrorMessage(String(error))
+      setStatus("error")
+    }
+  }
+
+  const changeCodingLanguage = async (nextCodingLanguage: string) => {
+    const trimmed = nextCodingLanguage.trim()
+    try {
+      const settings = await window.electronAPI.updateAppSettings({ codingLanguage: trimmed })
+      setCodingLanguage(settings.codingLanguage ?? "")
+    } catch (error) {
+      setErrorMessage(String(error))
+      setStatus("error")
+    }
+  }
+
+  const changeResponseLanguage = async (nextResponseLanguage: string) => {
+    const trimmed = nextResponseLanguage.trim()
+    try {
+      const settings = await window.electronAPI.updateAppSettings({ responseLanguage: trimmed })
+      setResponseLanguage(settings.responseLanguage ?? "")
+    } catch (error) {
+      setErrorMessage(String(error))
+      setStatus("error")
     }
   }
 
@@ -179,6 +235,42 @@ const Settings: React.FC = () => {
             General
           </h2>
           <div className="rounded-md border border-black/10 bg-white">
+            <SelectSettingRow
+              label="Mode"
+              value={mode}
+              disabled={loadingConfig}
+              options={[
+                { value: "simpleQA", label: "Simple QA" },
+                { value: "coding", label: "Coding" }
+              ]}
+              onChange={value => changeMode(value as AppMode)}
+            />
+            <SelectSettingRow
+              label="Response"
+              value={responseType}
+              disabled={loadingConfig}
+              options={[
+                { value: "concise", label: "Concise" },
+                { value: "thorough", label: "Thorough" }
+              ]}
+              onChange={value => changeResponseType(value as ResponseType)}
+            />
+            {mode === "coding" && (
+              <TextSettingRow
+                label="Language"
+                value={codingLanguage}
+                placeholder="e.g. javascript, python, rust"
+                disabled={loadingConfig}
+                onCommit={changeCodingLanguage}
+              />
+            )}
+            <TextSettingRow
+              label="Response language"
+              value={responseLanguage}
+              placeholder="Leave empty to auto-detect"
+              disabled={loadingConfig}
+              onCommit={changeResponseLanguage}
+            />
             <div className="flex min-h-12 items-center justify-between gap-4 px-3 py-2">
               <div>
                 <div className="text-sm font-medium">Stealth behavior</div>
@@ -203,7 +295,6 @@ const Settings: React.FC = () => {
                 />
               </button>
             </div>
-            <SettingRow label="More settings" value="Coming soon" />
           </div>
         </div>
       </section>
@@ -251,6 +342,72 @@ const SettingRow: React.FC<{
     </div>
   </div>
 )
+
+const SelectSettingRow: React.FC<{
+  label: string
+  value: string
+  disabled?: boolean
+  options: Array<{ value: string; label: string }>
+  onChange: (value: string) => void
+}> = ({ label, value, disabled = false, options, onChange }) => (
+  <div className="flex min-h-12 items-center justify-between gap-4 border-b border-black/10 px-3 py-2">
+    <div className="text-sm font-medium">{label}</div>
+    <div className="relative min-w-0">
+      <select
+        value={value}
+        onChange={event => onChange(event.target.value)}
+        disabled={disabled}
+        className="h-8 max-w-[210px] appearance-none rounded-md border border-black/15 bg-[#f7f7f5] py-0 pl-3 pr-8 text-xs text-[#1f2328] outline-none transition-colors hover:bg-[#eeeeea] disabled:cursor-default disabled:opacity-60"
+      >
+        {options.map(option => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#5f6368]" />
+    </div>
+  </div>
+)
+
+const TextSettingRow: React.FC<{
+  label: string
+  value: string
+  placeholder?: string
+  disabled?: boolean
+  onCommit: (value: string) => void
+}> = ({ label, value, placeholder, disabled = false, onCommit }) => {
+  const [draft, setDraft] = useState(value)
+
+  useEffect(() => {
+    setDraft(value)
+  }, [value])
+
+  const commit = () => {
+    if (draft === value) return
+    onCommit(draft)
+  }
+
+  return (
+    <div className="flex min-h-12 items-center justify-between gap-4 border-b border-black/10 px-3 py-2">
+      <div className="text-sm font-medium">{label}</div>
+      <input
+        type="text"
+        value={draft}
+        placeholder={placeholder}
+        disabled={disabled}
+        onChange={event => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={event => {
+          if (event.key === "Enter") {
+            event.currentTarget.blur()
+          }
+        }}
+        className="h-8 max-w-[210px] rounded-md border border-black/15 bg-[#f7f7f5] px-2 text-xs text-[#1f2328] outline-none transition-colors hover:bg-[#eeeeea] focus:bg-white disabled:cursor-default disabled:opacity-60"
+      />
+    </div>
+  )
+}
 
 const ConnectionStatus: React.FC<{
   status: ConnectionStatus
