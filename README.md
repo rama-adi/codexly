@@ -93,6 +93,7 @@ npm rebuild sharp
 ### Screenshot analysis
 - `Cmd/Ctrl + H` to capture anything on screen
 - Auto-analyzed by Codex; terse answers in chat
+- Note: the new GPT-5.x models handle image analysis natively, so screenshots are sent directly to the model — no separate OCR or vision pipeline needed.
 
 ### Contextual chat
 - Chat about whatever's on screen

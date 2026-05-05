@@ -12,6 +12,20 @@ const execFileP = promisify(execFile)
 async function captureScreen(filePath: string): Promise<void> {
   if (process.platform === "darwin") {
     await execFileP("screencapture", ["-x", "-t", "png", filePath])
+  } else if (process.platform === "win32") {
+    const escapedPath = filePath.replace(/\\/g, "\\\\").replace(/'/g, "''")
+    const script = `
+      Add-Type -AssemblyName System.Windows.Forms
+      Add-Type -AssemblyName System.Drawing
+      $screen = [System.Windows.Forms.Screen]::PrimaryScreen
+      $bitmap = New-Object System.Drawing.Bitmap $screen.Bounds.Width, $screen.Bounds.Height
+      $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+      $graphics.CopyFromScreen($screen.Bounds.X, $screen.Bounds.Y, 0, 0, $bitmap.Size)
+      $bitmap.Save('${escapedPath}')
+      $graphics.Dispose()
+      $bitmap.Dispose()
+    `
+    await execFileP("powershell", ["-NoProfile", "-NonInteractive", "-Command", script])
   } else {
     const screenshot = (await import("screenshot-desktop")).default
     await screenshot({ filename: filePath, format: "png" })

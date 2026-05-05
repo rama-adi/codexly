@@ -88,18 +88,23 @@ export class WindowHelper {
       frame: false,
       transparent: true,
       fullscreenable: false,
+      enableLargerThanScreen: true,
       hasShadow: false,
       backgroundColor: "#00000000",
+      type: "panel",
+      titleBarStyle: "hidden",
+      paintWhenInitiallyHidden: true,
       focusable: true,
       resizable: true,
       movable: true,
+      thickFrame: process.platform === "win32" ? false : undefined,
       x: 100, // Start at a visible position
       y: 100
     }
 
     this.mainWindow = new BrowserWindow(windowSettings)
     // this.mainWindow.webContents.openDevTools()
-    this.mainWindow.setContentProtection(true)
+    this.applyCaptureProtection()
 
     if (process.platform === "darwin") {
       this.mainWindow.setVisibleOnAllWorkspaces(true, {
@@ -107,6 +112,13 @@ export class WindowHelper {
       })
       this.mainWindow.setHiddenInMissionControl(true)
       this.mainWindow.setAlwaysOnTop(true, "floating")
+    }
+    if (process.platform === "win32") {
+      this.mainWindow.setVisibleOnAllWorkspaces(true, {
+        visibleOnFullScreen: true
+      })
+      this.mainWindow.setMenuBarVisibility(false)
+      this.mainWindow.setAutoHideMenuBar(true)
     }
     if (process.platform === "linux") {
       // Linux-specific optimizations for better compatibility
@@ -117,7 +129,9 @@ export class WindowHelper {
       this.mainWindow.setFocusable(true)
     } 
     this.mainWindow.setSkipTaskbar(true)
-    this.mainWindow.setAlwaysOnTop(true)
+    this.mainWindow.setAlwaysOnTop(true, "screen-saver", 1)
+    this.mainWindow.webContents.setBackgroundThrottling(false)
+    this.mainWindow.webContents.setFrameRate(60)
 
     this.mainWindow.loadURL(startUrl).catch((err) => {
       console.error("Failed to load URL:", err)
@@ -128,9 +142,11 @@ export class WindowHelper {
       if (this.mainWindow) {
         // Center the window first
         this.centerWindow()
+        this.applyCaptureProtection()
         this.mainWindow.show()
         this.mainWindow.focus()
-        this.mainWindow.setAlwaysOnTop(true)
+        this.mainWindow.setAlwaysOnTop(true, "screen-saver", 1)
+        this.applyCaptureProtection()
         console.log("Window is now visible and centered")
       }
     })
@@ -143,6 +159,18 @@ export class WindowHelper {
 
     this.setupWindowListeners()
     this.isWindowVisible = true
+  }
+
+  private applyCaptureProtection(): void {
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) return
+
+    this.mainWindow.setContentProtection(true)
+    this.mainWindow.setSkipTaskbar(true)
+    this.mainWindow.setAlwaysOnTop(true, "screen-saver", 1)
+
+    if (process.platform === "win32") {
+      this.mainWindow.setOpacity(1)
+    }
   }
 
   private setupWindowListeners(): void {
