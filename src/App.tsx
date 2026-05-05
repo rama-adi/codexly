@@ -39,21 +39,15 @@ declare global {
       onDebugStart: (callback: () => void) => () => void
       onDebugError: (callback: (error: string) => void) => () => void
 
-      // Audio Processing
-      analyzeAudioFromBase64: (data: string, mimeType: string) => Promise<{ text: string; timestamp: number }>
-      analyzeAudioFile: (path: string) => Promise<{ text: string; timestamp: number }>
-
       moveWindowLeft: () => Promise<void>
       moveWindowRight: () => Promise<void>
       moveWindowUp: () => Promise<void>
       moveWindowDown: () => Promise<void>
       quitApp: () => Promise<void>
+      setIgnoreMouseEvents: (ignore: boolean) => Promise<void>
       
       // LLM Model Management
-      getCurrentLlmConfig: () => Promise<{ provider: "ollama" | "gemini"; model: string; isOllama: boolean }>
-      getAvailableOllamaModels: () => Promise<string[]>
-      switchToOllama: (model?: string, url?: string) => Promise<{ success: boolean; error?: string }>
-      switchToGemini: (apiKey?: string) => Promise<{ success: boolean; error?: string }>
+      getCurrentLlmConfig: () => Promise<{ provider: string; model: string }>
       testLlmConnection: () => Promise<{ success: boolean; error?: string }>
       
       invoke: (channel: string, ...args: any[]) => Promise<any>
@@ -73,6 +67,28 @@ const queryClient = new QueryClient({
 const App: React.FC = () => {
   const [view, setView] = useState<"queue" | "solutions" | "debug">("queue")
   const containerRef = useRef<HTMLDivElement>(null)
+
+  // Toggle OS-level click-through based on whether cursor is over real content.
+  // Transparent regions of the window otherwise swallow clicks meant for apps below.
+  useEffect(() => {
+    let ignoring = false
+    const apply = (ignore: boolean) => {
+      if (ignore === ignoring) return
+      ignoring = ignore
+      window.electronAPI.setIgnoreMouseEvents?.(ignore)
+    }
+    apply(true)
+    const onMove = (e: MouseEvent) => {
+      const el = document.elementFromPoint(e.clientX, e.clientY)
+      const overContent = !!el && !!(el as Element).closest("[data-clickable-root]")
+      apply(!overContent)
+    }
+    window.addEventListener("mousemove", onMove)
+    return () => {
+      window.removeEventListener("mousemove", onMove)
+      window.electronAPI.setIgnoreMouseEvents?.(false)
+    }
+  }, [])
 
   // Effect for height monitoring
   useEffect(() => {

@@ -2,9 +2,21 @@
 
 import path from "node:path"
 import fs from "node:fs"
+import { execFile } from "node:child_process"
+import { promisify } from "node:util"
 import { app } from "electron"
 import { v4 as uuidv4 } from "uuid"
-import screenshot from "screenshot-desktop"
+
+const execFileP = promisify(execFile)
+
+async function captureScreen(filePath: string): Promise<void> {
+  if (process.platform === "darwin") {
+    await execFileP("screencapture", ["-x", "-t", "png", filePath])
+  } else {
+    const screenshot = (await import("screenshot-desktop")).default
+    await screenshot({ filename: filePath, format: "png" })
+  }
+}
 
 export class ScreenshotHelper {
   private screenshotQueue: string[] = []
@@ -26,13 +38,8 @@ export class ScreenshotHelper {
       "extra_screenshots"
     )
 
-    // Create directories if they don't exist
-    if (!fs.existsSync(this.screenshotDir)) {
-      fs.mkdirSync(this.screenshotDir)
-    }
-    if (!fs.existsSync(this.extraScreenshotDir)) {
-      fs.mkdirSync(this.extraScreenshotDir)
-    }
+    fs.mkdirSync(this.screenshotDir, { recursive: true })
+    fs.mkdirSync(this.extraScreenshotDir, { recursive: true })
   }
 
   public getView(): "queue" | "solutions" {
@@ -88,7 +95,7 @@ export class ScreenshotHelper {
 
       if (this.view === "queue") {
         screenshotPath = path.join(this.screenshotDir, `${uuidv4()}.png`)
-        await screenshot({ filename: screenshotPath })
+        await captureScreen(screenshotPath)
 
         this.screenshotQueue.push(screenshotPath)
         if (this.screenshotQueue.length > this.MAX_SCREENSHOTS) {
@@ -103,7 +110,7 @@ export class ScreenshotHelper {
         }
       } else {
         screenshotPath = path.join(this.extraScreenshotDir, `${uuidv4()}.png`)
-        await screenshot({ filename: screenshotPath })
+        await captureScreen(screenshotPath)
 
         this.extraScreenshotQueue.push(screenshotPath)
         if (this.extraScreenshotQueue.length > this.MAX_SCREENSHOTS) {

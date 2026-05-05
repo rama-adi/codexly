@@ -28,13 +28,13 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   const contentRef = useRef<HTMLDivElement>(null)
 
   const [chatInput, setChatInput] = useState("")
-  const [chatMessages, setChatMessages] = useState<{role: "user"|"gemini", text: string}[]>([])
+  const [chatMessages, setChatMessages] = useState<{role: "user"|"assistant", text: string}[]>([])
   const [chatLoading, setChatLoading] = useState(false)
   const [isChatOpen, setIsChatOpen] = useState(false)
   const chatInputRef = useRef<HTMLInputElement>(null)
   
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
-  const [currentModel, setCurrentModel] = useState<{ provider: string; model: string }>({ provider: "gemini", model: "gemini-3-pro-preview" })
+  const [currentModel, setCurrentModel] = useState<{ provider: string; model: string }>({ provider: "openai", model: "gpt-5.4" })
 
   const barRef = useRef<HTMLDivElement>(null)
 
@@ -92,10 +92,10 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     setChatLoading(true)
     setChatInput("")
     try {
-      const response = await window.electronAPI.invoke("gemini-chat", chatInput)
-      setChatMessages((msgs) => [...msgs, { role: "gemini", text: response }])
+      const response = await window.electronAPI.invoke("chat", chatInput)
+      setChatMessages((msgs) => [...msgs, { role: "assistant", text: response }])
     } catch (err) {
-      setChatMessages((msgs) => [...msgs, { role: "gemini", text: "Error: " + String(err) }])
+      setChatMessages((msgs) => [...msgs, { role: "assistant", text: "Error: " + String(err) }])
     } finally {
       setChatLoading(false)
       chatInputRef.current?.focus()
@@ -177,10 +177,10 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
         if (latest) {
           // Call the LLM to process the screenshot
           const response = await window.electronAPI.invoke("analyze-image-file", latest);
-          setChatMessages((msgs) => [...msgs, { role: "gemini", text: response.text }]);
+          setChatMessages((msgs) => [...msgs, { role: "assistant", text: response.text }]);
         }
       } catch (err) {
-        setChatMessages((msgs) => [...msgs, { role: "gemini", text: "Error: " + String(err) }]);
+        setChatMessages((msgs) => [...msgs, { role: "assistant", text: "Error: " + String(err) }]);
       } finally {
         setChatLoading(false);
       }
@@ -203,15 +203,6 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     setIsSettingsOpen(!isSettingsOpen)
   }
 
-  const handleModelChange = (provider: "ollama" | "gemini", model: string) => {
-    setCurrentModel({ provider, model })
-    // Update chat messages to reflect the model change
-    const modelName = provider === "ollama" ? model : "Gemini 3 Pro"
-    setChatMessages((msgs) => [...msgs, { 
-      role: "gemini", 
-      text: `🔄 Switched to ${provider === "ollama" ? "🏠" : "☁️"} ${modelName}. Ready for your questions!` 
-    }])
-  }
 
 
   return (
@@ -224,57 +215,51 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       }}
       className="select-none"
     >
-      <div className="bg-transparent w-full">
-        <div className="px-2 py-1">
-          <Toast
-            open={toastOpen}
-            onOpenChange={setToastOpen}
-            variant={toastMessage.variant}
-            duration={3000}
-          >
-            <ToastTitle>{toastMessage.title}</ToastTitle>
-            <ToastDescription>{toastMessage.description}</ToastDescription>
-          </Toast>
-          <div className="w-fit">
-            <QueueCommands
-              screenshots={screenshots}
-              onTooltipVisibilityChange={handleTooltipVisibilityChange}
-              onChatToggle={handleChatToggle}
-              onSettingsToggle={handleSettingsToggle}
-            />
+      <div className="px-2 py-2 space-y-2 w-fit" data-clickable-root>
+        <Toast
+          open={toastOpen}
+          onOpenChange={setToastOpen}
+          variant={toastMessage.variant}
+          duration={3000}
+        >
+          <ToastTitle>{toastMessage.title}</ToastTitle>
+          <ToastDescription>{toastMessage.description}</ToastDescription>
+        </Toast>
+
+        <QueueCommands
+          screenshots={screenshots}
+          onTooltipVisibilityChange={handleTooltipVisibilityChange}
+          onChatToggle={handleChatToggle}
+          onSettingsToggle={handleSettingsToggle}
+        />
+
+        {isSettingsOpen && (
+          <div className="w-80">
+            <ModelSelector onChatOpen={() => setIsChatOpen(true)} />
           </div>
-          {/* Conditional Settings Interface */}
-          {isSettingsOpen && (
-            <div className="mt-4 w-full mx-auto">
-              <ModelSelector onModelChange={handleModelChange} onChatOpen={() => setIsChatOpen(true)} />
-            </div>
-          )}
-          
-          {/* Conditional Chat Interface */}
-          {isChatOpen && (
-            <div className="mt-4 w-full mx-auto liquid-glass chat-container p-4 flex flex-col">
-            <div className="flex-1 overflow-y-auto mb-3 p-3 rounded-lg bg-white/10 backdrop-blur-md max-h-64 min-h-[120px] glass-content border border-white/20 shadow-lg">
+        )}
+
+        {isChatOpen && (
+          <div className="w-96 rounded-lg bg-black/60 border border-white/10 p-3 flex flex-col gap-2">
+            <div className="flex-1 overflow-y-auto max-h-64 min-h-[120px] rounded bg-black/30 border border-white/5 p-2 space-y-2">
               {chatMessages.length === 0 ? (
-                <div className="text-sm text-gray-600 text-center mt-8">
-                  💬 Chat with {currentModel.provider === "ollama" ? "🏠" : "☁️"} {currentModel.model}
-                  <br />
-                  <span className="text-xs text-gray-500">Take a screenshot (Cmd+H) for automatic analysis</span>
-                  <br />
-                  <span className="text-xs text-gray-500">Click ⚙️ Models to switch AI providers</span>
+                <div className="text-xs text-white/50 text-center py-6">
+                  Chat with <span className="font-mono text-white/70">{currentModel.model}</span>
+                  <div className="mt-1 text-[11px] text-white/35">Take a screenshot (⌘H) for auto-analysis</div>
                 </div>
               ) : (
                 chatMessages.map((msg, idx) => (
                   <div
                     key={idx}
-                    className={`w-full flex ${msg.role === "user" ? "justify-end" : "justify-start"} mb-3`}
+                    className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                   >
                     <div
-                      className={`max-w-[80%] px-3 py-1.5 rounded-xl text-xs shadow-md backdrop-blur-sm border ${
-                        msg.role === "user" 
-                          ? "bg-gray-700/80 text-gray-100 ml-12 border-gray-600/40" 
-                          : "bg-white/85 text-gray-700 mr-12 border-gray-200/50"
+                      className={`max-w-[85%] px-2.5 py-1.5 rounded text-xs leading-relaxed ${
+                        msg.role === "user"
+                          ? "bg-white/15 text-white/95"
+                          : "bg-white/5 text-white/85 border border-white/10"
                       }`}
-                      style={{ wordBreak: "break-word", lineHeight: "1.4" }}
+                      style={{ wordBreak: "break-word" }}
                     >
                       {msg.text}
                     </div>
@@ -282,48 +267,39 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
                 ))
               )}
               {chatLoading && (
-                <div className="flex justify-start mb-3">
-                  <div className="bg-white/85 text-gray-600 px-3 py-1.5 rounded-xl text-xs backdrop-blur-sm border border-gray-200/50 shadow-md mr-12">
-                    <span className="inline-flex items-center">
-                      <span className="animate-pulse text-gray-400">●</span>
-                      <span className="animate-pulse animation-delay-200 text-gray-400">●</span>
-                      <span className="animate-pulse animation-delay-400 text-gray-400">●</span>
-                      <span className="ml-2">{currentModel.model} is replying...</span>
-                    </span>
+                <div className="flex justify-start">
+                  <div className="bg-white/5 border border-white/10 px-2.5 py-1.5 rounded text-xs text-white/60">
+                    <span className="animate-pulse">{currentModel.model} is replying…</span>
                   </div>
                 </div>
               )}
             </div>
             <form
-              className="flex gap-2 items-center glass-content"
+              className="flex gap-2 items-center"
               onSubmit={e => {
-                e.preventDefault();
-                handleChatSend();
+                e.preventDefault()
+                handleChatSend()
               }}
             >
               <input
                 ref={chatInputRef}
-                className="flex-1 rounded-lg px-3 py-2 bg-white/25 backdrop-blur-md text-gray-800 placeholder-gray-500 text-xs focus:outline-none focus:ring-1 focus:ring-gray-400/60 border border-white/40 shadow-lg transition-all duration-200"
-                placeholder="Type your message..."
+                className="flex-1 px-2.5 py-1.5 rounded bg-white/5 border border-white/10 text-xs text-white/95 placeholder-white/40 focus:outline-none focus:border-white/25"
+                placeholder="Type your message…"
                 value={chatInput}
                 onChange={e => setChatInput(e.target.value)}
                 disabled={chatLoading}
               />
               <button
                 type="submit"
-                className="p-2 rounded-lg bg-gray-600/80 hover:bg-gray-700/80 border border-gray-500/60 flex items-center justify-center transition-all duration-200 backdrop-blur-sm shadow-lg disabled:opacity-50"
+                className="px-3 py-1.5 rounded bg-white/10 hover:bg-white/15 disabled:opacity-40 text-xs text-white/90 transition-colors"
                 disabled={chatLoading || !chatInput.trim()}
-                tabIndex={-1}
                 aria-label="Send"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="white" className="w-4 h-4">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-7.5-15-7.5v6l10 1.5-10 1.5v6z" />
-                </svg>
+                Send
               </button>
             </form>
           </div>
-          )}
-        </div>
+        )}
       </div>
     </div>
   )
