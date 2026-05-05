@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, Menu, nativeImage } from "electron"
+import { app, BrowserWindow, Tray, Menu, nativeImage, systemPreferences, dialog, shell, desktopCapturer } from "electron"
 import { initializeIpcHandlers } from "./ipcHandlers"
 import { WindowHelper } from "./WindowHelper"
 import { ScreenshotHelper } from "./ScreenshotHelper"
@@ -267,6 +267,33 @@ export class AppState {
   }
 }
 
+async function ensureScreenCaptureAccess() {
+  if (process.platform !== "darwin") return
+
+  const status = systemPreferences.getMediaAccessStatus("screen")
+  if (status === "granted") return
+
+  // Touching desktopCapturer triggers the macOS TCC prompt the first time.
+  try {
+    await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width: 1, height: 1 } })
+  } catch {}
+
+  if (systemPreferences.getMediaAccessStatus("screen") === "granted") return
+
+  const response = dialog.showMessageBoxSync({
+    type: "warning",
+    buttons: ["Open System Settings", "Later"],
+    defaultId: 0,
+    cancelId: 1,
+    title: "Screen Recording permission required",
+    message: "Wingman needs Screen Recording access to capture screenshots.",
+    detail: "Enable it under Privacy & Security → Screen Recording, then quit and relaunch the app.",
+  })
+  if (response === 0) {
+    shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+  }
+}
+
 // Application initialization
 async function initializeApp() {
   const appState = AppState.getInstance()
@@ -274,8 +301,9 @@ async function initializeApp() {
   // Initialize IPC handlers before window creation
   initializeIpcHandlers(appState)
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     console.log("App is ready")
+    await ensureScreenCaptureAccess()
     appState.createWindow()
     appState.createTray()
     // Register global shortcuts using ShortcutsHelper
