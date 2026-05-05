@@ -23,6 +23,8 @@ export interface ElectronAPI {
   moveWindowRight: () => Promise<void>
   moveWindowUp: () => Promise<void>
   moveWindowDown: () => Promise<void>
+  analyzeImageFile: (path: string) => Promise<{ text: string; timestamp: number }>
+  clearChatHistory: () => Promise<{ success: boolean }>
   quitApp: () => Promise<void>
   openSettingsWindow: () => Promise<void>
   closeSettingsWindow: () => Promise<void>
@@ -31,12 +33,26 @@ export interface ElectronAPI {
   getStealthEnabled: () => Promise<{ stealthEnabled: boolean }>
   setStealthEnabled: (enabled: boolean) => Promise<{ stealthEnabled: boolean }>
   onStealthChanged: (callback: (config: { stealthEnabled: boolean }) => void) => () => void
+  getAppSettings: () => Promise<AppSettings>
+  updateAppSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>
+  onAppSettingsChanged: (callback: (settings: AppSettings) => void) => () => void
   getCurrentLlmConfig: () => Promise<{ provider: string; model: string }>
   getAvailableLlmModels: () => Promise<Array<{ id: string; name: string }>>
   setCurrentLlmModel: (model: string) => Promise<{ provider: string; model: string }>
   testLlmConnection: () => Promise<{ success: boolean; error?: string }>
   onLlmConfigChanged: (callback: (config: { provider: string; model: string }) => void) => () => void
   invoke: (channel: string, ...args: any[]) => Promise<any>
+}
+
+export type AppMode = "simpleQA" | "coding"
+export type ResponseType = "concise" | "thorough"
+export interface AppSettings {
+  model: string
+  stealthEnabled: boolean
+  mode: AppMode
+  responseType: ResponseType
+  codingLanguage: string
+  responseLanguage: string
 }
 
 declare global {

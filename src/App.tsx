@@ -5,6 +5,13 @@ import { useEffect, useRef, useState } from "react"
 import Solutions from "./_pages/Solutions"
 import Settings from "./_pages/Settings"
 import { QueryClient, QueryClientProvider } from "react-query"
+import {
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate
+} from "react-router-dom"
 
 declare global {
   interface Window {
@@ -45,6 +52,8 @@ declare global {
       moveWindowRight: () => Promise<void>
       moveWindowUp: () => Promise<void>
       moveWindowDown: () => Promise<void>
+      analyzeImageFile: (path: string) => Promise<{ text: string; timestamp: number }>
+      clearChatHistory: () => Promise<{ success: boolean }>
       quitApp: () => Promise<void>
       openSettingsWindow: () => Promise<void>
       closeSettingsWindow: () => Promise<void>
@@ -53,6 +62,37 @@ declare global {
       getStealthEnabled: () => Promise<{ stealthEnabled: boolean }>
       setStealthEnabled: (enabled: boolean) => Promise<{ stealthEnabled: boolean }>
       onStealthChanged: (callback: (config: { stealthEnabled: boolean }) => void) => () => void
+      getAppSettings: () => Promise<{
+        model: string
+        stealthEnabled: boolean
+        mode: "simpleQA" | "coding"
+        responseType: "concise" | "thorough"
+        codingLanguage: string
+        responseLanguage: string
+}>
+      updateAppSettings: (patch: Partial<{
+        model: string
+        stealthEnabled: boolean
+        mode: "simpleQA" | "coding"
+        responseType: "concise" | "thorough"
+        codingLanguage: string
+        responseLanguage: string
+}>) => Promise<{
+        model: string
+        stealthEnabled: boolean
+        mode: "simpleQA" | "coding"
+        responseType: "concise" | "thorough"
+        codingLanguage: string
+        responseLanguage: string
+}>
+      onAppSettingsChanged: (callback: (settings: {
+        model: string
+        stealthEnabled: boolean
+        mode: "simpleQA" | "coding"
+        responseType: "concise" | "thorough"
+        codingLanguage: string
+        responseLanguage: string
+}) => void) => () => void
       
       // LLM Model Management
       getCurrentLlmConfig: () => Promise<{ provider: string; model: string }>
@@ -75,13 +115,35 @@ const queryClient = new QueryClient({
   }
 })
 
+type AppView = "queue" | "solutions" | "debug" | "settings"
+
+const viewToPath: Record<AppView, string> = {
+  queue: "/queue",
+  solutions: "/solutions",
+  debug: "/debug",
+  settings: "/settings"
+}
+
+const getViewFromPath = (pathname: string): AppView => {
+  if (pathname.startsWith("/solutions")) return "solutions"
+  if (pathname.startsWith("/debug")) return "debug"
+  if (pathname.startsWith("/settings")) return "settings"
+  return "queue"
+}
+
 const App: React.FC = () => {
+  const location = useLocation()
+  const navigate = useNavigate()
   const isSettingsWindow =
     new URLSearchParams(window.location.search).get("settings") === "1"
-  const [view, setView] = useState<"queue" | "solutions" | "debug" | "settings">(
-    isSettingsWindow ? "settings" : "queue"
-  )
+  const view = getViewFromPath(location.pathname)
   const containerRef = useRef<HTMLDivElement>(null)
+
+  const setView: React.Dispatch<React.SetStateAction<AppView>> = (nextView) => {
+    const resolvedView =
+      typeof nextView === "function" ? nextView(view) : nextView
+    navigate(viewToPath[resolvedView])
+  }
 
   // Toggle OS-level click-through based on whether cursor is over real content.
   // Transparent regions of the window otherwise swallow clicks meant for apps below.
@@ -105,7 +167,13 @@ const App: React.FC = () => {
       window.removeEventListener("mousemove", onMove)
       window.electronAPI.setIgnoreMouseEvents?.(false)
     }
-  }, [])
+  }, [isSettingsWindow])
+
+  useEffect(() => {
+    if (isSettingsWindow && view !== "settings") {
+      navigate(viewToPath.settings, { replace: true })
+    }
+  }, [isSettingsWindow, navigate, view])
 
   // Effect for height monitoring
   useEffect(() => {
@@ -115,13 +183,15 @@ const App: React.FC = () => {
       queryClient.invalidateQueries(["problem_statement"])
       queryClient.invalidateQueries(["solution"])
       queryClient.invalidateQueries(["new_solution"])
-      setView("queue")
+      window.localStorage.removeItem("wingman-chat-history")
+      window.electronAPI.clearChatHistory()
+      navigate(viewToPath.queue)
     })
 
     return () => {
       cleanup()
     }
-  }, [])
+  }, [navigate])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -164,7 +234,7 @@ const App: React.FC = () => {
   useEffect(() => {
     const cleanupFunctions = [
       window.electronAPI.onSolutionStart(() => {
-        setView("solutions")
+        navigate(viewToPath.solutions)
         console.log("starting processing")
       }),
 
@@ -172,7 +242,9 @@ const App: React.FC = () => {
         queryClient.removeQueries(["screenshots"])
         queryClient.removeQueries(["solution"])
         queryClient.removeQueries(["problem_statement"])
-        setView("queue")
+        window.localStorage.removeItem("wingman-chat-history")
+        window.electronAPI.clearChatHistory()
+        navigate(viewToPath.queue)
         console.log("Unauthorized")
       }),
       // Update this reset handler
@@ -182,33 +254,40 @@ const App: React.FC = () => {
         queryClient.removeQueries(["screenshots"])
         queryClient.removeQueries(["solution"])
         queryClient.removeQueries(["problem_statement"])
-        setView("queue")
+        navigate(viewToPath.queue)
         console.log("View reset to 'queue' via Command+R shortcut")
       }),
       window.electronAPI.onProblemExtracted((data: any) => {
-        if (view === "queue") {
-          console.log("Problem extracted successfully")
-          queryClient.invalidateQueries(["problem_statement"])
-          queryClient.setQueryData(["problem_statement"], data)
-        }
+        console.log("Problem extracted successfully")
+        queryClient.invalidateQueries(["problem_statement"])
+        queryClient.setQueryData(["problem_statement"], data)
       })
     ]
     return () => cleanupFunctions.forEach((cleanup) => cleanup())
-  }, [])
+  }, [navigate, view])
 
   return (
     <div ref={containerRef} className="min-h-0">
       <QueryClientProvider client={queryClient}>
         <ToastProvider>
-          {view === "queue" ? (
-            <Queue setView={setView} />
-          ) : view === "solutions" ? (
-            <Solutions setView={setView} />
-          ) : view === "settings" ? (
-            <Settings />
-          ) : (
-            <></>
-          )}
+          <Routes>
+            <Route
+              path="/"
+              element={
+                <Navigate to={isSettingsWindow ? "/settings" : "/queue"} replace />
+              }
+            />
+            <Route path="/queue" element={<Queue setView={setView} />} />
+            <Route path="/solutions" element={<Solutions setView={setView} />} />
+            <Route path="/debug" element={<Solutions setView={setView} />} />
+            <Route path="/settings" element={<Settings />} />
+            <Route
+              path="*"
+              element={
+                <Navigate to={isSettingsWindow ? "/settings" : "/queue"} replace />
+              }
+            />
+          </Routes>
           <ToastViewport />
         </ToastProvider>
       </QueryClientProvider>

@@ -2,6 +2,7 @@
 
 import { BrowserWindow, ipcMain, app } from "electron"
 import { AppState } from "./main"
+import { getAppSettings, updateAppSettings } from "./AppSettings"
 
 export function initializeIpcHandlers(appState: AppState): void {
   ipcMain.handle(
@@ -90,6 +91,11 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   });
 
+  ipcMain.handle("clear-chat-history", async () => {
+    appState.processingHelper.getLLMHelper().clearChatHistory()
+    return { success: true }
+  })
+
   ipcMain.handle("quit-app", () => {
     appState.quitApp()
   })
@@ -143,6 +149,18 @@ export function initializeIpcHandlers(appState: AppState): void {
       window.webContents.send("stealth-changed", result)
     }
     return result
+  })
+
+  ipcMain.handle("get-app-settings", async () => {
+    return getAppSettings()
+  })
+
+  ipcMain.handle("update-app-settings", async (_event, patch) => {
+    const settings = updateAppSettings(patch)
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send("app-settings-changed", settings)
+    }
+    return settings
   })
 
   // LLM Model Management Handlers

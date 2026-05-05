@@ -32,6 +32,7 @@ interface ElectronAPI {
   moveWindowUp: () => Promise<void>
   moveWindowDown: () => Promise<void>
   analyzeImageFile: (path: string) => Promise<{ text: string; timestamp: number }>
+  clearChatHistory: () => Promise<{ success: boolean }>
   quitApp: () => Promise<void>
   openSettingsWindow: () => Promise<void>
   closeSettingsWindow: () => Promise<void>
@@ -42,6 +43,9 @@ interface ElectronAPI {
   onStealthChanged: (
     callback: (config: { stealthEnabled: boolean }) => void
   ) => () => void
+  getAppSettings: () => Promise<AppSettings>
+  updateAppSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>
+  onAppSettingsChanged: (callback: (settings: AppSettings) => void) => () => void
 
   // LLM Model Management
   getCurrentLlmConfig: () => Promise<{ provider: string; model: string }>
@@ -53,6 +57,17 @@ interface ElectronAPI {
   ) => () => void
 
   invoke: (channel: string, ...args: any[]) => Promise<any>
+}
+
+type AppMode = "simpleQA" | "coding"
+type ResponseType = "concise" | "thorough"
+type AppSettings = {
+  model: string
+  stealthEnabled: boolean
+  mode: AppMode
+  responseType: ResponseType
+  codingLanguage: string
+  responseLanguage: string
 }
 
 export const PROCESSING_EVENTS = {
@@ -187,6 +202,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   moveWindowUp: () => ipcRenderer.invoke("move-window-up"),
   moveWindowDown: () => ipcRenderer.invoke("move-window-down"),
   analyzeImageFile: (path: string) => ipcRenderer.invoke("analyze-image-file", path),
+  clearChatHistory: () => ipcRenderer.invoke("clear-chat-history"),
   quitApp: () => ipcRenderer.invoke("quit-app"),
   openSettingsWindow: () => ipcRenderer.invoke("open-settings-window"),
   closeSettingsWindow: () => ipcRenderer.invoke("close-settings-window"),
@@ -202,6 +218,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("stealth-changed", subscription)
     return () => {
       ipcRenderer.removeListener("stealth-changed", subscription)
+    }
+  },
+  getAppSettings: () => ipcRenderer.invoke("get-app-settings"),
+  updateAppSettings: (patch: Partial<AppSettings>) => ipcRenderer.invoke("update-app-settings", patch),
+  onAppSettingsChanged: (callback: (settings: AppSettings) => void) => {
+    const subscription = (_: any, settings: AppSettings) => callback(settings)
+    ipcRenderer.on("app-settings-changed", subscription)
+    return () => {
+      ipcRenderer.removeListener("app-settings-changed", subscription)
     }
   },
 

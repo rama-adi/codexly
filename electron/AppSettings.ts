@@ -5,7 +5,16 @@ import { z } from "zod";
 
 export const appSettingsSchema = z.object({
   model: z.string().default("gpt-5.4"),
-  stealthEnabled: z.boolean().default(true)
+  stealthEnabled: z.boolean().default(true),
+  mode: z.enum(["simpleQA", "coding"]).default("simpleQA"),
+  // concise = just give me the answer (answer only for simpleQA, answer and code for coding)
+  // -> {answer, code(if coding)}
+  // thorough = answer, thoughts, why, code
+  responseType: z.enum(["concise", "thorough"]).default("concise"),
+  codingLanguage: z.string().default("javascript"),
+  // Optional natural language for the response (e.g. "English", "Spanish", "Japanese").
+  // Empty string means no preference — let the model decide based on the input.
+  responseLanguage: z.string().default(""),
 });
 
 export type AppSettings = z.infer<typeof appSettingsSchema>;
