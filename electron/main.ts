@@ -126,6 +126,10 @@ export class AppState {
     this.windowHelper.closeSettingsWindow()
   }
 
+  public minimizeSettingsWindow(): void {
+    this.windowHelper.minimizeSettingsWindow()
+  }
+
   public getStealthEnabled(): boolean {
     return getAppSettings().stealthEnabled
   }

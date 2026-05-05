@@ -9,6 +9,7 @@ import { QueryClient, QueryClientProvider } from "react-query"
 declare global {
   interface Window {
     electronAPI: {
+      platform: NodeJS.Platform
       //RANDOM GETTER/SETTERS
       updateContentDimensions: (dimensions: {
         width: number
@@ -47,6 +48,7 @@ declare global {
       quitApp: () => Promise<void>
       openSettingsWindow: () => Promise<void>
       closeSettingsWindow: () => Promise<void>
+      minimizeSettingsWindow: () => Promise<void>
       setIgnoreMouseEvents: (ignore: boolean) => Promise<void>
       getStealthEnabled: () => Promise<{ stealthEnabled: boolean }>
       setStealthEnabled: (enabled: boolean) => Promise<{ stealthEnabled: boolean }>

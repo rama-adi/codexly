@@ -169,7 +169,7 @@ export class WindowHelper {
       return
     }
 
-    this.settingsWindow = new BrowserWindow({
+    const settingsWindowOptions: Electron.BrowserWindowConstructorOptions = {
       width: 380,
       height: 420,
       minWidth: 340,
@@ -186,7 +186,16 @@ export class WindowHelper {
         contextIsolation: true,
         preload: path.join(__dirname, "preload.js")
       }
-    })
+    }
+
+    if (process.platform === "darwin") {
+      settingsWindowOptions.titleBarStyle = "hiddenInset"
+      settingsWindowOptions.trafficLightPosition = { x: 12, y: 13 }
+    } else {
+      settingsWindowOptions.frame = false
+    }
+
+    this.settingsWindow = new BrowserWindow(settingsWindowOptions)
 
     this.settingsWindow.setMenuBarVisibility(false)
     this.settingsWindow.setAutoHideMenuBar(true)
@@ -208,6 +217,11 @@ export class WindowHelper {
   public closeSettingsWindow(): void {
     if (!this.settingsWindow || this.settingsWindow.isDestroyed()) return
     this.settingsWindow.close()
+  }
+
+  public minimizeSettingsWindow(): void {
+    if (!this.settingsWindow || this.settingsWindow.isDestroyed()) return
+    this.settingsWindow.minimize()
   }
 
   private applyCaptureProtection(): void {

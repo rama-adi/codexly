@@ -1,4 +1,5 @@
 export interface ElectronAPI {
+  platform: NodeJS.Platform
   updateContentDimensions: (dimensions: {
     width: number
     height: number
@@ -25,6 +26,7 @@ export interface ElectronAPI {
   quitApp: () => Promise<void>
   openSettingsWindow: () => Promise<void>
   closeSettingsWindow: () => Promise<void>
+  minimizeSettingsWindow: () => Promise<void>
   setIgnoreMouseEvents: (ignore: boolean) => Promise<void>
   getStealthEnabled: () => Promise<{ stealthEnabled: boolean }>
   setStealthEnabled: (enabled: boolean) => Promise<{ stealthEnabled: boolean }>

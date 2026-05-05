@@ -129,6 +129,10 @@ export function initializeIpcHandlers(appState: AppState): void {
     appState.closeSettingsWindow()
   })
 
+  ipcMain.handle("minimize-settings-window", async () => {
+    appState.minimizeSettingsWindow()
+  })
+
   ipcMain.handle("get-stealth-enabled", async () => {
     return { stealthEnabled: appState.getStealthEnabled() }
   })

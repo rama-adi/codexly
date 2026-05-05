@@ -1,38 +1,30 @@
 import fs from "fs"
 import os from "os"
 import path from "path"
+import { z } from "zod";
 
-export type AppSettings = {
-  model: string
-  stealthEnabled: boolean
-}
+export const appSettingsSchema = z.object({
+  model: z.string().default("gpt-5.4"),
+  stealthEnabled: z.boolean().default(true)
+});
+
+export type AppSettings = z.infer<typeof appSettingsSchema>;
 
 const SETTINGS_FILE = path.join(os.homedir(), ".codexlysetting.json")
 
-const DEFAULT_SETTINGS: AppSettings = {
-  model: "gpt-5.4",
-  stealthEnabled: true,
-}
 
 export function getAppSettings(): AppSettings {
   try {
     const raw = fs.readFileSync(SETTINGS_FILE, "utf-8")
     const parsed = JSON.parse(raw)
-    return {
-      model: typeof parsed?.model === "string" && parsed.model.trim()
-        ? parsed.model.trim()
-        : DEFAULT_SETTINGS.model,
-      stealthEnabled: typeof parsed?.stealthEnabled === "boolean"
-        ? parsed.stealthEnabled
-        : DEFAULT_SETTINGS.stealthEnabled,
-    }
+    return appSettingsSchema.parse(parsed)
   } catch {
-    return { ...DEFAULT_SETTINGS }
+    return appSettingsSchema.parse({})
   }
 }
 
 export function updateAppSettings(patch: Partial<AppSettings>): AppSettings {
-  const next = { ...getAppSettings(), ...patch }
+  const next = appSettingsSchema.parse({ ...getAppSettings(), ...patch })
   try {
     fs.writeFileSync(SETTINGS_FILE, JSON.stringify(next, null, 2), "utf-8")
   } catch (error) {

@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron"
 
 // Types for the exposed Electron API
 interface ElectronAPI {
+  platform: NodeJS.Platform
   updateContentDimensions: (dimensions: {
     width: number
     height: number
@@ -34,6 +35,7 @@ interface ElectronAPI {
   quitApp: () => Promise<void>
   openSettingsWindow: () => Promise<void>
   closeSettingsWindow: () => Promise<void>
+  minimizeSettingsWindow: () => Promise<void>
   setIgnoreMouseEvents: (ignore: boolean) => Promise<void>
   getStealthEnabled: () => Promise<{ stealthEnabled: boolean }>
   setStealthEnabled: (enabled: boolean) => Promise<{ stealthEnabled: boolean }>
@@ -72,6 +74,7 @@ export const PROCESSING_EVENTS = {
 
 // Expose the Electron API to the renderer process
 contextBridge.exposeInMainWorld("electronAPI", {
+  platform: process.platform,
   updateContentDimensions: (dimensions: { width: number; height: number }) =>
     ipcRenderer.invoke("update-content-dimensions", dimensions),
   takeScreenshot: () => ipcRenderer.invoke("take-screenshot"),
@@ -187,6 +190,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   quitApp: () => ipcRenderer.invoke("quit-app"),
   openSettingsWindow: () => ipcRenderer.invoke("open-settings-window"),
   closeSettingsWindow: () => ipcRenderer.invoke("close-settings-window"),
+  minimizeSettingsWindow: () => ipcRenderer.invoke("minimize-settings-window"),
   setIgnoreMouseEvents: (ignore: boolean) => ipcRenderer.invoke("set-ignore-mouse-events", ignore),
   getStealthEnabled: () => ipcRenderer.invoke("get-stealth-enabled"),
   setStealthEnabled: (enabled: boolean) => ipcRenderer.invoke("set-stealth-enabled", enabled),
