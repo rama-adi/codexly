@@ -3,6 +3,7 @@
 import { AppState } from "./main"
 import { LLMHelper } from "./LLMHelper"
 import dotenv from "dotenv"
+import { getAppSettings } from "./AppSettings"
 
 dotenv.config()
 
@@ -30,24 +31,27 @@ export class ProcessingHelper {
         return
       }
 
-      const lastPath = screenshotQueue[screenshotQueue.length - 1]
-
       mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.INITIAL_START)
       this.appState.setView("solutions")
       this.currentProcessingAbortController = new AbortController()
       try {
-        const imageResult = await this.llmHelper.analyzeImageFile(lastPath)
-        const problemInfo = {
-          problem_statement: imageResult.text,
-          input_format: { description: "Generated from screenshot", parameters: [] as any[] },
-          output_format: { description: "Generated from screenshot", type: "string", subtype: "text" },
-          complexity: { time: "N/A", space: "N/A" },
-          test_cases: [] as any[],
-          validation_type: "manual",
-          difficulty: "custom",
-        }
+        const settings = getAppSettings()
+        const problemInfo =
+          settings.mode === "coding"
+            ? await this.llmHelper.extractProblemFromImages(screenshotQueue)
+            : {
+                problem_statement: (await this.llmHelper.analyzeImageFiles(screenshotQueue)).text,
+                input_format: { description: "Generated from screenshot", parameters: [] as any[] },
+                output_format: { description: "Generated from screenshot", type: "string", subtype: "text" },
+                complexity: { time: "N/A", space: "N/A" },
+                test_cases: [] as any[],
+                validation_type: "manual",
+                difficulty: "custom",
+              }
         mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.PROBLEM_EXTRACTED, problemInfo)
         this.appState.setProblemInfo(problemInfo)
+        const solution = await this.llmHelper.generateSolution(problemInfo)
+        mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.SOLUTION_SUCCESS, solution)
       } catch (error: any) {
         console.error("Image processing error:", error)
         mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.INITIAL_SOLUTION_ERROR, error.message)
@@ -71,6 +75,10 @@ export class ProcessingHelper {
     try {
       const problemInfo = this.appState.getProblemInfo()
       if (!problemInfo) throw new Error("No problem info available")
+
+      if (getAppSettings().mode !== "coding") {
+        throw new Error("Debugging is only available in coding mode")
+      }
 
       const currentSolution = await this.llmHelper.generateSolution(problemInfo)
       const currentCode = currentSolution.solution.code
