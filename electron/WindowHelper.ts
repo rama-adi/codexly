@@ -1,12 +1,9 @@
 
 import { BrowserWindow, screen } from "electron"
 import { AppState } from "main"
-import { execFile } from "node:child_process"
 import path from "node:path"
-import { promisify } from "node:util"
 
 const isDev = process.env.NODE_ENV === "development"
-const execFileP = promisify(execFile)
 
 const startUrl = isDev
   ? "http://localhost:5180"
@@ -172,52 +169,7 @@ export class WindowHelper {
 
     if (process.platform === "win32") {
       this.mainWindow.setOpacity(1)
-      this.applyWindowsDisplayAffinity()
     }
-  }
-
-  private applyWindowsDisplayAffinity(): void {
-    if (!this.mainWindow || this.mainWindow.isDestroyed()) return
-
-    const hwnd = this.getWindowsHwnd()
-    if (!hwnd) return
-
-    const script = `
-      Add-Type @"
-      using System;
-      using System.Runtime.InteropServices;
-      public static class Win32CaptureProtection {
-        [DllImport("user32.dll")]
-        public static extern bool SetWindowDisplayAffinity(IntPtr hWnd, uint dwAffinity);
-      }
-"@
-      $hwnd = [IntPtr]${hwnd}
-      $ok = [Win32CaptureProtection]::SetWindowDisplayAffinity($hwnd, 0x11)
-      if (-not $ok) {
-        $ok = [Win32CaptureProtection]::SetWindowDisplayAffinity($hwnd, 0x1)
-      }
-      if (-not $ok) {
-        exit 1
-      }
-    `
-
-    execFileP("powershell", ["-NoProfile", "-NonInteractive", "-Command", script]).catch((error) => {
-      console.warn("Failed to apply Windows display affinity:", error.message)
-    })
-  }
-
-  private getWindowsHwnd(): string | null {
-    if (!this.mainWindow || this.mainWindow.isDestroyed()) return null
-
-    const handle = this.mainWindow.getNativeWindowHandle()
-    if (handle.length >= 8) {
-      return handle.readBigUInt64LE(0).toString()
-    }
-    if (handle.length >= 4) {
-      return handle.readUInt32LE(0).toString()
-    }
-
-    return null
   }
 
   private setupWindowListeners(): void {
@@ -264,6 +216,8 @@ export class WindowHelper {
     const bounds = this.mainWindow.getBounds()
     this.windowPosition = { x: bounds.x, y: bounds.y }
     this.windowSize = { width: bounds.width, height: bounds.height }
+    this.mainWindow.setOpacity(0)
+    this.mainWindow.setIgnoreMouseEvents(true, { forward: true })
     this.mainWindow.hide()
     this.isWindowVisible = false
   }
@@ -283,7 +237,10 @@ export class WindowHelper {
       })
     }
 
+    this.mainWindow.setOpacity(1)
+    this.mainWindow.setIgnoreMouseEvents(false)
     this.mainWindow.showInactive()
+    this.applyCaptureProtection()
 
     this.isWindowVisible = true
   }

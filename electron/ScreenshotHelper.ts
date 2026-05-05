@@ -103,7 +103,7 @@ export class ScreenshotHelper {
       hideMainWindow()
       
       // Add a small delay to ensure window is hidden
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await new Promise(resolve => setTimeout(resolve, process.platform === "win32" ? 250 : 100))
       
       let screenshotPath = ""
 
