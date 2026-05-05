@@ -5,6 +5,8 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter"
 import { dracula } from "react-syntax-highlighter/dist/esm/styles/prism"
 
 import ScreenshotQueue from "../components/Queue/ScreenshotQueue"
+import ChatHistoryButton from "../components/ChatHistoryButton"
+import QueueCommands from "../components/Queue/QueueCommands"
 import {
   Toast,
   ToastDescription,
@@ -13,10 +15,14 @@ import {
   ToastVariant
 } from "../components/ui/toast"
 import { ProblemStatementData } from "../types/solutions"
-import SolutionCommands from "../components/Solutions/SolutionCommands"
 import Debug from "./Debug"
 
 // (Using global ElectronAPI type from src/types/electron.d.ts)
+
+type ScreenshotPreview = {
+  path: string
+  preview: string
+}
 
 export const ContentSection = ({
   title,
@@ -47,11 +53,13 @@ export const ContentSection = ({
 const SolutionSection = ({
   title,
   content,
-  isLoading
+  isLoading,
+  showLineNumbers = true
 }: {
   title: string
   content: React.ReactNode
   isLoading: boolean
+  showLineNumbers?: boolean
 }) => (
   <div className="space-y-2">
     <h2 className="text-[13px] font-medium text-white tracking-wide">
@@ -68,7 +76,7 @@ const SolutionSection = ({
     ) : (
       <div className="w-full">
         <SyntaxHighlighter
-          showLineNumbers
+          showLineNumbers={showLineNumbers}
           language="python"
           style={dracula}
           customStyle={{
@@ -123,6 +131,37 @@ export const ComplexitySection = ({
   </div>
 )
 
+const ScreenshotGallery = ({
+  screenshots
+}: {
+  screenshots: ScreenshotPreview[]
+}) => {
+  if (screenshots.length === 0) return null
+
+  return (
+    <div className="space-y-1.5">
+      <h2 className="text-[13px] font-medium text-white tracking-wide">
+        Screenshots
+      </h2>
+      <div className="flex max-w-[600px] gap-1.5 overflow-x-auto rounded-md border border-white/10 bg-black/30 p-1.5">
+        {screenshots.slice(0, 5).map((screenshot, index) => (
+          <div
+            key={screenshot.path}
+            className="relative h-14 w-20 shrink-0 overflow-hidden rounded border border-white/10 bg-white/5"
+            title={`Screenshot ${index + 1}`}
+          >
+            <img
+              src={screenshot.preview}
+              alt={`Screenshot ${index + 1}`}
+              className="h-full w-full object-cover"
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 interface SolutionsProps {
   setView: React.Dispatch<
     React.SetStateAction<"queue" | "solutions" | "debug" | "settings">
@@ -136,6 +175,7 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
   const [problemStatementData, setProblemStatementData] =
     useState<ProblemStatementData | null>(null)
   const [solutionData, setSolutionData] = useState<string | null>(null)
+  const [answerData, setAnswerData] = useState<string | null>(null)
   const [thoughtsData, setThoughtsData] = useState<string[] | null>(null)
   const [timeComplexityData, setTimeComplexityData] = useState<string | null>(
     null
@@ -144,6 +184,8 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
     null
   )
   const [customContent, setCustomContent] = useState<string | null>(null)
+  const [mode, setMode] = useState<"simpleQA" | "coding">("simpleQA")
+  const [responseType, setResponseType] = useState<"concise" | "thorough">("concise")
 
   const [toastOpen, setToastOpen] = useState(false)
   const [toastMessage, setToastMessage] = useState<ToastMessage>({
@@ -151,9 +193,6 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
     description: "",
     variant: "neutral"
   })
-
-  const [isTooltipVisible, setIsTooltipVisible] = useState(false)
-  const [tooltipHeight, setTooltipHeight] = useState(0)
 
   const [isResetting, setIsResetting] = useState(false)
 
@@ -173,6 +212,23 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
       cacheTime: Infinity
     }
   )
+
+  const { data: initialScreenshots = [], refetch: refetchInitialScreenshots } =
+    useQuery<Array<{ path: string; preview: string }>, Error>(
+      ["screenshots"],
+      async () => {
+        try {
+          return await window.electronAPI.getScreenshots()
+        } catch (error) {
+          console.error("Error loading screenshots:", error)
+          return []
+        }
+      },
+      {
+        staleTime: Infinity,
+        cacheTime: Infinity
+      }
+    )
 
   const showToast = (
     title: string,
@@ -205,11 +261,8 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
     // Height update logic
     const updateDimensions = () => {
       if (contentRef.current) {
-        let contentHeight = contentRef.current.scrollHeight
+        const contentHeight = contentRef.current.scrollHeight
         const contentWidth = contentRef.current.scrollWidth
-        if (isTooltipVisible) {
-          contentHeight += tooltipHeight
-        }
         window.electronAPI.updateContentDimensions({
           width: contentWidth,
           height: contentHeight
@@ -226,7 +279,10 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
 
     // Set up event listeners
     const cleanupFunctions = [
-      window.electronAPI.onScreenshotTaken(() => refetch()),
+      window.electronAPI.onScreenshotTaken(() => {
+        refetch()
+        refetchInitialScreenshots()
+      }),
       window.electronAPI.onResetView(() => {
         // Set resetting state first
         setIsResetting(true)
@@ -237,6 +293,7 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
 
         // Reset other states
         refetch()
+        refetchInitialScreenshots()
 
         // After a small delay, clear the resetting state
         setTimeout(() => {
@@ -245,6 +302,7 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
       }),
       window.electronAPI.onSolutionStart(() => {
         setSolutionData(null)
+        setAnswerData(null)
         setThoughtsData(null)
         setTimeComplexityData(null)
         setSpaceComplexityData(null)
@@ -259,7 +317,8 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
         )
         // Reset solutions in the cache (even though this shouldn't ever happen) and complexities to previous states
         const solution = queryClient.getQueryData(["solution"]) as {
-          code: string
+          answer?: string
+          code?: string
           thoughts: string[]
           time_complexity: string
           space_complexity: string
@@ -267,6 +326,7 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
         if (!solution) {
           setView("queue") //make sure that this is correct. or like make sure there's a toast or something
         }
+        setAnswerData(solution?.answer || null)
         setSolutionData(solution?.code || null)
         setThoughtsData(solution?.thoughts || null)
         setTimeComplexityData(solution?.time_complexity || null)
@@ -283,13 +343,16 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
         console.log({ solution: data.solution })
 
         const solutionData = {
+          answer: data.solution.answer,
           code: data.solution.code,
           thoughts: data.solution.thoughts,
+          why: data.solution.why,
           time_complexity: data.solution.time_complexity,
           space_complexity: data.solution.space_complexity
         }
 
         queryClient.setQueryData(["solution"], solutionData)
+        setAnswerData(solutionData.answer || null)
         setSolutionData(solutionData.code || null)
         setThoughtsData(solutionData.thoughts || null)
         setTimeComplexityData(solutionData.time_complexity || null)
@@ -307,7 +370,14 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
       window.electronAPI.onDebugSuccess((data) => {
         console.log({ debug_data: data })
 
-        queryClient.setQueryData(["new_solution"], data.solution)
+        const previousSolution = queryClient.getQueryData(["solution"]) as {
+          code?: string
+        } | null
+        queryClient.setQueryData(["new_solution"], {
+          ...data.solution,
+          old_code: previousSolution?.code ?? "",
+          new_code: data.solution.code ?? ""
+        })
         setDebugProcessing(false)
       }),
       //when there was an error in the initial debugging, we'll show a toast and stop the little generating pulsing thing.
@@ -332,13 +402,30 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
       resizeObserver.disconnect()
       cleanupFunctions.forEach((cleanup) => cleanup())
     }
-  }, [isTooltipVisible, tooltipHeight])
+  }, [])
 
   useEffect(() => {
+    window.electronAPI.getAppSettings().then(settings => {
+      setMode(settings.mode)
+      setResponseType(settings.responseType)
+    })
+    const unsubscribeSettings = window.electronAPI.onAppSettingsChanged(settings => {
+      setMode(settings.mode)
+      setResponseType(settings.responseType)
+    })
+
     setProblemStatementData(
       queryClient.getQueryData(["problem_statement"]) || null
     )
-    setSolutionData(queryClient.getQueryData(["solution"]) || null)
+    const cachedSolution = queryClient.getQueryData(["solution"]) as {
+      answer?: string
+      code?: string
+      thoughts?: string[]
+      time_complexity?: string
+      space_complexity?: string
+    } | null
+    setAnswerData(cachedSolution?.answer ?? null)
+    setSolutionData(cachedSolution?.code ?? null)
 
     const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
       if (event?.query.queryKey[0] === "problem_statement") {
@@ -348,29 +435,29 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
       }
       if (event?.query.queryKey[0] === "solution") {
         const solution = queryClient.getQueryData(["solution"]) as {
-          code: string
+          answer?: string
+          code?: string
           thoughts: string[]
           time_complexity: string
           space_complexity: string
         } | null
 
+        setAnswerData(solution?.answer ?? null)
         setSolutionData(solution?.code ?? null)
         setThoughtsData(solution?.thoughts ?? null)
         setTimeComplexityData(solution?.time_complexity ?? null)
         setSpaceComplexityData(solution?.space_complexity ?? null)
       }
     })
-    return () => unsubscribe()
+    return () => {
+      unsubscribeSettings()
+      unsubscribe()
+    }
   }, [queryClient])
-
-  const handleTooltipVisibilityChange = (visible: boolean, height: number) => {
-    setIsTooltipVisible(visible)
-    setTooltipHeight(height)
-  }
 
   return (
     <>
-      {!isResetting && queryClient.getQueryData(["new_solution"]) ? (
+      {!isResetting && mode === "coding" && queryClient.getQueryData(["new_solution"]) ? (
         <>
           <Debug
             isProcessing={debugProcessing}
@@ -378,7 +465,11 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
           />
         </>
       ) : (
-        <div ref={contentRef} className="relative space-y-3 px-4 py-3">
+        <div
+          ref={contentRef}
+          className="relative space-y-2 px-3 py-2"
+          data-clickable-root
+        >
           <Toast
             open={toastOpen}
             onOpenChange={setToastOpen}
@@ -389,58 +480,60 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
             <ToastDescription>{toastMessage.description}</ToastDescription>
           </Toast>
 
-          {/* Conditionally render the screenshot queue if solutionData is available */}
-          {solutionData && (
-            <div className="bg-transparent w-fit">
-              <div className="pb-3">
-                <div className="space-y-3 w-fit">
-                  <ScreenshotQueue
-                    isLoading={debugProcessing}
-                    screenshots={extraScreenshots}
-                    onDeleteScreenshot={handleDeleteExtraScreenshot}
-                  />
-                </div>
-              </div>
+          <QueueCommands
+            screenshots={[]}
+            onTooltipVisibilityChange={() => undefined}
+            onSettingsOpen={() => window.electronAPI.openSettingsWindow()}
+            chatControl={<ChatHistoryButton />}
+          />
+
+          {/* Conditionally render the screenshot queue when coding can use extra debug screenshots */}
+          {mode === "coding" && solutionData && extraScreenshots.length > 0 && (
+            <div className="w-fit rounded-lg border border-white/10 bg-black/60 p-1.5">
+              <ScreenshotQueue
+                isLoading={debugProcessing}
+                screenshots={extraScreenshots}
+                onDeleteScreenshot={handleDeleteExtraScreenshot}
+              />
             </div>
           )}
 
-          {/* Navbar of commands with the SolutionsHelper */}
-          <SolutionCommands
-            extraScreenshots={extraScreenshots}
-            onTooltipVisibilityChange={handleTooltipVisibilityChange}
-          />
-
           {/* Main Content - Modified width constraints */}
-          <div className="w-full text-sm text-black bg-black/60 rounded-md">
+          <div className="w-full text-sm text-black bg-black/60 rounded-md max-h-[70vh] overflow-y-auto">
             <div className="rounded-lg overflow-hidden">
-              <div className="px-4 py-3 space-y-4 max-w-full">
-                {problemStatementData?.validation_type === "manual" ? (
-                  <ContentSection
-                    title="Screenshot Result"
-                    content={problemStatementData.problem_statement}
-                    isLoading={false}
-                  />
-                ) : (
+              <div className="px-3 py-2.5 space-y-3 max-w-full">
+                {mode === "simpleQA" ? (
                   <>
                     <ContentSection
-                      title="Problem Statement"
-                      content={problemStatementData?.problem_statement}
-                      isLoading={!problemStatementData}
+                      title="Response"
+                      content={answerData || problemStatementData?.problem_statement}
+                      isLoading={!answerData && !problemStatementData}
                     />
-                    {problemStatementData && !solutionData && (
+                    <ScreenshotGallery screenshots={initialScreenshots} />
+                  </>
+                ) : (
+                  <>
+                    {problemStatementData && (
+                      <ContentSection
+                        title="Problem Statement"
+                        content={problemStatementData.problem_statement}
+                        isLoading={false}
+                      />
+                    )}
+                    {!answerData && !solutionData && (
                       <div className="mt-4 flex">
                         <p className="text-xs bg-gradient-to-r from-gray-300 via-gray-100 to-gray-300 bg-clip-text text-transparent animate-pulse">
                           Generating solutions...
                         </p>
                       </div>
                     )}
-                    {/* Solution Sections (legacy, only for non-manual) */}
-                    {solutionData && (
+                    <ScreenshotGallery screenshots={initialScreenshots} />
+                    {(answerData || solutionData) && (
                       <>
-                        <ContentSection
-                          title="Analysis"
-                          content={
-                            thoughtsData && (
+                        {responseType === "thorough" && thoughtsData && thoughtsData.length > 0 && (
+                          <ContentSection
+                            title="Analysis"
+                            content={
                               <div className="space-y-3">
                                 <div className="space-y-1">
                                   {thoughtsData.map((thought, index) => (
@@ -454,16 +547,23 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
                                   ))}
                                 </div>
                               </div>
-                            )
-                          }
-                          isLoading={!thoughtsData}
+                            }
+                            isLoading={!thoughtsData}
+                          />
+                        )}
+                        <ContentSection
+                          title={mode === "coding" ? "Answer" : "Response"}
+                          content={answerData || solutionData}
+                          isLoading={!answerData && !solutionData}
                         />
-                        <SolutionSection
-                          title={problemStatementData?.output_format?.subtype === "voice" ? "Response" : "Solution"}
-                          content={solutionData}
-                          isLoading={!solutionData}
-                        />
-                        {problemStatementData?.output_format?.subtype !== "voice" && (
+                        {mode === "coding" && solutionData && (
+                          <SolutionSection
+                            title="Code"
+                            content={solutionData}
+                            isLoading={!solutionData}
+                          />
+                        )}
+                        {mode === "coding" && responseType === "thorough" && (
                           <ComplexitySection
                             timeComplexity={timeComplexityData}
                             spaceComplexity={spaceComplexityData}

@@ -27,7 +27,7 @@ const ScreenshotItem: React.FC<ScreenshotItemProps> = ({
   return (
     <>
       <div
-        className={`border border-white relative ${isLoading ? "" : "group"}`}
+        className={`relative h-14 w-20 shrink-0 overflow-hidden rounded border border-white/10 bg-white/5 ${isLoading ? "" : "group"}`}
       >
         <div className="w-full h-full relative">
           {isLoading && (
@@ -51,10 +51,10 @@ const ScreenshotItem: React.FC<ScreenshotItemProps> = ({
               e.stopPropagation()
               handleDelete()
             }}
-            className="absolute top-2 left-2 p-1 rounded-full bg-black bg-opacity-50 text-white opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+            className="absolute left-1 top-1 rounded bg-black/70 p-1 text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100"
             aria-label="Delete screenshot"
           >
-            <X size={16} />
+            <X size={12} />
           </button>
         )}
       </div>

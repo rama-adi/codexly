@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react"
 import { useQuery } from "react-query"
 import ScreenshotQueue from "../components/Queue/ScreenshotQueue"
+import { Trash2 } from "lucide-react"
 import {
   Toast,
   ToastTitle,
@@ -24,12 +25,17 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     variant: "neutral"
   })
 
-  const [isTooltipVisible, setIsTooltipVisible] = useState(false)
-  const [tooltipHeight, setTooltipHeight] = useState(0)
   const contentRef = useRef<HTMLDivElement>(null)
 
   const [chatInput, setChatInput] = useState("")
-  const [chatMessages, setChatMessages] = useState<{role: "user"|"assistant", text: string}[]>([])
+  const [chatMessages, setChatMessages] = useState<{role: "user"|"assistant", text: string}[]>(() => {
+    try {
+      const saved = window.localStorage.getItem("wingman-chat-history")
+      return saved ? JSON.parse(saved) : []
+    } catch {
+      return []
+    }
+  })
   const [chatLoading, setChatLoading] = useState(false)
   const [isChatOpen, setIsChatOpen] = useState(false)
   const chatInputRef = useRef<HTMLInputElement>(null)
@@ -102,6 +108,12 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     }
   }
 
+  const clearChat = async () => {
+    setChatMessages([])
+    window.localStorage.removeItem("wingman-chat-history")
+    await window.electronAPI.clearChatHistory()
+  }
+
   // Load current model configuration on mount
   useEffect(() => {
     const loadCurrentModel = async () => {
@@ -124,11 +136,8 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   useEffect(() => {
     const updateDimensions = () => {
       if (contentRef.current) {
-        let contentHeight = contentRef.current.scrollHeight
+        const contentHeight = contentRef.current.scrollHeight
         const contentWidth = contentRef.current.scrollWidth
-        if (isTooltipVisible) {
-          contentHeight += tooltipHeight
-        }
         window.electronAPI.updateContentDimensions({
           width: contentWidth,
           height: contentHeight
@@ -144,7 +153,11 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
 
     const cleanupFunctions = [
       window.electronAPI.onScreenshotTaken(() => refetch()),
-      window.electronAPI.onResetView(() => refetch()),
+      window.electronAPI.onResetView(() => {
+        setChatMessages([])
+        window.localStorage.removeItem("wingman-chat-history")
+        refetch()
+      }),
       window.electronAPI.onSolutionError((error: string) => {
         showToast(
           "Processing Failed",
@@ -167,39 +180,11 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       resizeObserver.disconnect()
       cleanupFunctions.forEach((cleanup) => cleanup())
     }
-  }, [isTooltipVisible, tooltipHeight])
+  }, [])
 
-  // Seamless screenshot-to-LLM flow
   useEffect(() => {
-    // Listen for screenshot taken event
-    const unsubscribe = window.electronAPI.onScreenshotTaken(async (data) => {
-      // Refetch screenshots to update the queue
-      await refetch();
-      // Show loading in chat
-      setChatLoading(true);
-      try {
-        // Get the latest screenshot path
-        const latest = data?.path || (Array.isArray(data) && data.length > 0 && data[data.length - 1]?.path);
-        if (latest) {
-          // Call the LLM to process the screenshot
-          const response = await window.electronAPI.invoke("analyze-image-file", latest);
-          setChatMessages((msgs) => [...msgs, { role: "assistant", text: response.text }]);
-        }
-      } catch (err) {
-        setChatMessages((msgs) => [...msgs, { role: "assistant", text: "Error: " + String(err) }]);
-      } finally {
-        setChatLoading(false);
-      }
-    });
-    return () => {
-      unsubscribe && unsubscribe();
-    };
-  }, [refetch]);
-
-  const handleTooltipVisibilityChange = (visible: boolean, height: number) => {
-    setIsTooltipVisible(visible)
-    setTooltipHeight(height)
-  }
+    window.localStorage.setItem("wingman-chat-history", JSON.stringify(chatMessages))
+  }, [chatMessages])
 
   const handleChatToggle = () => {
     setIsChatOpen(!isChatOpen)
@@ -215,7 +200,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       }}
       className="select-none"
     >
-      <div className="px-2 py-2 space-y-2 w-fit" data-clickable-root>
+      <div className="px-2 py-2 space-y-1.5 w-fit" data-clickable-root>
         <Toast
           open={toastOpen}
           onOpenChange={setToastOpen}
@@ -228,19 +213,43 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
 
         <QueueCommands
           screenshots={screenshots}
-          onTooltipVisibilityChange={handleTooltipVisibilityChange}
           onChatToggle={handleChatToggle}
           onSettingsOpen={() => window.electronAPI.openSettingsWindow()}
         />
 
+        {screenshots.length > 0 && (
+          <div className="w-fit rounded-lg border border-white/10 bg-black/60 p-1.5">
+            <ScreenshotQueue
+              isLoading={false}
+              screenshots={screenshots}
+              onDeleteScreenshot={handleDeleteScreenshot}
+            />
+          </div>
+        )}
+
         {isChatOpen && (
           <div className="w-96 rounded-lg bg-black/60 border border-white/10 p-3 flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="truncate text-xs font-medium text-white/70">
+                {currentModel.model}
+              </div>
+              <button
+                type="button"
+                onClick={clearChat}
+                disabled={chatLoading || chatMessages.length === 0}
+                className="inline-flex h-7 w-7 items-center justify-center rounded bg-white/5 text-white/60 transition-colors hover:bg-white/10 hover:text-white/85 disabled:cursor-default disabled:opacity-35"
+                title="Clear chat"
+                aria-label="Clear chat"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
             <div className="flex-1 overflow-y-auto max-h-64 min-h-[120px] rounded bg-black/30 border border-white/5 p-2 space-y-2">
               {chatMessages.length === 0 ? (
                 <div className="text-xs text-white/50 text-center py-6">
                   Chat with <span className="font-mono text-white/70">{currentModel.model}</span>
                   <div className="mt-1 text-[11px] text-white/35">
-                    Take a screenshot (⌘H) or select an area (⇧⌘H) for auto-analysis
+                    Take screenshots, then press ⌘↵ to solve.
                   </div>
                 </div>
               ) : (

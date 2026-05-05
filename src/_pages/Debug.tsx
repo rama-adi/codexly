@@ -5,6 +5,8 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter"
 import { dracula } from "react-syntax-highlighter/dist/esm/styles/prism"
 import { ComplexitySection, ContentSection } from "./Solutions"
 import ScreenshotQueue from "../components/Queue/ScreenshotQueue"
+import ChatHistoryButton from "../components/ChatHistoryButton"
+import QueueCommands from "../components/Queue/QueueCommands"
 import {
   Toast,
   ToastDescription,
@@ -12,7 +14,6 @@ import {
   ToastTitle,
   ToastVariant
 } from "../components/ui/toast"
-import ExtraScreenshotsQueueHelper from "../components/Solutions/SolutionCommands"
 import { diffLines } from "diff"
 
 type DiffLine = {
@@ -222,9 +223,6 @@ const Debug: React.FC<DebugProps> = ({ isProcessing, setIsProcessing }) => {
     variant: "neutral"
   })
 
-  const [isTooltipVisible, setIsTooltipVisible] = useState(false)
-  const [tooltipHeight, setTooltipHeight] = useState(0)
-
   const { data: extraScreenshots = [], refetch } = useQuery({
     queryKey: ["extras"],
     queryFn: async () => {
@@ -311,11 +309,8 @@ const Debug: React.FC<DebugProps> = ({ isProcessing, setIsProcessing }) => {
     // Set up resize observer
     const updateDimensions = () => {
       if (contentRef.current) {
-        let contentHeight = contentRef.current.scrollHeight
+        const contentHeight = contentRef.current.scrollHeight
         const contentWidth = contentRef.current.scrollWidth
-        if (isTooltipVisible) {
-          contentHeight += tooltipHeight
-        }
         window.electronAPI.updateContentDimensions({
           width: contentWidth,
           height: contentHeight
@@ -335,13 +330,12 @@ const Debug: React.FC<DebugProps> = ({ isProcessing, setIsProcessing }) => {
     }
   }, [queryClient])
 
-  const handleTooltipVisibilityChange = (visible: boolean, height: number) => {
-    setIsTooltipVisible(visible)
-    setTooltipHeight(height)
-  }
-
   return (
-    <div ref={contentRef} className="relative space-y-3 px-4 py-3 ">
+    <div
+      ref={contentRef}
+      className="relative space-y-3 px-4 py-3"
+      data-clickable-root
+    >
       <Toast
         open={toastOpen}
         onOpenChange={setToastOpen}
@@ -351,6 +345,13 @@ const Debug: React.FC<DebugProps> = ({ isProcessing, setIsProcessing }) => {
         <ToastTitle>{toastMessage.title}</ToastTitle>
         <ToastDescription>{toastMessage.description}</ToastDescription>
       </Toast>
+
+      <QueueCommands
+        screenshots={[]}
+        onTooltipVisibilityChange={() => undefined}
+        onSettingsOpen={() => window.electronAPI.openSettingsWindow()}
+        chatControl={<ChatHistoryButton />}
+      />
 
       {/* Conditionally render the screenshot queue */}
       <div className="bg-transparent w-fit">
@@ -364,12 +365,6 @@ const Debug: React.FC<DebugProps> = ({ isProcessing, setIsProcessing }) => {
           </div>
         </div>
       </div>
-
-      {/* Navbar of commands with the tooltip */}
-      <ExtraScreenshotsQueueHelper
-        extraScreenshots={extraScreenshots}
-        onTooltipVisibilityChange={handleTooltipVisibilityChange}
-      />
 
       {/* Main Content */}
       <div className="w-full text-sm text-black bg-black/60 rounded-md">
