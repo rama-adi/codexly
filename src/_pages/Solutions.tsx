@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from "react"
 import { useQuery, useQueryClient } from "react-query"
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter"
 import { dracula } from "react-syntax-highlighter/dist/esm/styles/prism"
-import { X } from "lucide-react"
+import { Check, Copy, X } from "lucide-react"
 
 import ScreenshotQueue from "../components/Queue/ScreenshotQueue"
 import ChatHistoryButton from "../components/ChatHistoryButton"
@@ -61,40 +61,67 @@ const SolutionSection = ({
   content: React.ReactNode
   isLoading: boolean
   showLineNumbers?: boolean
-}) => (
-  <div className="space-y-2">
-    <h2 className="text-[13px] font-medium text-white tracking-wide">
-      {title}
-    </h2>
-    {isLoading ? (
-      <div className="space-y-1.5">
-        <div className="mt-4 flex">
-          <p className="text-xs bg-gradient-to-r from-gray-300 via-gray-100 to-gray-300 bg-clip-text text-transparent animate-pulse">
-            Loading solutions...
-          </p>
+}) => {
+  const [copied, setCopied] = useState(false)
+
+  const copyCode = async () => {
+    if (typeof content !== "string") return
+    try {
+      await navigator.clipboard.writeText(content)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch (error) {
+      console.error("Copy failed:", error)
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <h2 className="text-[13px] font-medium text-white tracking-wide">
+        {title}
+      </h2>
+      {isLoading ? (
+        <div className="space-y-1.5">
+          <div className="mt-4 flex">
+            <p className="text-xs bg-gradient-to-r from-gray-300 via-gray-100 to-gray-300 bg-clip-text text-transparent animate-pulse">
+              Loading solutions...
+            </p>
+          </div>
         </div>
-      </div>
-    ) : (
-      <div className="w-full">
-        <SyntaxHighlighter
-          showLineNumbers={showLineNumbers}
-          language="python"
-          style={dracula}
-          customStyle={{
-            maxWidth: "100%",
-            margin: 0,
-            padding: "1rem",
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-all"
-          }}
-          wrapLongLines={true}
-        >
-          {content as string}
-        </SyntaxHighlighter>
-      </div>
-    )}
-  </div>
-)
+      ) : (
+        <div className="relative w-full">
+          <button
+            type="button"
+            aria-label={copied ? "Copied" : "Copy code"}
+            onClick={copyCode}
+            className="absolute right-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-md bg-white/10 text-white/80 transition-colors hover:bg-white/20 hover:text-white"
+          >
+            {copied ? (
+              <Check className="h-3.5 w-3.5" strokeWidth={2} />
+            ) : (
+              <Copy className="h-3.5 w-3.5" strokeWidth={2} />
+            )}
+          </button>
+          <SyntaxHighlighter
+            showLineNumbers={showLineNumbers}
+            language="python"
+            style={dracula}
+            customStyle={{
+              maxWidth: "100%",
+              margin: 0,
+              padding: "1rem",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-all"
+            }}
+            wrapLongLines={true}
+          >
+            {content as string}
+          </SyntaxHighlighter>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export const ComplexitySection = ({
   timeComplexity,
