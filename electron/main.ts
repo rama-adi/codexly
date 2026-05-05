@@ -117,6 +117,28 @@ export class AppState {
     this.windowHelper.showMainWindow()
   }
 
+  public openSettingsWindow(): void {
+    this.windowHelper.openSettingsWindow()
+  }
+
+  public closeSettingsWindow(): void {
+    this.windowHelper.closeSettingsWindow()
+  }
+
+  public quitApp(): void {
+    this.tray?.destroy()
+    this.tray = null
+
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) {
+        window.destroy()
+      }
+    }
+
+    app.quit()
+    setTimeout(() => app.exit(0), 100)
+  }
+
   public toggleMainWindow(): void {
     console.log(
       "Screenshots: ",
@@ -242,7 +264,7 @@ export class AppState {
         label: 'Quit',
         accelerator: 'Command+Q',
         click: () => {
-          app.quit()
+          this.quitApp()
         }
       }
     ])

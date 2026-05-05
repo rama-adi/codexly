@@ -3,6 +3,7 @@ import Queue from "./_pages/Queue"
 import { ToastViewport } from "@radix-ui/react-toast"
 import { useEffect, useRef, useState } from "react"
 import Solutions from "./_pages/Solutions"
+import Settings from "./_pages/Settings"
 import { QueryClient, QueryClientProvider } from "react-query"
 
 declare global {
@@ -44,6 +45,8 @@ declare global {
       moveWindowUp: () => Promise<void>
       moveWindowDown: () => Promise<void>
       quitApp: () => Promise<void>
+      openSettingsWindow: () => Promise<void>
+      closeSettingsWindow: () => Promise<void>
       setIgnoreMouseEvents: (ignore: boolean) => Promise<void>
       
       // LLM Model Management
@@ -65,12 +68,18 @@ const queryClient = new QueryClient({
 })
 
 const App: React.FC = () => {
-  const [view, setView] = useState<"queue" | "solutions" | "debug">("queue")
+  const isSettingsWindow =
+    new URLSearchParams(window.location.search).get("settings") === "1"
+  const [view, setView] = useState<"queue" | "solutions" | "debug" | "settings">(
+    isSettingsWindow ? "settings" : "queue"
+  )
   const containerRef = useRef<HTMLDivElement>(null)
 
   // Toggle OS-level click-through based on whether cursor is over real content.
   // Transparent regions of the window otherwise swallow clicks meant for apps below.
   useEffect(() => {
+    if (isSettingsWindow) return
+
     let ignoring = false
     const apply = (ignore: boolean) => {
       if (ignore === ignoring) return
@@ -187,6 +196,8 @@ const App: React.FC = () => {
             <Queue setView={setView} />
           ) : view === "solutions" ? (
             <Solutions setView={setView} />
+          ) : view === "settings" ? (
+            <Settings />
           ) : (
             <></>
           )}

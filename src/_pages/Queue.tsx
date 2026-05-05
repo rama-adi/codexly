@@ -9,10 +9,11 @@ import {
   ToastMessage
 } from "../components/ui/toast"
 import QueueCommands from "../components/Queue/QueueCommands"
-import ModelSelector from "../components/ui/ModelSelector"
 
 interface QueueProps {
-  setView: React.Dispatch<React.SetStateAction<"queue" | "solutions" | "debug">>
+  setView: React.Dispatch<
+    React.SetStateAction<"queue" | "solutions" | "debug" | "settings">
+  >
 }
 
 const Queue: React.FC<QueueProps> = ({ setView }) => {
@@ -33,7 +34,6 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   const [isChatOpen, setIsChatOpen] = useState(false)
   const chatInputRef = useRef<HTMLInputElement>(null)
   
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [currentModel, setCurrentModel] = useState<{ provider: string; model: string }>({ provider: "openai", model: "gpt-5.4" })
 
   const barRef = useRef<HTMLDivElement>(null)
@@ -199,12 +199,6 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     setIsChatOpen(!isChatOpen)
   }
 
-  const handleSettingsToggle = () => {
-    setIsSettingsOpen(!isSettingsOpen)
-  }
-
-
-
   return (
     <div
       ref={barRef}
@@ -230,14 +224,8 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
           screenshots={screenshots}
           onTooltipVisibilityChange={handleTooltipVisibilityChange}
           onChatToggle={handleChatToggle}
-          onSettingsToggle={handleSettingsToggle}
+          onSettingsOpen={() => window.electronAPI.openSettingsWindow()}
         />
-
-        {isSettingsOpen && (
-          <div className="w-80">
-            <ModelSelector onChatOpen={() => setIsChatOpen(true)} />
-          </div>
-        )}
 
         {isChatOpen && (
           <div className="w-96 rounded-lg bg-black/60 border border-white/10 p-3 flex flex-col gap-2">

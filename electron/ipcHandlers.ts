@@ -91,7 +91,7 @@ export function initializeIpcHandlers(appState: AppState): void {
   });
 
   ipcMain.handle("quit-app", () => {
-    app.quit()
+    appState.quitApp()
   })
 
   ipcMain.handle("set-ignore-mouse-events", (event, ignore: boolean) => {
@@ -119,6 +119,14 @@ export function initializeIpcHandlers(appState: AppState): void {
 
   ipcMain.handle("center-and-show-window", async () => {
     appState.centerAndShowWindow()
+  })
+
+  ipcMain.handle("open-settings-window", async () => {
+    appState.openSettingsWindow()
+  })
+
+  ipcMain.handle("close-settings-window", async () => {
+    appState.closeSettingsWindow()
   })
 
   // LLM Model Management Handlers

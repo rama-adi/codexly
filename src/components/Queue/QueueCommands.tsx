@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from "react"
 import { IoLogOutOutline } from "react-icons/io5"
+import { Settings } from "lucide-react"
 
 interface QueueCommandsProps {
   onTooltipVisibilityChange: (visible: boolean, height: number) => void
   screenshots: Array<{ path: string; preview: string }>
   onChatToggle: () => void
-  onSettingsToggle: () => void
+  onSettingsOpen: () => void
 }
 
 const Key: React.FC<{ children: React.ReactNode }> = ({ children }) => (
@@ -18,7 +19,7 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
   onTooltipVisibilityChange,
   screenshots,
   onChatToggle,
-  onSettingsToggle,
+  onSettingsOpen,
 }) => {
   const [isTooltipVisible, setIsTooltipVisible] = useState(false)
   const tooltipRef = useRef<HTMLDivElement>(null)
@@ -55,11 +56,13 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
       </button>
 
       <button
-        className="px-2 py-1 rounded hover:bg-white/10 transition-colors text-white/80"
-        onClick={onSettingsToggle}
+        className="w-6 h-6 rounded hover:bg-white/10 transition-colors text-white/80 inline-flex items-center justify-center"
+        onClick={onSettingsOpen}
         type="button"
+        title="Settings"
+        aria-label="Settings"
       >
-        Model
+        <Settings className="w-4 h-4" />
       </button>
 
       <div

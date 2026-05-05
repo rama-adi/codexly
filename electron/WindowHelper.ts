@@ -11,6 +11,7 @@ const startUrl = isDev
 
 export class WindowHelper {
   private mainWindow: BrowserWindow | null = null
+  private settingsWindow: BrowserWindow | null = null
   private isWindowVisible: boolean = false
   private windowPosition: { x: number; y: number } | null = null
   private windowSize: { width: number; height: number } | null = null
@@ -158,6 +159,54 @@ export class WindowHelper {
 
     this.setupWindowListeners()
     this.isWindowVisible = true
+  }
+
+  public openSettingsWindow(): void {
+    if (this.settingsWindow && !this.settingsWindow.isDestroyed()) {
+      this.settingsWindow.show()
+      this.settingsWindow.focus()
+      return
+    }
+
+    this.settingsWindow = new BrowserWindow({
+      width: 380,
+      height: 420,
+      minWidth: 340,
+      minHeight: 360,
+      title: "Settings",
+      show: false,
+      resizable: true,
+      maximizable: false,
+      fullscreenable: false,
+      focusable: true,
+      backgroundColor: "#101010",
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: true,
+        preload: path.join(__dirname, "preload.js")
+      }
+    })
+
+    this.settingsWindow.setMenuBarVisibility(false)
+    this.settingsWindow.setAutoHideMenuBar(true)
+    this.settingsWindow.loadURL(`${startUrl}?settings=1`).catch((err) => {
+      console.error("Failed to load settings URL:", err)
+    })
+
+    this.settingsWindow.once("ready-to-show", () => {
+      if (!this.settingsWindow || this.settingsWindow.isDestroyed()) return
+      this.settingsWindow.show()
+      this.settingsWindow.focus()
+    })
+
+    this.settingsWindow.on("closed", () => {
+      this.settingsWindow = null
+    })
+  }
+
+  public closeSettingsWindow(): void {
+    if (!this.settingsWindow || this.settingsWindow.isDestroyed()) return
+    this.settingsWindow.close()
   }
 
   private applyCaptureProtection(): void {

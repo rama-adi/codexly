@@ -32,6 +32,8 @@ interface ElectronAPI {
   moveWindowDown: () => Promise<void>
   analyzeImageFile: (path: string) => Promise<{ text: string; timestamp: number }>
   quitApp: () => Promise<void>
+  openSettingsWindow: () => Promise<void>
+  closeSettingsWindow: () => Promise<void>
   setIgnoreMouseEvents: (ignore: boolean) => Promise<void>
 
   // LLM Model Management
@@ -173,6 +175,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   moveWindowDown: () => ipcRenderer.invoke("move-window-down"),
   analyzeImageFile: (path: string) => ipcRenderer.invoke("analyze-image-file", path),
   quitApp: () => ipcRenderer.invoke("quit-app"),
+  openSettingsWindow: () => ipcRenderer.invoke("open-settings-window"),
+  closeSettingsWindow: () => ipcRenderer.invoke("close-settings-window"),
   setIgnoreMouseEvents: (ignore: boolean) => ipcRenderer.invoke("set-ignore-mouse-events", ignore),
 
   // LLM Model Management

@@ -23,6 +23,8 @@ export interface ElectronAPI {
   moveWindowUp: () => Promise<void>
   moveWindowDown: () => Promise<void>
   quitApp: () => Promise<void>
+  openSettingsWindow: () => Promise<void>
+  closeSettingsWindow: () => Promise<void>
   invoke: (channel: string, ...args: any[]) => Promise<any>
 }
 
