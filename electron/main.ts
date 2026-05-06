@@ -259,6 +259,12 @@ export class AppState {
         }
       },
       {
+        label: 'Settings',
+        click: () => {
+          this.openSettingsWindow()
+        }
+      },
+      {
         type: 'separator'
       },
       {
@@ -352,6 +358,7 @@ async function initializeApp() {
     console.log("App is ready")
     await ensureScreenCaptureAccess()
     appState.createWindow()
+    appState.openSettingsWindow()
     appState.createTray()
     // Register global shortcuts using ShortcutsHelper
     appState.shortcutsHelper.registerGlobalShortcuts()

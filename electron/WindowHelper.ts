@@ -1,5 +1,5 @@
 
-import { BrowserWindow, screen } from "electron"
+import { app, BrowserWindow, nativeTheme, screen } from "electron"
 import { AppState } from "main"
 import path from "node:path"
 import { getAppSettings } from "./AppSettings"
@@ -9,6 +9,36 @@ const isDev = process.env.NODE_ENV === "development"
 const startUrl = isDev
   ? "http://localhost:5180"
   : `file://${path.join(__dirname, "../dist/index.html")}`
+
+const TITLEBAR_HEIGHT = 52
+const TITLEBAR_COLOR = "#01000000"
+const TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937"
+const TITLEBAR_DARK_SYMBOL_COLOR = "#f8fafc"
+
+function buildAppUrl(route = "/queue", params?: Record<string, string>): string {
+  const search = params ? `?${new URLSearchParams(params).toString()}` : ""
+  return `${startUrl}${search}#${route}`
+}
+
+function getWindowTitleBarOptions(): Electron.BrowserWindowConstructorOptions {
+  if (process.platform === "darwin") {
+    return {
+      titleBarStyle: "hiddenInset",
+      trafficLightPosition: { x: 16, y: 18 }
+    }
+  }
+
+  return {
+    titleBarStyle: "hidden",
+    titleBarOverlay: {
+      color: TITLEBAR_COLOR,
+      height: TITLEBAR_HEIGHT,
+      symbolColor: nativeTheme.shouldUseDarkColors
+        ? TITLEBAR_DARK_SYMBOL_COLOR
+        : TITLEBAR_LIGHT_SYMBOL_COLOR
+    }
+  }
+}
 
 export class WindowHelper {
   private mainWindow: BrowserWindow | null = null
@@ -134,7 +164,7 @@ export class WindowHelper {
     this.mainWindow.webContents.setBackgroundThrottling(false)
     this.mainWindow.webContents.setFrameRate(60)
 
-    this.mainWindow.loadURL(startUrl).catch((err) => {
+    this.mainWindow.loadURL(buildAppUrl("/queue")).catch((err) => {
       console.error("Failed to load URL:", err)
     })
 
@@ -164,42 +194,40 @@ export class WindowHelper {
 
   public openSettingsWindow(): void {
     if (this.settingsWindow && !this.settingsWindow.isDestroyed()) {
+      app.dock?.show()
       this.settingsWindow.show()
       this.settingsWindow.focus()
       return
     }
 
+    app.dock?.show()
+
     const settingsWindowOptions: Electron.BrowserWindowConstructorOptions = {
-      width: 380,
-      height: 420,
-      minWidth: 340,
-      minHeight: 360,
+      width: 720,
+      height: 640,
+      minWidth: 560,
+      minHeight: 520,
       title: "Settings",
       show: false,
       resizable: true,
       maximizable: false,
       fullscreenable: false,
       focusable: true,
+      skipTaskbar: false,
       backgroundColor: "#101010",
       webPreferences: {
         nodeIntegration: true,
         contextIsolation: true,
         preload: path.join(__dirname, "preload.js")
-      }
-    }
-
-    if (process.platform === "darwin") {
-      settingsWindowOptions.titleBarStyle = "hiddenInset"
-      settingsWindowOptions.trafficLightPosition = { x: 12, y: 13 }
-    } else {
-      settingsWindowOptions.frame = false
+      },
+      ...getWindowTitleBarOptions()
     }
 
     this.settingsWindow = new BrowserWindow(settingsWindowOptions)
 
     this.settingsWindow.setMenuBarVisibility(false)
     this.settingsWindow.setAutoHideMenuBar(true)
-    this.settingsWindow.loadURL(`${startUrl}?settings=1`).catch((err) => {
+    this.settingsWindow.loadURL(buildAppUrl("/settings", { window: "settings" })).catch((err) => {
       console.error("Failed to load settings URL:", err)
     })
 
@@ -211,6 +239,7 @@ export class WindowHelper {
 
     this.settingsWindow.on("closed", () => {
       this.settingsWindow = null
+      app.dock?.hide()
     })
   }
 

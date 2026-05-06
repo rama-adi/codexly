@@ -3,9 +3,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Loader2,
-  Minus,
   Settings as SettingsIcon,
-  X,
   XCircle
 } from "lucide-react"
 
@@ -189,15 +187,14 @@ const Settings: React.FC = () => {
   return (
     <main className="min-h-screen bg-[#f7f7f5] text-[#1f2328]" data-clickable-root>
       <header
-        className={`draggable-area sticky top-0 z-10 flex h-12 items-center justify-between gap-2 border-b border-black/10 bg-white ${
-          isMac ? "pl-[78px]" : ""
+        className={`draggable-area sticky top-0 z-10 flex h-[52px] items-center gap-2 border-b border-black/10 bg-white ${
+          isMac ? "pl-[86px]" : "pr-[148px]"
         }`}
       >
         <div className="flex min-w-0 items-center gap-2 px-4">
           <SettingsIcon className="h-4 w-4 shrink-0 text-[#5f6368]" />
           <h1 className="truncate text-sm font-semibold tracking-normal">Settings</h1>
         </div>
-        {!isMac && <SettingsWindowControls />}
       </header>
 
       <section className="p-4">
@@ -368,29 +365,6 @@ const Settings: React.FC = () => {
     </main>
   )
 }
-
-const SettingsWindowControls: React.FC = () => (
-  <div className="interactive flex h-full shrink-0 items-stretch">
-    <button
-      type="button"
-      aria-label="Minimize"
-      title="Minimize"
-      onClick={() => window.electronAPI.minimizeSettingsWindow()}
-      className="flex h-12 w-11 items-center justify-center text-[#5f6368] transition-colors hover:bg-black/10 active:bg-black/15"
-    >
-      <Minus className="h-4 w-4" strokeWidth={1.75} />
-    </button>
-    <button
-      type="button"
-      aria-label="Close"
-      title="Close"
-      onClick={() => window.electronAPI.closeSettingsWindow()}
-      className="flex h-12 w-11 items-center justify-center text-[#5f6368] transition-colors hover:bg-[#c42b1c] hover:text-white active:bg-[#a82014]"
-    >
-      <X className="h-4 w-4" strokeWidth={1.75} />
-    </button>
-  </div>
-)
 
 const SettingRow: React.FC<{
   label: string

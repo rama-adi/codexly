@@ -3,6 +3,7 @@ import Queue from "./_pages/Queue"
 import { ToastViewport } from "@radix-ui/react-toast"
 import { useEffect, useRef, useState } from "react"
 import Solutions from "./_pages/Solutions"
+import Debug from "./_pages/Debug"
 import Settings from "./_pages/Settings"
 import { QueryClient, QueryClientProvider } from "react-query"
 import {
@@ -141,8 +142,11 @@ const getViewFromPath = (pathname: string): AppView => {
 const App: React.FC = () => {
   const location = useLocation()
   const navigate = useNavigate()
+  const [isDebugProcessing, setIsDebugProcessing] = useState(false)
+  const windowParams = new URLSearchParams(window.location.search)
   const isSettingsWindow =
-    new URLSearchParams(window.location.search).get("settings") === "1"
+    windowParams.get("window") === "settings" ||
+    windowParams.get("settings") === "1"
   const view = getViewFromPath(location.pathname)
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -308,7 +312,15 @@ const App: React.FC = () => {
             />
             <Route path="/queue" element={<Queue setView={setView} />} />
             <Route path="/solutions" element={<Solutions setView={setView} />} />
-            <Route path="/debug" element={<Solutions setView={setView} />} />
+            <Route
+              path="/debug"
+              element={
+                <Debug
+                  isProcessing={isDebugProcessing}
+                  setIsProcessing={setIsDebugProcessing}
+                />
+              }
+            />
             <Route path="/settings" element={<Settings />} />
             <Route
               path="*"
