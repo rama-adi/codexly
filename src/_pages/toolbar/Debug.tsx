@@ -4,16 +4,16 @@ import { useQuery, useQueryClient } from "react-query"
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter"
 import { dracula } from "react-syntax-highlighter/dist/esm/styles/prism"
 import { ComplexitySection, ContentSection } from "./Solutions"
-import ScreenshotQueue from "../components/Queue/ScreenshotQueue"
-import ChatHistoryButton from "../components/ChatHistoryButton"
-import QueueCommands from "../components/Queue/QueueCommands"
+import ScreenshotQueue from "@/components/Queue/ScreenshotQueue"
+import ChatHistoryButton from "@/components/ChatHistoryButton"
+import QueueCommands from "@/components/Queue/QueueCommands"
 import {
   Toast,
   ToastDescription,
   ToastMessage,
   ToastTitle,
   ToastVariant
-} from "../components/ui/toast"
+} from "@/components/ui/toast"
 import { diffLines } from "diff"
 
 type DiffLine = {

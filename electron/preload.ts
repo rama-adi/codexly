@@ -37,6 +37,10 @@ interface ElectronAPI {
   openSettingsWindow: () => Promise<void>
   closeSettingsWindow: () => Promise<void>
   minimizeSettingsWindow: () => Promise<void>
+  showMainWindow: () => Promise<void>
+  hideMainWindow: () => Promise<void>
+  toggleMainWindow: () => Promise<void>
+  toggleCurrentWindowMaximize: () => Promise<void>
   setIgnoreMouseEvents: (ignore: boolean) => Promise<void>
   getStealthEnabled: () => Promise<{ stealthEnabled: boolean }>
   setStealthEnabled: (enabled: boolean) => Promise<{ stealthEnabled: boolean }>
@@ -211,6 +215,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   openSettingsWindow: () => ipcRenderer.invoke("open-settings-window"),
   closeSettingsWindow: () => ipcRenderer.invoke("close-settings-window"),
   minimizeSettingsWindow: () => ipcRenderer.invoke("minimize-settings-window"),
+  showMainWindow: () => ipcRenderer.invoke("show-main-window"),
+  hideMainWindow: () => ipcRenderer.invoke("hide-main-window"),
+  toggleMainWindow: () => ipcRenderer.invoke("toggle-window"),
+  toggleCurrentWindowMaximize: () => ipcRenderer.invoke("toggle-current-window-maximize"),
   setIgnoreMouseEvents: (ignore: boolean) => ipcRenderer.invoke("set-ignore-mouse-events", ignore),
   getStealthEnabled: () => ipcRenderer.invoke("get-stealth-enabled"),
   setStealthEnabled: (enabled: boolean) => ipcRenderer.invoke("set-stealth-enabled", enabled),

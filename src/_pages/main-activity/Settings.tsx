@@ -3,7 +3,6 @@ import {
   CheckCircle2,
   ChevronDown,
   Loader2,
-  Settings as SettingsIcon,
   XCircle
 } from "lucide-react"
 
@@ -29,7 +28,6 @@ const statusCopy: Record<ConnectionStatus, string> = {
 }
 
 const Settings: React.FC = () => {
-  const isMac = window.electronAPI.platform === "darwin"
   const [config, setConfig] = useState<ModelConfig | null>(null)
   const [models, setModels] = useState<ModelOption[]>([])
   const [stealthEnabled, setStealthEnabled] = useState(true)
@@ -185,19 +183,7 @@ const Settings: React.FC = () => {
   }
 
   return (
-    <main className="min-h-screen bg-[#f7f7f5] text-[#1f2328]" data-clickable-root>
-      <header
-        className={`draggable-area sticky top-0 z-10 flex h-[52px] items-center gap-2 border-b border-black/10 bg-white ${
-          isMac ? "pl-[86px]" : "pr-[148px]"
-        }`}
-      >
-        <div className="flex min-w-0 items-center gap-2 px-4">
-          <SettingsIcon className="h-4 w-4 shrink-0 text-[#5f6368]" />
-          <h1 className="truncate text-sm font-semibold tracking-normal">Settings</h1>
-        </div>
-      </header>
-
-      <section className="p-4">
+    <section className="p-4">
         <div className="space-y-1">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-[#5f6368]">
             Model
@@ -361,8 +347,7 @@ const Settings: React.FC = () => {
             </div>
           </div>
         </div>
-      </section>
-    </main>
+    </section>
   )
 }
 

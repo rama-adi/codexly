@@ -60,6 +60,27 @@ export function initializeIpcHandlers(appState: AppState): void {
     appState.toggleMainWindow()
   })
 
+  ipcMain.handle("show-main-window", async () => {
+    appState.showMainWindow()
+  })
+
+  ipcMain.handle("hide-main-window", async () => {
+    appState.hideMainWindow()
+  })
+
+  ipcMain.handle("toggle-current-window-maximize", async (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (!window || window.isDestroyed() || !window.isMaximizable()) {
+      return
+    }
+
+    if (window.isMaximized()) {
+      window.unmaximize()
+    } else {
+      window.maximize()
+    }
+  })
+
   ipcMain.handle("reset-queues", async () => {
     try {
       appState.clearQueues()

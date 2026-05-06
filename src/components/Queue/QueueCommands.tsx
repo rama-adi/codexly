@@ -64,8 +64,9 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
 
       <button
         className="text-red-400/70 hover:text-red-400 transition-colors"
-        title="Quit"
-        onClick={() => window.electronAPI.quitApp()}
+        title="Hide overlay"
+        aria-label="Hide overlay"
+        onClick={() => window.electronAPI.hideMainWindow()}
       >
         <IoLogOutOutline className="w-4 h-4" />
       </button>

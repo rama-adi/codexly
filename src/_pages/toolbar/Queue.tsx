@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react"
 import { useQuery } from "react-query"
-import ScreenshotQueue from "../components/Queue/ScreenshotQueue"
+import ScreenshotQueue from "@/components/Queue/ScreenshotQueue"
 import { Trash2 } from "lucide-react"
 import {
   Toast,
@@ -8,12 +8,12 @@ import {
   ToastDescription,
   ToastVariant,
   ToastMessage
-} from "../components/ui/toast"
-import QueueCommands from "../components/Queue/QueueCommands"
+} from "@/components/ui/toast"
+import QueueCommands from "@/components/Queue/QueueCommands"
 
 interface QueueProps {
   setView: React.Dispatch<
-    React.SetStateAction<"queue" | "solutions" | "debug" | "settings">
+    React.SetStateAction<"queue" | "solutions" | "debug" | "home" | "settings">
   >
 }
 

@@ -1,10 +1,12 @@
 import { ToastProvider } from "./components/ui/toast"
-import Queue from "./_pages/Queue"
+import Queue from "./_pages/toolbar/Queue"
 import { ToastViewport } from "@radix-ui/react-toast"
 import { useEffect, useRef, useState } from "react"
-import Solutions from "./_pages/Solutions"
-import Debug from "./_pages/Debug"
-import Settings from "./_pages/Settings"
+import Solutions from "./_pages/toolbar/Solutions"
+import Debug from "./_pages/toolbar/Debug"
+import Home from "./_pages/main-activity/Home"
+import Settings from "./_pages/main-activity/Settings"
+import MainActivityLayout from "./_pages/main-activity/MainActivityLayout"
 import { QueryClient, QueryClientProvider } from "react-query"
 import {
   Navigate,
@@ -59,6 +61,10 @@ declare global {
       openSettingsWindow: () => Promise<void>
       closeSettingsWindow: () => Promise<void>
       minimizeSettingsWindow: () => Promise<void>
+      showMainWindow: () => Promise<void>
+      hideMainWindow: () => Promise<void>
+      toggleMainWindow: () => Promise<void>
+      toggleCurrentWindowMaximize: () => Promise<void>
       setIgnoreMouseEvents: (ignore: boolean) => Promise<void>
       getStealthEnabled: () => Promise<{ stealthEnabled: boolean }>
       setStealthEnabled: (enabled: boolean) => Promise<{ stealthEnabled: boolean }>
@@ -123,18 +129,22 @@ const queryClient = new QueryClient({
   }
 })
 
-type AppView = "queue" | "solutions" | "debug" | "settings"
+type AppView = "queue" | "solutions" | "debug" | "home" | "settings"
 
 const viewToPath: Record<AppView, string> = {
   queue: "/queue",
   solutions: "/solutions",
   debug: "/debug",
+  home: "/home",
   settings: "/settings"
 }
+
+const mainActivityViews = new Set<AppView>(["home", "settings"])
 
 const getViewFromPath = (pathname: string): AppView => {
   if (pathname.startsWith("/solutions")) return "solutions"
   if (pathname.startsWith("/debug")) return "debug"
+  if (pathname.startsWith("/home")) return "home"
   if (pathname.startsWith("/settings")) return "settings"
   return "queue"
 }
@@ -181,8 +191,8 @@ const App: React.FC = () => {
   }, [isSettingsWindow])
 
   useEffect(() => {
-    if (isSettingsWindow && view !== "settings") {
-      navigate(viewToPath.settings, { replace: true })
+    if (isSettingsWindow && !mainActivityViews.has(view)) {
+      navigate(viewToPath.home, { replace: true })
     }
   }, [isSettingsWindow, navigate, view])
 
@@ -307,7 +317,7 @@ const App: React.FC = () => {
             <Route
               path="/"
               element={
-                <Navigate to={isSettingsWindow ? "/settings" : "/queue"} replace />
+                <Navigate to={isSettingsWindow ? "/home" : "/queue"} replace />
               }
             />
             <Route path="/queue" element={<Queue setView={setView} />} />
@@ -321,11 +331,14 @@ const App: React.FC = () => {
                 />
               }
             />
-            <Route path="/settings" element={<Settings />} />
+            <Route element={<MainActivityLayout />}>
+              <Route path="/home" element={<Home />} />
+              <Route path="/settings" element={<Settings />} />
+            </Route>
             <Route
               path="*"
               element={
-                <Navigate to={isSettingsWindow ? "/settings" : "/queue"} replace />
+                <Navigate to={isSettingsWindow ? "/home" : "/queue"} replace />
               }
             />
           </Routes>

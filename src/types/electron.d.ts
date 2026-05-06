@@ -29,6 +29,10 @@ export interface ElectronAPI {
   openSettingsWindow: () => Promise<void>
   closeSettingsWindow: () => Promise<void>
   minimizeSettingsWindow: () => Promise<void>
+  showMainWindow: () => Promise<void>
+  hideMainWindow: () => Promise<void>
+  toggleMainWindow: () => Promise<void>
+  toggleCurrentWindowMaximize: () => Promise<void>
   setIgnoreMouseEvents: (ignore: boolean) => Promise<void>
   getStealthEnabled: () => Promise<{ stealthEnabled: boolean }>
   setStealthEnabled: (enabled: boolean) => Promise<{ stealthEnabled: boolean }>

@@ -5,17 +5,17 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter"
 import { dracula } from "react-syntax-highlighter/dist/esm/styles/prism"
 import { Check, Copy, X } from "lucide-react"
 
-import ScreenshotQueue from "../components/Queue/ScreenshotQueue"
-import ChatHistoryButton from "../components/ChatHistoryButton"
-import QueueCommands from "../components/Queue/QueueCommands"
+import ScreenshotQueue from "@/components/Queue/ScreenshotQueue"
+import ChatHistoryButton from "@/components/ChatHistoryButton"
+import QueueCommands from "@/components/Queue/QueueCommands"
 import {
   Toast,
   ToastDescription,
   ToastMessage,
   ToastTitle,
   ToastVariant
-} from "../components/ui/toast"
-import { ProblemStatementData } from "../types/solutions"
+} from "@/components/ui/toast"
+import { ProblemStatementData } from "@/types/solutions"
 import Debug from "./Debug"
 
 // (Using global ElectronAPI type from src/types/electron.d.ts)
@@ -192,7 +192,7 @@ const ScreenshotGallery = ({
 
 interface SolutionsProps {
   setView: React.Dispatch<
-    React.SetStateAction<"queue" | "solutions" | "debug" | "settings">
+    React.SetStateAction<"queue" | "solutions" | "debug" | "home" | "settings">
   >
 }
 const Solutions: React.FC<SolutionsProps> = ({ setView }) => {

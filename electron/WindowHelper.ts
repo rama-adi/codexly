@@ -40,6 +40,25 @@ function getWindowTitleBarOptions(): Electron.BrowserWindowConstructorOptions {
   }
 }
 
+function syncWindowAppearance(window: BrowserWindow): void {
+  if (window.isDestroyed()) {
+    return
+  }
+
+  const { titleBarOverlay } = getWindowTitleBarOptions()
+  if (typeof titleBarOverlay === "object") {
+    window.setTitleBarOverlay(titleBarOverlay)
+  }
+}
+
+function syncAllWindowAppearance(): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    syncWindowAppearance(window)
+  }
+}
+
+nativeTheme.on("updated", syncAllWindowAppearance)
+
 export class WindowHelper {
   private mainWindow: BrowserWindow | null = null
   private settingsWindow: BrowserWindow | null = null
@@ -168,17 +187,12 @@ export class WindowHelper {
       console.error("Failed to load URL:", err)
     })
 
-    // Show window after loading URL and center it
+    // Pre-position the window but keep it hidden on startup. Users summon it
+    // from the main activity (Home) via "Show toolbar".
     this.mainWindow.once('ready-to-show', () => {
       if (this.mainWindow) {
-        // Center the window first
         this.centerWindow()
         this.applyCaptureProtection()
-        this.mainWindow.show()
-        this.mainWindow.focus()
-        this.mainWindow.setAlwaysOnTop(true, "screen-saver", 1)
-        this.applyCaptureProtection()
-        console.log("Window is now visible and centered")
       }
     })
 
@@ -189,7 +203,7 @@ export class WindowHelper {
     this.currentY = bounds.y
 
     this.setupWindowListeners()
-    this.isWindowVisible = true
+    this.isWindowVisible = false
   }
 
   public openSettingsWindow(): void {
@@ -210,7 +224,7 @@ export class WindowHelper {
       title: "Settings",
       show: false,
       resizable: true,
-      maximizable: false,
+      maximizable: true,
       fullscreenable: false,
       focusable: true,
       skipTaskbar: false,
@@ -225,9 +239,19 @@ export class WindowHelper {
 
     this.settingsWindow = new BrowserWindow(settingsWindowOptions)
 
+    if (process.platform === "darwin") {
+      this.settingsWindow.setWindowButtonVisibility(true)
+      this.settingsWindow.on("focus", () => {
+        this.settingsWindow?.setWindowButtonVisibility(true)
+      })
+      this.settingsWindow.on("blur", () => {
+        this.settingsWindow?.setWindowButtonVisibility(true)
+      })
+    }
+
     this.settingsWindow.setMenuBarVisibility(false)
     this.settingsWindow.setAutoHideMenuBar(true)
-    this.settingsWindow.loadURL(buildAppUrl("/settings", { window: "settings" })).catch((err) => {
+    this.settingsWindow.loadURL(buildAppUrl("/home", { window: "settings" })).catch((err) => {
       console.error("Failed to load settings URL:", err)
     })
 
@@ -313,9 +337,9 @@ export class WindowHelper {
     if (getAppSettings().stealthEnabled) {
       this.mainWindow.setOpacity(0)
       this.mainWindow.setIgnoreMouseEvents(true, { forward: true })
-      this.mainWindow.hide()
-      this.isWindowVisible = false
     }
+    this.mainWindow.hide()
+    this.isWindowVisible = false
   }
 
   public showMainWindow(): void {
