@@ -58,12 +58,13 @@ const Settings: React.FC = () => {
   useEffect(() => {
     ;(async () => {
       try {
-        const [currentConfig, availableModels, settings] = await Promise.all([
+        const [currentConfig, settings] = await Promise.all([
           window.electronAPI.getCurrentLlmConfig(),
-          window.electronAPI.getAvailableLlmModels(),
           window.electronAPI.getAppSettings()
         ])
         setConfig(currentConfig)
+        await window.electronAPI.prepareCodex()
+        const availableModels = await window.electronAPI.getAvailableLlmModels()
         setModels(availableModels)
         setStealthEnabled(settings.stealthEnabled)
         setReasoningEffort(settings.reasoningEffort)
