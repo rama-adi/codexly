@@ -57,8 +57,7 @@ const Home: React.FC = () => {
     setLaunchingKey("__direct__")
     try {
       await updateSettings({ launchMode: "direct", selectedDirectoryId: null })
-      await window.electronAPI.prepareCodex()
-      await window.electronAPI.showMainWindow()
+      setReadyStatus(await window.electronAPI.startToolbarSession())
     } finally {
       setLaunchingKey(null)
     }
@@ -81,8 +80,7 @@ const Home: React.FC = () => {
         selectedDirectoryId: profile.id,
         workingDirectory: profile.path
       })
-      await window.electronAPI.prepareCodex()
-      await window.electronAPI.showMainWindow()
+      setReadyStatus(await window.electronAPI.startToolbarSession())
     } finally {
       setLaunchingKey(null)
     }

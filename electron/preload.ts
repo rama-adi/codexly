@@ -81,6 +81,7 @@ interface ElectronAPI {
   closeSettingsWindow: () => Promise<void>
   minimizeSettingsWindow: () => Promise<void>
   showMainWindow: () => Promise<void>
+  startToolbarSession: () => Promise<CodexReadyStatus>
   prepareCodex: () => Promise<CodexReadyStatus>
   getCodexReadyStatus: () => Promise<CodexReadyStatus>
   hideMainWindow: () => Promise<void>
@@ -158,6 +159,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   closeSettingsWindow: () => ipcRenderer.invoke("close-settings-window"),
   minimizeSettingsWindow: () => ipcRenderer.invoke("minimize-settings-window"),
   showMainWindow: () => ipcRenderer.invoke("show-main-window"),
+  startToolbarSession: () => ipcRenderer.invoke("start-toolbar-session"),
   prepareCodex: () => ipcRenderer.invoke("prepare-codex"),
   getCodexReadyStatus: () => ipcRenderer.invoke("get-codex-ready-status"),
   hideMainWindow: () => ipcRenderer.invoke("hide-main-window"),

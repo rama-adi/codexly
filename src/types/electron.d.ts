@@ -91,6 +91,7 @@ export interface ElectronAPI {
   closeSettingsWindow: () => Promise<void>
   minimizeSettingsWindow: () => Promise<void>
   showMainWindow: () => Promise<void>
+  startToolbarSession: () => Promise<CodexReadyStatus>
   hideMainWindow: () => Promise<void>
   toggleMainWindow: () => Promise<void>
   toggleCurrentWindowMaximize: () => Promise<void>

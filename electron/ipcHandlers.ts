@@ -92,6 +92,20 @@ export function initializeIpcHandlers(appState: AppState): void {
     appState.showMainWindow()
   })
 
+  ipcMain.handle("start-toolbar-session", async () => {
+    appState.getScreenshotHelper().clearQueues()
+    appState.setView("queue")
+    appState.processingHelper.resetSession()
+    await appState.processingHelper.prepareForLaunch()
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send("screenshots-cleared")
+      window.webContents.send("history-changed", listChatSessions())
+      window.webContents.send("reset-view")
+    }
+    appState.showMainWindow()
+    return appState.processingHelper.getReadyStatus()
+  })
+
   ipcMain.handle("prepare-codex", async () => {
     await appState.processingHelper.prepareForLaunch()
     return appState.processingHelper.getReadyStatus()
