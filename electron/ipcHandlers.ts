@@ -1,6 +1,6 @@
 // ipcHandlers.ts
 
-import { BrowserWindow, ipcMain, app, dialog } from "electron"
+import { BrowserWindow, ipcMain, app, dialog, shell } from "electron"
 import crypto from "crypto"
 import { AppState } from "./main"
 import { getAppSettings, getLaunchWorkingDirectory, updateAppSettings } from "./AppSettings"
@@ -276,6 +276,11 @@ export function initializeIpcHandlers(appState: AppState): void {
       window.webContents.send("app-settings-changed", nextSettings)
     }
     return selected
+  })
+
+  ipcMain.handle("open-directory", async (_event, directoryPath: string) => {
+    const error = await shell.openPath(directoryPath)
+    return error ? { success: false, error } : { success: true }
   })
 
   // LLM Model Management Handlers

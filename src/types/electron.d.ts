@@ -85,6 +85,7 @@ export interface ElectronAPI {
   updateAppSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>
   onAppSettingsChanged: (callback: (settings: AppSettings) => void) => () => void
   pickWorkingDirectory: (options?: { initialPath?: string }) => Promise<string | null>
+  openDirectory: (path: string) => Promise<{ success: boolean; error?: string }>
   getPersonalization: () => Promise<PersonalizationConfig>
   updatePersonalization: (patch: Partial<PersonalizationConfig>) => Promise<PersonalizationConfig>
   onPersonalizationChanged: (callback: (config: PersonalizationConfig) => void) => () => void

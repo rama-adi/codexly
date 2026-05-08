@@ -80,6 +80,7 @@ interface ElectronAPI {
   getAppSettings: () => Promise<AppSettings>
   updateAppSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>
   pickWorkingDirectory: (options?: { initialPath?: string }) => Promise<string | null>
+  openDirectory: (path: string) => Promise<{ success: boolean; error?: string }>
   getPersonalization: () => Promise<PersonalizationConfig>
   updatePersonalization: (patch: Partial<PersonalizationConfig>) => Promise<PersonalizationConfig>
   getChatHistoryIndex: () => Promise<HistoryIndexItem[]>
@@ -150,6 +151,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getAppSettings: () => ipcRenderer.invoke("get-app-settings"),
   updateAppSettings: patch => ipcRenderer.invoke("update-app-settings", patch),
   pickWorkingDirectory: options => ipcRenderer.invoke("pick-working-directory", options),
+  openDirectory: path => ipcRenderer.invoke("open-directory", path),
   getPersonalization: () => ipcRenderer.invoke("get-personalization"),
   updatePersonalization: patch => ipcRenderer.invoke("update-personalization", patch),
   getChatHistoryIndex: () => ipcRenderer.invoke("get-chat-history-index"),
