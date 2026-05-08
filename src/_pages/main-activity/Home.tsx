@@ -74,67 +74,40 @@ const Home: React.FC = () => {
   }
 
   return (
-    <div className="flex flex-1 flex-col bg-[#0b0b0d] text-[#f4f4f5]">
-      <div className="flex items-center justify-between border-b border-white/10 bg-[#17181b] px-8 py-7">
-        <div className="min-w-0">
-          <div className="text-3xl font-semibold tracking-normal text-white">
-            Codexly
-          </div>
-          <div className="mt-4 text-base text-[#a2a4ad]">
-            Launch direct, or start from an imported project directory.
-          </div>
-        </div>
-        <Button
-          onClick={launchDirect}
-          className="h-12 rounded-full bg-[#5aa1ff] px-7 text-base font-semibold text-white shadow-[0_16px_40px_rgba(70,140,255,0.35)] hover:bg-[#6caaff]"
-        >
-          <ScreenShare data-icon="inline-start" />
-          Start direct
-        </Button>
-      </div>
-
-      <div className="flex flex-1 flex-col gap-8 px-8 py-9">
-        <section className="flex min-h-[260px] flex-col items-center justify-center rounded-xl border border-dashed border-white/15 bg-[#08090b] px-8 py-12 text-center">
-          <div className="flex size-16 items-center justify-center rounded-2xl bg-white/10 text-white">
-            <ScreenShare className="size-8" />
-          </div>
-          <h2 className="mt-8 text-2xl font-semibold text-white">
-            Start with Codex
-          </h2>
-          <p className="mt-4 max-w-2xl text-base leading-7 text-[#a2a4ad]">
-            Use Codexly without a working directory. The toolbar will answer from
-            your prompt, screenshots, and Codex knowledge.
-          </p>
-          <Button
-            onClick={launchDirect}
-            variant="outline"
-            className="mt-8 border-white/15 bg-white/5 px-5 text-white hover:bg-white/10 hover:text-white"
-          >
-            <Play data-icon="inline-start" />
-            Start direct
-          </Button>
-        </section>
-
-        <section className="rounded-xl border border-white/10 bg-[#101114]">
-          <div className="flex items-center justify-between gap-4 border-b border-white/10 px-5 py-4">
-            <div>
-              <h2 className="text-lg font-semibold text-white">Directories</h2>
-              <p className="mt-1 text-sm text-[#8f929c]">
-                Reuse saved project contexts, launch the toolbar, or open the folder.
+    <div className="min-h-0 flex-1 overflow-y-auto bg-[#f7f7f5] p-6 text-[#1f2328]">
+      <div className="mx-auto flex max-w-5xl flex-col gap-5">
+        <section className="rounded-md border border-black/10 bg-white p-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold">Direct</h2>
+              <p className="mt-1 text-sm text-[#5f6368]">
+                Start without a directory. Codexly uses your prompt, screenshots,
+                and Codex knowledge.
               </p>
             </div>
-            <Button
-              onClick={importDirectory}
-              variant="outline"
-              className="border-white/15 bg-white/5 text-white hover:bg-white/10 hover:text-white"
-            >
+            <Button onClick={launchDirect}>
+              <ScreenShare data-icon="inline-start" />
+              Launch direct
+            </Button>
+          </div>
+        </section>
+
+        <section className="rounded-md border border-black/10 bg-white">
+          <div className="flex items-center justify-between gap-4 border-b border-black/10 px-4 py-3">
+            <div>
+              <h2 className="text-base font-semibold">Directories</h2>
+              <p className="mt-1 text-sm text-[#5f6368]">
+                Launch with a saved cwd, or open the folder.
+              </p>
+            </div>
+            <Button variant="outline" onClick={importDirectory}>
               <Plus data-icon="inline-start" />
               Add directory
             </Button>
           </div>
 
           {settings?.directoryProfiles.length ? (
-            <div className="divide-y divide-white/10">
+            <div className="divide-y divide-black/10">
               {settings.directoryProfiles.map(profile => {
                 const active =
                   settings.launchMode === "directory" &&
@@ -144,11 +117,13 @@ const Home: React.FC = () => {
                 return (
                   <div
                     key={profile.id}
-                    className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-5 py-4"
+                    className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3 ${
+                      active ? "bg-[#f7f7f5]" : ""
+                    }`}
                   >
                     <div className="min-w-0">
                       <div className="flex min-w-0 items-center gap-2">
-                        <FolderOpen className="size-4 shrink-0 text-[#8f929c]" />
+                        <FolderOpen className="size-4 shrink-0 text-[#5f6368]" />
                         {editing ? (
                           <input
                             value={titleDraft}
@@ -159,26 +134,22 @@ const Home: React.FC = () => {
                               if (event.key === "Enter") event.currentTarget.blur()
                               if (event.key === "Escape") setEditingId(null)
                             }}
-                            className="h-8 min-w-0 flex-1 rounded-md border border-white/15 bg-black/30 px-2 text-sm text-white outline-none"
+                            className="h-8 min-w-0 flex-1 rounded-md border border-black/15 bg-white px-2 text-sm text-[#1f2328] outline-none"
                           />
                         ) : (
-                          <div className="truncate text-sm font-semibold text-white">
+                          <div className="truncate text-sm font-semibold">
                             {profile.title}
                           </div>
                         )}
-                        {active && <Check className="size-4 shrink-0 text-[#5aa1ff]" />}
+                        {active && <Check className="size-4 shrink-0 text-[#1f883d]" />}
                       </div>
-                      <div className="mt-1 truncate font-mono text-xs text-[#8f929c]">
+                      <div className="mt-1 truncate font-mono text-xs text-[#5f6368]">
                         {profile.path}
                       </div>
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <Button
-                        size="sm"
-                        onClick={() => launchDirectory(profile)}
-                        className="bg-white text-[#101114] hover:bg-white/90"
-                      >
+                      <Button size="sm" onClick={() => launchDirectory(profile)}>
                         <Play data-icon="inline-start" />
                         Launch
                       </Button>
@@ -187,7 +158,6 @@ const Home: React.FC = () => {
                         variant="ghost"
                         aria-label="Open directory"
                         onClick={() => openDirectory(profile)}
-                        className="text-[#c9cbd3] hover:bg-white/10 hover:text-white"
                       >
                         <ExternalLink />
                       </Button>
@@ -196,7 +166,6 @@ const Home: React.FC = () => {
                         variant="ghost"
                         aria-label="Rename directory"
                         onClick={() => startEditing(profile)}
-                        className="text-[#c9cbd3] hover:bg-white/10 hover:text-white"
                       >
                         <Pencil />
                       </Button>
@@ -206,7 +175,7 @@ const Home: React.FC = () => {
               })}
             </div>
           ) : (
-            <div className="flex min-h-40 items-center justify-center px-6 py-10 text-sm text-[#8f929c]">
+            <div className="flex min-h-40 items-center justify-center px-6 py-10 text-sm text-[#5f6368]">
               No directories yet. Add one to launch Codexly with project context.
             </div>
           )}

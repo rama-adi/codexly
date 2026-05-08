@@ -141,7 +141,7 @@ const MainActivityLayout: React.FC = () => {
               </SidebarMenu>
             </SidebarFooter>
           </Sidebar>
-          <SidebarInset className="min-h-0 bg-transparent">
+          <SidebarInset className="flex min-h-0 flex-col bg-transparent">
             <header
               onDoubleClick={toggleWindowMaximize}
               className="draggable-area sticky top-0 z-10 flex h-[52px] shrink-0 items-center gap-2 border-b border-[#d8d8d2] bg-white px-4 wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]"
@@ -150,7 +150,9 @@ const MainActivityLayout: React.FC = () => {
                 {title}
               </h1>
             </header>
-            <Outlet />
+            <main className="min-h-0 flex-1 overflow-hidden">
+              <Outlet />
+            </main>
           </SidebarInset>
         </div>
       </div>
