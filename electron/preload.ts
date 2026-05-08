@@ -63,6 +63,7 @@ interface ElectronAPI {
   takeScreenshot: () => Promise<{ path: string; preview: string }>
   getScreenshots: () => Promise<Array<{ path: string; preview: string }>>
   deleteScreenshot: (path: string) => Promise<{ success: boolean; error?: string }>
+  clearScreenshots: () => Promise<{ success: boolean }>
   clearChatHistory: () => Promise<{ success: boolean }>
   chat: (message: string) => Promise<string>
   quitApp: () => Promise<void>
@@ -135,6 +136,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   takeScreenshot: () => ipcRenderer.invoke("take-screenshot"),
   getScreenshots: () => ipcRenderer.invoke("get-screenshots"),
   deleteScreenshot: path => ipcRenderer.invoke("delete-screenshot", path),
+  clearScreenshots: () => ipcRenderer.invoke("clear-screenshots"),
   clearChatHistory: () => ipcRenderer.invoke("clear-chat-history"),
   chat: message => ipcRenderer.invoke("chat", message),
   quitApp: () => ipcRenderer.invoke("quit-app"),

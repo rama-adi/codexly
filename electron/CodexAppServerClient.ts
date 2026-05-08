@@ -16,6 +16,7 @@ export class CodexAppServerClient {
   private notificationHandlers = new Map<string, Set<NotificationHandler>>()
   private requestHandlers = new Map<string, RequestHandler>()
   private initialized = false
+  private startPromise: Promise<void> | null = null
 
   constructor(private readonly cwd: string) {
     this.requestHandlers.set("item/tool/requestUserInput", (params) => ({
@@ -40,8 +41,16 @@ export class CodexAppServerClient {
   }
 
   public async start(): Promise<void> {
-    if (this.child) return
+    if (this.initialized) return
+    if (this.startPromise) return this.startPromise
 
+    this.startPromise = this.startInternal().finally(() => {
+      this.startPromise = null
+    })
+    return this.startPromise
+  }
+
+  private async startInternal(): Promise<void> {
     const command = process.env.CODEX_BIN?.trim() || "codex"
     this.child = spawn(command, ["app-server"], {
       cwd: this.cwd,
@@ -55,6 +64,7 @@ export class CodexAppServerClient {
       this.pending.clear()
       this.child = null
       this.initialized = false
+      this.startPromise = null
     })
 
     this.child.stderr.on("data", chunk => {
@@ -66,7 +76,7 @@ export class CodexAppServerClient {
       this.handleLine(line)
     })
 
-    await this.request("initialize", {
+    await this.requestWithoutStart("initialize", {
       clientInfo: {
         name: "codexly",
         title: "Codexly",
@@ -83,6 +93,10 @@ export class CodexAppServerClient {
 
   public async request(method: string, params?: unknown): Promise<any> {
     await this.ensureChild()
+    return this.requestWithoutStart(method, params)
+  }
+
+  private async requestWithoutStart(method: string, params?: unknown): Promise<any> {
     const id = this.nextId++
     const payload = params === undefined ? { id, method } : { id, method, params }
     return new Promise((resolve, reject) => {
@@ -103,7 +117,7 @@ export class CodexAppServerClient {
   }
 
   private async ensureChild(): Promise<void> {
-    if (!this.child) await this.start()
+    if (!this.initialized) await this.start()
   }
 
   private write(payload: unknown): void {

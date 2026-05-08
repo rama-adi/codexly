@@ -57,6 +57,7 @@ export interface ElectronAPI {
   updateContentDimensions: (dimensions: { width: number; height: number }) => Promise<void>
   getScreenshots: () => Promise<Array<{ path: string; preview: string }>>
   deleteScreenshot: (path: string) => Promise<{ success: boolean; error?: string }>
+  clearScreenshots: () => Promise<{ success: boolean }>
   onScreenshotTaken: (callback: (data: { path: string; preview: string }) => void) => () => void
   onResetView: (callback: () => void) => () => void
   onSolutionStreamStart: (callback: () => void) => () => void

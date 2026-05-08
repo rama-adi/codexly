@@ -131,7 +131,6 @@ export class ProcessingHelper {
   }
 
   public async prepareForLaunch(): Promise<void> {
-    this.currentProcessingAbortController?.abort()
     const settings = getAppSettings()
     await this.llmHelper.prepareForLaunch(getLaunchWorkingDirectory(settings))
   }

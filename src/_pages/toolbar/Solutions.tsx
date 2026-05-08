@@ -139,10 +139,12 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
     })
   }, [answer, streaming, answerHeight])
 
-  const closeAnswer = () => {
+  const closeAnswer = async () => {
     setAnswer("")
     setStreaming(false)
     setIsPreview(false)
+    setScreenshots([])
+    await window.electronAPI.clearScreenshots()
     setView("queue")
   }
 

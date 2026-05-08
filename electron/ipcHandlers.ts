@@ -33,6 +33,12 @@ export function initializeIpcHandlers(appState: AppState): void {
     return appState.deleteScreenshot(path)
   })
 
+  ipcMain.handle("clear-screenshots", async () => {
+    appState.getScreenshotHelper().clearQueues()
+    appState.setView("queue")
+    return { success: true }
+  })
+
   ipcMain.handle("take-screenshot", async () => {
     try {
       const screenshotPath = await appState.takeScreenshot()
@@ -114,18 +120,8 @@ export function initializeIpcHandlers(appState: AppState): void {
 
   ipcMain.handle("chat", async (event, message: string) => {
     try {
-      const mainWindow = appState.getMainWindow()
-      mainWindow?.webContents.send(appState.PROCESSING_EVENTS.SOLUTION_STREAM_START)
       const response = await appState.processingHelper.getLLMHelper().streamAnswer(
         { message, workingDirectory: getLaunchWorkingDirectory(getAppSettings()) },
-        {
-          onDelta: delta =>
-            mainWindow?.webContents.send(appState.PROCESSING_EVENTS.SOLUTION_STREAM_DELTA, delta),
-          onComplete: answer =>
-            mainWindow?.webContents.send(appState.PROCESSING_EVENTS.SOLUTION_STREAM_COMPLETE, { answer }),
-          onError: error =>
-            mainWindow?.webContents.send(appState.PROCESSING_EVENTS.SOLUTION_STREAM_ERROR, error.message),
-        }
       )
       broadcastHistoryChanged()
       return response
@@ -221,6 +217,16 @@ export function initializeIpcHandlers(appState: AppState): void {
     for (const window of BrowserWindow.getAllWindows()) {
       window.webContents.send("app-settings-changed", settings)
     }
+    if (
+      "launchMode" in patch ||
+      "selectedDirectoryId" in patch ||
+      "directoryProfiles" in patch ||
+      "workingDirectory" in patch
+    ) {
+      appState.processingHelper.prepareForLaunch().catch(error => {
+        console.warn("Codex prelaunch failed after settings update:", error)
+      })
+    }
     return settings
   })
 
@@ -285,6 +291,9 @@ export function initializeIpcHandlers(appState: AppState): void {
     for (const window of BrowserWindow.getAllWindows()) {
       window.webContents.send("app-settings-changed", nextSettings)
     }
+    appState.processingHelper.prepareForLaunch().catch(error => {
+      console.warn("Codex prelaunch failed after picking directory:", error)
+    })
     return selected
   })
 

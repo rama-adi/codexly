@@ -198,7 +198,11 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   }, [])
 
   const handleChatToggle = () => {
-    setIsChatOpen(!isChatOpen)
+    setIsChatOpen(open => {
+      const next = !open
+      if (next) requestAnimationFrame(() => chatInputRef.current?.focus())
+      return next
+    })
   }
 
   const chatMessages = activeSession?.messages ?? []
@@ -225,12 +229,12 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
         </Toast>
 
         <QueueCommands
-          screenshots={screenshots}
+          screenshots={isChatOpen ? [] : screenshots}
           onChatToggle={handleChatToggle}
           onSettingsOpen={() => window.electronAPI.openSettingsWindow()}
         />
 
-        {screenshots.length > 0 && (
+        {!isChatOpen && screenshots.length > 0 && (
           <div className="w-fit rounded-lg border border-white/10 bg-black/60 p-1.5">
             <ScreenshotQueue
               isLoading={false}

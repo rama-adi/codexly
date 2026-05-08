@@ -18,6 +18,12 @@ export type ChatMessage = {
   createdAt: string
 }
 
+type AppendChatMessageOptions = {
+  titleHint?: string
+  workingDirectory?: string
+  embedScreenshots?: boolean
+}
+
 export type ChatSession = {
   id: string
   title: string
@@ -172,7 +178,7 @@ export function resetActiveSession(): ChatSession {
 
 export function appendChatMessage(
   message: Omit<ChatMessage, "id" | "createdAt">,
-  options: { titleHint?: string; workingDirectory?: string } = {}
+  options: AppendChatMessageOptions = {}
 ): ChatSession {
   const index = readIndex()
   let session = index.activeSessionId ? getChatSession(index.activeSessionId) : null
@@ -185,7 +191,11 @@ export function appendChatMessage(
 
   const nextMessage: ChatMessage = {
     ...message,
-    screenshots: message.screenshots ?? embedScreenshots(message.screenshotPaths),
+    screenshots:
+      message.screenshots ??
+      (options.embedScreenshots === false
+        ? undefined
+        : embedScreenshots(message.screenshotPaths)),
     id: newId("message"),
     createdAt: nowIso(),
   }
@@ -218,5 +228,30 @@ export function appendChatMessage(
     ...nextIndex.sessions.filter(item => item.id !== next.id),
   ]
   writeIndex(nextIndex)
+  return next
+}
+
+export function embedMessageScreenshots(sessionId: string, messageId: string): ChatSession | null {
+  const session = getChatSession(sessionId)
+  if (!session) return null
+
+  let changed = false
+  const messages = session.messages.map(message => {
+    if (message.id !== messageId || message.screenshots?.length || !message.screenshotPaths?.length) {
+      return message
+    }
+    const screenshots = embedScreenshots(message.screenshotPaths)
+    if (!screenshots?.length) return message
+    changed = true
+    return {
+      ...message,
+      screenshots,
+      screenshotDataUrls: screenshots.map(screenshot => screenshot.dataUrl),
+    }
+  })
+
+  if (!changed) return session
+  const next = { ...session, messages }
+  writeSession(next)
   return next
 }

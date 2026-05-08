@@ -1,7 +1,7 @@
 import os from "os"
 import { getAppSettings, getLaunchWorkingDirectory, updateAppSettings } from "./AppSettings"
 import { CodexAppServerClient } from "./CodexAppServerClient"
-import { appendChatMessage, getActiveSessionId, getChatSession } from "./HistoryStore"
+import { appendChatMessage, embedMessageScreenshots, getActiveSessionId, getChatSession } from "./HistoryStore"
 import { getPersonalizationConfig } from "./PersonalizationStore"
 
 type ModelOption = { id: string; name: string }
@@ -48,14 +48,19 @@ export class LLMHelper {
     ]
 
     callbacks.onStart?.()
-    appendChatMessage(
+    const userSession = appendChatMessage(
       {
         role: "user",
         content: input.message?.trim() || "Solve the attached screenshot.",
         screenshotPaths: input.imagePaths,
       },
-      { titleHint: input.message || "Screenshot session", workingDirectory: configuredCwd }
+      {
+        titleHint: input.message || "Screenshot session",
+        workingDirectory: configuredCwd,
+        embedScreenshots: false,
+      }
     )
+    const userMessageId = userSession.messages.at(-1)?.id
 
     let answer = ""
     let turnId: string | null = null
@@ -114,6 +119,11 @@ export class LLMHelper {
           effort: settings.reasoningEffort,
           summary: "none",
         })
+        if (userMessageId && input.imagePaths?.length) {
+          setImmediate(() => {
+            embedMessageScreenshots(userSession.id, userMessageId)
+          })
+        }
       } catch (error: any) {
         finish(new Error(error?.message ?? String(error)))
       }
