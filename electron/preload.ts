@@ -10,7 +10,18 @@ type AppSettings = {
   codingLanguage: string
   responseLanguage: string
   answerHeight: number
+  launchMode: "direct" | "directory"
+  selectedDirectoryId: string | null
+  directoryProfiles: DirectoryProfile[]
   workingDirectory: string
+}
+
+type DirectoryProfile = {
+  id: string
+  title: string
+  path: string
+  createdAt: string
+  updatedAt: string
 }
 
 type PersonalizationConfig = {

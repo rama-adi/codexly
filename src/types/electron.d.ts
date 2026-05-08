@@ -9,7 +9,18 @@ export interface AppSettings {
   codingLanguage: string
   responseLanguage: string
   answerHeight: number
+  launchMode: "direct" | "directory"
+  selectedDirectoryId: string | null
+  directoryProfiles: DirectoryProfile[]
   workingDirectory: string
+}
+
+export interface DirectoryProfile {
+  id: string
+  title: string
+  path: string
+  createdAt: string
+  updatedAt: string
 }
 
 export interface PersonalizationConfig {

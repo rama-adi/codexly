@@ -1,6 +1,14 @@
 import { z } from "zod";
 import { readJsonFile, statePath, writeJsonFile } from "./jsonStorage"
 
+export const directoryProfileSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  path: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+})
+
 export const appSettingsSchema = z.object({
   model: z.string().default("gpt-5.4"),
   stealthEnabled: z.boolean().default(true),
@@ -15,16 +23,39 @@ export const appSettingsSchema = z.object({
   responseLanguage: z.string().default(""),
   // Max height of the solutions/answer panel in pixels.
   answerHeight: z.number().min(200).max(1400).default(600),
+  launchMode: z.enum(["direct", "directory"]).default("direct"),
+  selectedDirectoryId: z.string().nullable().default(null),
+  directoryProfiles: z.array(directoryProfileSchema).default([]),
+  // Legacy setting retained only for migration from older builds.
   workingDirectory: z.string().default(""),
 });
 
 export type AppSettings = z.infer<typeof appSettingsSchema>;
+export type DirectoryProfile = z.infer<typeof directoryProfileSchema>;
 
 const SETTINGS_FILE = statePath("app-settings.json")
 
 
 export function getAppSettings(): AppSettings {
-  return appSettingsSchema.catch(appSettingsSchema.parse({})).parse(readJsonFile(SETTINGS_FILE) ?? {})
+  const parsed = appSettingsSchema.catch(appSettingsSchema.parse({})).parse(readJsonFile(SETTINGS_FILE) ?? {})
+  if (parsed.workingDirectory && parsed.directoryProfiles.length === 0) {
+    const timestamp = new Date().toISOString()
+    return appSettingsSchema.parse({
+      ...parsed,
+      launchMode: "directory",
+      selectedDirectoryId: "legacy-working-directory",
+      directoryProfiles: [
+        {
+          id: "legacy-working-directory",
+          title: parsed.workingDirectory.split(/[\\/]/).filter(Boolean).at(-1) || "Working directory",
+          path: parsed.workingDirectory,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      ],
+    })
+  }
+  return parsed
 }
 
 export function updateAppSettings(patch: Partial<AppSettings>): AppSettings {
@@ -35,4 +66,13 @@ export function updateAppSettings(patch: Partial<AppSettings>): AppSettings {
     console.error("Failed to save app settings:", error)
   }
   return next
+}
+
+export function getSelectedDirectory(settings = getAppSettings()): DirectoryProfile | null {
+  if (settings.launchMode !== "directory" || !settings.selectedDirectoryId) return null
+  return settings.directoryProfiles.find(profile => profile.id === settings.selectedDirectoryId) ?? null
+}
+
+export function getLaunchWorkingDirectory(settings = getAppSettings()): string | undefined {
+  return getSelectedDirectory(settings)?.path
 }

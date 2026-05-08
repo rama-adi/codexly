@@ -1,8 +1,9 @@
 // ipcHandlers.ts
 
 import { BrowserWindow, ipcMain, app, dialog } from "electron"
+import crypto from "crypto"
 import { AppState } from "./main"
-import { getAppSettings, updateAppSettings } from "./AppSettings"
+import { getAppSettings, getLaunchWorkingDirectory, updateAppSettings } from "./AppSettings"
 import { getPersonalizationConfig, updatePersonalizationConfig } from "./PersonalizationStore"
 import {
   getChatSession,
@@ -111,7 +112,7 @@ export function initializeIpcHandlers(appState: AppState): void {
       const mainWindow = appState.getMainWindow()
       mainWindow?.webContents.send(appState.PROCESSING_EVENTS.SOLUTION_STREAM_START)
       const response = await appState.processingHelper.getLLMHelper().streamAnswer(
-        { message, workingDirectory: getAppSettings().workingDirectory },
+        { message, workingDirectory: getLaunchWorkingDirectory(getAppSettings()) },
         {
           onDelta: delta =>
             mainWindow?.webContents.send(appState.PROCESSING_EVENTS.SOLUTION_STREAM_DELTA, delta),
@@ -246,14 +247,31 @@ export function initializeIpcHandlers(appState: AppState): void {
 
   ipcMain.handle("pick-working-directory", async (_event, options?: { initialPath?: string }) => {
     const settings = getAppSettings()
-    const defaultPath = options?.initialPath?.trim() || settings.workingDirectory || app.getPath("home")
+    const selectedProfile = settings.directoryProfiles.find(profile => profile.id === settings.selectedDirectoryId)
+    const defaultPath = options?.initialPath?.trim() || selectedProfile?.path || app.getPath("home")
     const result = await (dialog as any).showOpenDialog({
       defaultPath,
       properties: ["openDirectory", "createDirectory"],
     })
     if (result.canceled || result.filePaths.length === 0) return null
     const selected = result.filePaths[0]
-    const nextSettings = updateAppSettings({ workingDirectory: selected })
+    const timestamp = new Date().toISOString()
+    const existing = settings.directoryProfiles.find(profile => profile.path === selected)
+    const profile = existing ?? {
+      id: `dir_${crypto.randomUUID()}`,
+      title: selected.split(/[\\/]/).filter(Boolean).at(-1) || "Working directory",
+      path: selected,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }
+    const nextSettings = updateAppSettings({
+      launchMode: "directory",
+      selectedDirectoryId: profile.id,
+      directoryProfiles: existing
+        ? settings.directoryProfiles
+        : [profile, ...settings.directoryProfiles],
+      workingDirectory: selected,
+    })
     for (const window of BrowserWindow.getAllWindows()) {
       window.webContents.send("app-settings-changed", nextSettings)
     }

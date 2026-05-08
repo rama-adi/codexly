@@ -1,5 +1,5 @@
 import os from "os"
-import { AppSettings, getAppSettings, updateAppSettings } from "./AppSettings"
+import { getAppSettings, getLaunchWorkingDirectory, updateAppSettings } from "./AppSettings"
 import { CodexAppServerClient } from "./CodexAppServerClient"
 import { appendChatMessage, getActiveSessionId, getChatSession } from "./HistoryStore"
 import { getPersonalizationConfig } from "./PersonalizationStore"
@@ -24,7 +24,7 @@ export class LLMHelper {
   private modelName = DEFAULT_MODEL
   private client: CodexAppServerClient | null = null
   private codexThreadId: string | null = null
-  private clientCwd: string | null = null
+  private clientKey: string | null = null
 
   constructor() {
     this.modelName = this.loadSavedModel()
@@ -38,9 +38,9 @@ export class LLMHelper {
     signal?: AbortSignal
   }, callbacks: StreamCallbacks = {}): Promise<string> {
     const settings = getAppSettings()
-    const cwd = input.workingDirectory || settings.workingDirectory || os.homedir()
-    const client = await this.getClient(cwd)
-    const threadId = await this.ensureThread(client, cwd)
+    const configuredCwd = input.workingDirectory || getLaunchWorkingDirectory(settings)
+    const client = await this.getClient(configuredCwd)
+    const threadId = await this.ensureThread(client, configuredCwd)
     const prompt = this.buildPrompt(input.message, input.imagePaths ?? [])
     const userInput = [
       { type: "text", text: prompt },
@@ -54,7 +54,7 @@ export class LLMHelper {
         content: input.message?.trim() || "Solve the attached screenshot.",
         screenshotPaths: input.imagePaths,
       },
-      { titleHint: input.message || "Screenshot session", workingDirectory: cwd }
+      { titleHint: input.message || "Screenshot session", workingDirectory: configuredCwd }
     )
 
     let answer = ""
@@ -72,7 +72,7 @@ export class LLMHelper {
           reject(error)
           return
         }
-        appendChatMessage({ role: "assistant", content: answer }, { workingDirectory: cwd })
+        appendChatMessage({ role: "assistant", content: answer }, { workingDirectory: configuredCwd })
         callbacks.onComplete?.(answer)
         resolve(answer)
       }
@@ -108,7 +108,7 @@ export class LLMHelper {
         await client.request("turn/start", {
           threadId,
           input: userInput,
-          cwd,
+          ...(configuredCwd ? { cwd: configuredCwd } : {}),
           model: this.modelName,
           personality: "pragmatic",
           effort: settings.responseType === "thorough" ? "medium" : "low",
@@ -146,7 +146,7 @@ export class LLMHelper {
 
   public async getAvailableModels(): Promise<ModelOption[]> {
     try {
-      const client = await this.getClient(getAppSettings().workingDirectory || os.homedir())
+      const client = await this.getClient(getLaunchWorkingDirectory(getAppSettings()))
       const result = await client.request("model/list", {})
       const models = Array.isArray(result?.models) ? result.models : []
       const discovered = models
@@ -160,28 +160,30 @@ export class LLMHelper {
 
   public async testConnection(): Promise<{ success: boolean; error?: string }> {
     try {
-      await this.getClient(getAppSettings().workingDirectory || os.homedir())
+      await this.getClient(getLaunchWorkingDirectory(getAppSettings()))
       return { success: true }
     } catch (error: any) {
       return { success: false, error: error?.message ?? String(error) }
     }
   }
 
-  private async getClient(cwd: string): Promise<CodexAppServerClient> {
-    if (!this.client || this.clientCwd !== cwd) {
+  private async getClient(cwd: string | undefined): Promise<CodexAppServerClient> {
+    const spawnCwd = cwd || process.cwd() || os.homedir()
+    const key = cwd || "__direct__"
+    if (!this.client || this.clientKey !== key) {
       this.client?.stop()
-      this.client = new CodexAppServerClient(cwd)
-      this.clientCwd = cwd
+      this.client = new CodexAppServerClient(spawnCwd)
+      this.clientKey = key
       this.codexThreadId = null
       await this.client.start()
     }
     return this.client
   }
 
-  private async ensureThread(client: CodexAppServerClient, cwd: string): Promise<string> {
+  private async ensureThread(client: CodexAppServerClient, cwd: string | undefined): Promise<string> {
     if (this.codexThreadId) return this.codexThreadId
     const response = await client.request("thread/start", {
-      cwd,
+      ...(cwd ? { cwd } : {}),
       model: this.modelName,
       personality: "pragmatic",
       sandbox: "read-only",

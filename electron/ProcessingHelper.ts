@@ -3,7 +3,7 @@
 import { AppState } from "./main"
 import { LLMHelper } from "./LLMHelper"
 import dotenv from "dotenv"
-import { getAppSettings } from "./AppSettings"
+import { getAppSettings, getLaunchWorkingDirectory } from "./AppSettings"
 import { resetActiveSession } from "./HistoryStore"
 
 dotenv.config()
@@ -41,7 +41,7 @@ export class ProcessingHelper {
         await this.llmHelper.streamAnswer(
           {
             imagePaths: screenshotQueue,
-            workingDirectory: settings.workingDirectory,
+            workingDirectory: getLaunchWorkingDirectory(settings),
             signal: this.currentProcessingAbortController.signal,
           },
           {
@@ -81,7 +81,7 @@ export class ProcessingHelper {
         {
           message: "Use these new screenshots to continue the current session and update the answer.",
           imagePaths: extraScreenshotQueue,
-          workingDirectory: settings.workingDirectory,
+          workingDirectory: getLaunchWorkingDirectory(settings),
           signal: this.currentExtraProcessingAbortController.signal,
         },
         {
