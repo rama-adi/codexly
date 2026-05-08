@@ -4,18 +4,68 @@ import { ScreenshotCanceledError } from "./ScreenshotHelper"
 
 export class ShortcutsHelper {
   private appState: AppState
+  private toolbarShortcutsEnabled = false
+  private readonly toolbarAccelerators = [
+    "CommandOrControl+H",
+    "CommandOrControl+Shift+H",
+    "CommandOrControl+Enter",
+    "CommandOrControl+K",
+    "CommandOrControl+R",
+    "CommandOrControl+Left",
+    "CommandOrControl+Right",
+    "CommandOrControl+Down",
+    "CommandOrControl+Up",
+  ]
 
   constructor(appState: AppState) {
     this.appState = appState
   }
 
   public registerGlobalShortcuts(): void {
-    // Add global shortcut to show/center window
+    // These are always global because they are how the user summons/hides the toolbar.
     globalShortcut.register("CommandOrControl+Shift+Space", async () => {
       console.log("Show/Center window shortcut pressed...")
       await this.appState.processingHelper.prepareForLaunch()
       this.appState.centerAndShowWindow()
     })
+
+    globalShortcut.register("CommandOrControl+B", async () => {
+      if (!this.appState.isVisible()) {
+        await this.appState.processingHelper.prepareForLaunch()
+      }
+      this.appState.toggleMainWindow()
+      // If window exists and we're showing it, bring it to front
+      const mainWindow = this.appState.getMainWindow()
+      if (mainWindow && !this.appState.isVisible()) {
+        // Force the window to the front on macOS
+        if (process.platform === "darwin") {
+          mainWindow.setAlwaysOnTop(true, "normal")
+          // Reset alwaysOnTop after a brief delay
+          setTimeout(() => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.setAlwaysOnTop(true, "floating")
+            }
+          }, 100)
+        }
+      }
+    })
+
+    // Unregister shortcuts when quitting
+    app.on("will-quit", () => {
+      globalShortcut.unregisterAll()
+    })
+  }
+
+  public setToolbarShortcutsEnabled(enabled: boolean): void {
+    if (enabled === this.toolbarShortcutsEnabled) return
+    this.toolbarShortcutsEnabled = enabled
+
+    if (!enabled) {
+      for (const accelerator of this.toolbarAccelerators) {
+        globalShortcut.unregister(accelerator)
+      }
+      return
+    }
 
     globalShortcut.register("CommandOrControl+H", async () => {
       const mainWindow = this.appState.getMainWindow()
@@ -115,32 +165,6 @@ export class ShortcutsHelper {
     globalShortcut.register("CommandOrControl+Up", () => {
       console.log("Command/Ctrl + Up pressed. Moving window Up.")
       this.appState.moveWindowUp()
-    })
-
-    globalShortcut.register("CommandOrControl+B", async () => {
-      if (!this.appState.isVisible()) {
-        await this.appState.processingHelper.prepareForLaunch()
-      }
-      this.appState.toggleMainWindow()
-      // If window exists and we're showing it, bring it to front
-      const mainWindow = this.appState.getMainWindow()
-      if (mainWindow && !this.appState.isVisible()) {
-        // Force the window to the front on macOS
-        if (process.platform === "darwin") {
-          mainWindow.setAlwaysOnTop(true, "normal")
-          // Reset alwaysOnTop after a brief delay
-          setTimeout(() => {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.setAlwaysOnTop(true, "floating")
-            }
-          }, 100)
-        }
-      }
-    })
-
-    // Unregister shortcuts when quitting
-    app.on("will-quit", () => {
-      globalShortcut.unregisterAll()
     })
   }
 }

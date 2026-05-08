@@ -110,10 +110,12 @@ export class AppState {
 
   public hideMainWindow(): void {
     this.windowHelper.hideMainWindow()
+    this.shortcutsHelper.setToolbarShortcutsEnabled(false)
   }
 
   public showMainWindow(): void {
     this.windowHelper.showMainWindow()
+    this.shortcutsHelper.setToolbarShortcutsEnabled(true)
   }
 
   public openSettingsWindow(): void {
@@ -167,6 +169,7 @@ export class AppState {
       this.screenshotHelper.getExtraScreenshotQueue().length
     )
     this.windowHelper.toggleMainWindow()
+    this.shortcutsHelper.setToolbarShortcutsEnabled(this.windowHelper.isVisible())
   }
 
   public setWindowDimensions(width: number, height: number): void {
@@ -226,6 +229,7 @@ export class AppState {
 
   public centerAndShowWindow(): void {
     this.windowHelper.centerAndShowWindow()
+    this.shortcutsHelper.setToolbarShortcutsEnabled(true)
   }
 
   public createTray(): void {
