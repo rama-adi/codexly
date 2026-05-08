@@ -1,112 +1,161 @@
 # Codexly
 
-It's [free-cluely](https://github.com/prat011/free-cluely), but using your Codex sub.
+Codexly is a desktop toolbar for asking Codex about what is on your screen. It
+uses the local Codex CLI app-server, so it runs through your existing Codex
+login instead of a separate API key or billing setup.
 
-An invisible desktop assistant that provides real-time insights, answers, and support during meetings, interviews, presentations, and professional conversations — powered by your existing OpenAI Codex subscription via OAuth. No API keys, no extra billing.
+It can run in two launch modes:
 
-## 🚀 Quick Start
+- **Direct**: start Codexly without a working directory. Codex answers from the
+  prompt, screenshots, chat history, and its own knowledge.
+- **Directory**: import a local folder, save it as a launch profile, and start
+  Codexly with that folder as the Codex working directory.
 
-### Prerequisites
-- Node.js installed
-- Git installed
-- **[Codex CLI](https://github.com/openai/codex)** installed and logged in — Codexly piggybacks on your existing Codex subscription via the OAuth token Codex stores locally. Make sure `codex` is installed, you're logged in, and your sub is active.
+## Current Features
 
-### Installation
+- Always-on-top toolbar for screenshots, solving, chat, settings, reset, and
+  clearing the current buffer.
+- Full-screen and selected-area screenshot capture.
+- Native image-capable Codex models. Screenshots are sent directly to Codex.
+- Chat and answer views backed by the active Codex session.
+- Markdown rendering for assistant answers and history.
+- Session history with embedded screenshot previews.
+- Saved directory profiles with editable labels and open-in-Finder support.
+- Prewarmed Codex startup state on the home screen.
+- Settings for Codex model, model-provided reasoning effort options, and stealth
+  screenshot behavior.
 
-1. Clone the repository:
-```bash
-git clone https://github.com/rama-adi/codexly.git
-cd codexly
-```
+## Prerequisites
 
-2. Install dependencies:
-```bash
-# If you hit Sharp/Python build errors:
-SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install --ignore-scripts
-npm rebuild sharp
+- Node.js
+- Git
+- [Codex CLI](https://github.com/openai/codex) installed, logged in, and
+  available as `codex` on your `PATH`
 
-# Otherwise:
-npm install
-```
+Run this once if Codex is not already authenticated:
 
-3. Make sure Codex is set up:
 ```bash
 codex login
 ```
-That's it — no `.env`, no API keys. Codexly reads the same OAuth token Codex uses.
 
-### Running
+Codexly does not require a `.env` file or OpenAI API key.
 
-#### Development
+## Install
+
 ```bash
-npm start
+git clone https://github.com/rama-adi/codexly.git
+cd codexly
+npm install
 ```
-Starts the Vite dev server on port 5180 and launches the Electron app.
 
-#### Production build
-```bash
-npm run dist
-```
-Built app lands in the `release` folder.
+If Sharp fails to build on install:
 
-## ⚠️ Notes
-
-1. **Closing the app**:
-   - `Cmd + Q` (Mac) or `Ctrl + Q` (Windows/Linux)
-   - The X button currently doesn't work (known issue)
-
-2. **If the app doesn't start**:
-   - Make sure no other app is using port 5180:
-     ```bash
-     lsof -i :5180
-     kill [PID]
-     ```
-   - Make sure `codex` is logged in (`codex login`)
-
-3. **Keyboard shortcuts**:
-   - `Cmd/Ctrl + B`: Toggle window visibility
-   - `Cmd/Ctrl + H`: Take screenshot
-   - `Cmd/Ctrl + Enter`: Get solution
-   - `Cmd/Ctrl + Arrow keys`: Move window
-
-## 🔧 Troubleshooting
-
-### Sharp/Python build errors
 ```bash
 rm -rf node_modules package-lock.json
 SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm install --ignore-scripts
 npm rebuild sharp
 ```
 
-### General install issues
-1. Delete `node_modules` and `package-lock.json`
-2. Run `npm install` again
-3. Run `npm start`
+## Run
 
-## Key Features
+Development:
 
-### Invisible AI assistant
-- Translucent, always-on-top window
-- Click-through over empty regions
-- Hide/show with global hotkeys
+```bash
+npm start
+```
 
-### Screenshot analysis
-- `Cmd/Ctrl + H` to capture anything on screen
-- Auto-analyzed by Codex; terse answers in chat
-- Note: the new GPT-5.x models handle image analysis natively, so screenshots are sent directly to the model — no separate OCR or vision pipeline needed.
+This starts Vite on port `5180` and launches the Electron app.
 
-### Contextual chat
-- Chat about whatever's on screen
-- Conversation context maintained per session
+Production build:
 
-### Uses your Codex sub
-- OAuth token from the Codex CLI — no separate API key
-- No extra billing on top of what you already pay
+```bash
+npm run dist
+```
 
-## 📄 License
+Packaged builds are written to `release/`.
 
-ISC License — free for personal and commercial use.
+## Usage
 
----
+1. Open Codexly.
+2. Launch **Direct**, or add a directory and launch from that saved profile.
+3. Use the toolbar to capture screenshots, solve, chat, or reset the session.
+4. Use **History** to continue or inspect previous persisted sessions.
 
-**⭐ Star the repo if Codexly helps you out.**
+Launching from Home starts a new session. Continue old sessions from History.
+Empty new sessions are not persisted.
+
+## Keyboard Shortcuts
+
+Global shortcuts:
+
+- `Cmd/Ctrl + B`: show or hide the toolbar
+- `Cmd/Ctrl + Shift + Space`: center and show the toolbar
+
+Toolbar-only shortcuts:
+
+- `Cmd/Ctrl + H`: capture the screen
+- `Cmd/Ctrl + Shift + H`: capture a selected area
+- `Cmd/Ctrl + Enter`: solve the current screenshot buffer
+- `Cmd/Ctrl + K`: clear the current screenshot buffer and close open panes
+- `Cmd/Ctrl + R`: reset the active session
+- `Cmd/Ctrl + Arrow keys`: move the toolbar
+
+Toolbar-only shortcuts are registered only while the toolbar is visible.
+
+## Settings
+
+- **Model**: loaded from Codex via `model/list`; only image-capable models are
+  shown.
+- **Reasoning effort**: shown as model-provided options with descriptions when
+  Codex returns them.
+- **Stealth behavior**: hides/protects the overlay during screenshot capture.
+
+## Troubleshooting
+
+### Codex model list is unavailable
+
+Make sure the Codex CLI is installed, logged in, and reachable:
+
+```bash
+codex login
+codex --version
+```
+
+Codexly talks to `codex app-server` over stdio. If `codex` is installed in a
+non-standard location, start the app with `CODEX_BIN` set to that binary.
+
+### App does not start
+
+Port `5180` may already be in use:
+
+```bash
+lsof -i :5180
+kill <PID>
+```
+
+Then run:
+
+```bash
+npm start
+```
+
+### Screenshots do not work on macOS
+
+Grant Screen Recording permission to the app under:
+
+`System Settings > Privacy & Security > Screen Recording`
+
+Then quit and reopen Codexly.
+
+## Development Scripts
+
+- `npm start`: run Vite and Electron for development
+- `npm run dev`: run only the Vite dev server
+- `npm run electron:dev`: compile Electron and run it against the dev server
+- `npm run build`: type-check and build the renderer
+- `npm run electron:build`: compile Electron for production
+- `npm run dist`: build and package with electron-builder
+
+## License
+
+ISC License.
