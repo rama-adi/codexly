@@ -153,6 +153,21 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
     setView("queue")
   }
 
+  const clearBuffer = async () => {
+    setScreenshots([])
+    await window.electronAPI.clearScreenshots()
+  }
+
+  const resetSession = async () => {
+    setIsPreview(false)
+    setIsChatOpen(false)
+    setAnswer("")
+    setStreaming(false)
+    setScreenshots([])
+    await window.electronAPI.resetQueues()
+    setView("queue")
+  }
+
   const copyAnswer = async () => {
     if (!answer) return
     await navigator.clipboard.writeText(answer)
@@ -169,6 +184,8 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
       <QueueCommands
         screenshots={[]}
         onChatToggle={() => setIsChatOpen(open => !open)}
+        onClearBuffer={clearBuffer}
+        onResetSession={resetSession}
         onTooltipVisibilityChange={() => undefined}
         onSettingsOpen={() => window.electronAPI.openSettingsWindow()}
       />

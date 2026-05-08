@@ -136,6 +136,11 @@ export function initializeIpcHandlers(appState: AppState): void {
     try {
       appState.clearQueues()
       appState.processingHelper.resetSession()
+      for (const window of BrowserWindow.getAllWindows()) {
+        window.webContents.send("screenshots-cleared")
+        window.webContents.send("history-changed", listChatSessions())
+        window.webContents.send("reset-view")
+      }
       console.log("Screenshot queues have been cleared.")
       return { success: true }
     } catch (error: any) {

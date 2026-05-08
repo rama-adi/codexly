@@ -1,12 +1,14 @@
 import React from "react"
 import { IoLogOutOutline } from "react-icons/io5"
-import { Settings } from "lucide-react"
+import { RotateCcw, Settings, Trash2 } from "lucide-react"
 
 interface QueueCommandsProps {
   onTooltipVisibilityChange?: (visible: boolean, height: number) => void
   screenshots: Array<{ path: string; preview: string }>
   onChatToggle?: () => void
   onSettingsOpen: () => void
+  onClearBuffer?: () => void
+  onResetSession?: () => void
   chatControl?: React.ReactNode
 }
 
@@ -20,6 +22,8 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
   screenshots,
   onChatToggle,
   onSettingsOpen,
+  onClearBuffer,
+  onResetSession,
   chatControl
 }) => {
   return (
@@ -37,6 +41,28 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
           <Key>↵</Key>
         </div>
       )}
+
+      <button
+        className="inline-flex items-center gap-1 rounded px-2 py-1 text-white/80 transition-colors hover:bg-white/10"
+        onClick={onClearBuffer}
+        type="button"
+        title="Clear current screenshot buffer"
+        aria-label="Clear current screenshot buffer"
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+        Clear
+      </button>
+
+      <button
+        className="inline-flex items-center gap-1 rounded px-2 py-1 text-white/80 transition-colors hover:bg-white/10"
+        onClick={onResetSession}
+        type="button"
+        title="Reset session (Cmd+R)"
+        aria-label="Reset session"
+      >
+        <RotateCcw className="h-3.5 w-3.5" />
+        Reset
+      </button>
 
       <div className="h-4 w-px bg-white/15" />
 

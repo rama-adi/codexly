@@ -131,6 +131,17 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     setIsChatOpen(open => !open)
   }
 
+  const clearBuffer = async () => {
+    await window.electronAPI.clearScreenshots()
+    await refetch()
+  }
+
+  const resetSession = async () => {
+    await window.electronAPI.resetQueues()
+    setIsChatOpen(false)
+    await refetch()
+  }
+
   return (
     <div
       ref={barRef}
@@ -155,6 +166,8 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
         <QueueCommands
           screenshots={isChatOpen ? [] : screenshots}
           onChatToggle={handleChatToggle}
+          onClearBuffer={clearBuffer}
+          onResetSession={resetSession}
           onSettingsOpen={() => window.electronAPI.openSettingsWindow()}
         />
 

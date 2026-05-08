@@ -68,6 +68,7 @@ export interface ElectronAPI {
   getScreenshots: () => Promise<Array<{ path: string; preview: string }>>
   deleteScreenshot: (path: string) => Promise<{ success: boolean; error?: string }>
   clearScreenshots: () => Promise<{ success: boolean }>
+  resetQueues: () => Promise<{ success: boolean; error?: string }>
   onScreenshotTaken: (callback: (data: { path: string; preview: string }) => void) => () => void
   onScreenshotsCleared: (callback: () => void) => () => void
   onResetView: (callback: () => void) => () => void

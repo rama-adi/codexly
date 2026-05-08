@@ -175,7 +175,15 @@ export function createChatSession(input: { title?: string; workingDirectory?: st
 }
 
 export function resetActiveSession(): ChatSession {
-  return createChatSession()
+  const index = readIndex()
+  writeIndex({ ...index, activeSessionId: null })
+  return {
+    id: "",
+    title: "New session",
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+    messages: [],
+  }
 }
 
 export function appendChatMessage(
