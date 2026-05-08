@@ -20,12 +20,6 @@ type StreamCallbacks = {
 }
 
 const DEFAULT_MODEL = "gpt-5.4"
-const FALLBACK_MODELS: ModelOption[] = [
-  { id: "gpt-5.4", name: "GPT-5.4" },
-  { id: "gpt-5.4-mini", name: "GPT-5.4 Mini" },
-  { id: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
-  { id: "gpt-5.2", name: "GPT-5.2" },
-]
 
 export class LLMHelper {
   private modelName = DEFAULT_MODEL
@@ -195,12 +189,11 @@ export class LLMHelper {
       const client = await this.getClient(getLaunchWorkingDirectory(getAppSettings()))
       const result = await client.request("model/list", {})
       const models = Array.isArray(result?.models) ? result.models : []
-      const discovered = models
+      return models
         .map((model: any) => ({ id: String(model.id ?? model.slug ?? ""), name: String(model.name ?? model.id ?? "") }))
         .filter((model: ModelOption) => model.id)
-      return mergeModels(discovered, FALLBACK_MODELS)
     } catch {
-      return FALLBACK_MODELS
+      return []
     }
   }
 
@@ -307,17 +300,4 @@ export class LLMHelper {
   private loadSavedModel(): string {
     return getAppSettings().model || DEFAULT_MODEL
   }
-}
-
-function mergeModels(...groups: ModelOption[][]): ModelOption[] {
-  const seen = new Set<string>()
-  const merged: ModelOption[] = []
-  for (const group of groups) {
-    for (const model of group) {
-      if (!model.id || seen.has(model.id)) continue
-      seen.add(model.id)
-      merged.push(model)
-    }
-  }
-  return merged
 }

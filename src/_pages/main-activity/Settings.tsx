@@ -53,6 +53,7 @@ const Settings: React.FC = () => {
   const [savingStealth, setSavingStealth] = useState(false)
   const [status, setStatus] = useState<ConnectionStatus>("idle")
   const [errorMessage, setErrorMessage] = useState("")
+  const modelDiscoveryFailed = !loadingConfig && models.length === 0
 
   useEffect(() => {
     ;(async () => {
@@ -175,10 +176,14 @@ const Settings: React.FC = () => {
                   <Select
                     value={config?.model ?? ""}
                     onChange={event => changeModel(event.target.value)}
-                    disabled={savingModel}
+                    disabled={savingModel || modelDiscoveryFailed}
                     loading={savingModel}
                     monospace
-                    title={config?.model}
+                    title={
+                      modelDiscoveryFailed
+                        ? "Codex model list is unavailable"
+                        : config?.model
+                    }
                     className="max-w-[210px]"
                   >
                     {config &&
@@ -197,10 +202,16 @@ const Settings: React.FC = () => {
             <SettingRow
               label="Connection"
               description={
-                <ConnectionStatusLine
-                  status={status}
-                  errorMessage={errorMessage}
-                />
+                modelDiscoveryFailed ? (
+                  <span className="text-xs text-destructive">
+                    Codex model list unavailable. Check connection.
+                  </span>
+                ) : (
+                  <ConnectionStatusLine
+                    status={status}
+                    errorMessage={errorMessage}
+                  />
+                )
               }
               control={
                 <Button
