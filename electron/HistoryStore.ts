@@ -3,11 +3,18 @@ import fs from "fs"
 import path from "path"
 import { readJsonFile, statePath, writeJsonFile } from "./jsonStorage"
 
+export type ScreenshotRecord = {
+  path: string
+  dataUrl: string
+}
+
 export type ChatMessage = {
   id: string
   role: "user" | "assistant"
   content: string
   screenshotPaths?: string[]
+  screenshotDataUrls?: string[]
+  screenshots?: ScreenshotRecord[]
   createdAt: string
 }
 
@@ -67,6 +74,24 @@ function writeSession(session: ChatSession) {
   writeJsonFile(sessionPath(session.id), session)
 }
 
+function screenshotToDataUrl(filePath: string): ScreenshotRecord | null {
+  try {
+    const buffer = fs.readFileSync(filePath)
+    return {
+      path: filePath,
+      dataUrl: `data:image/png;base64,${buffer.toString("base64")}`,
+    }
+  } catch (error) {
+    console.warn("Failed to embed screenshot in history:", filePath, error)
+    return null
+  }
+}
+
+function embedScreenshots(filePaths?: string[]): ScreenshotRecord[] | undefined {
+  const screenshots = filePaths?.map(screenshotToDataUrl).filter(Boolean) as ScreenshotRecord[] | undefined
+  return screenshots?.length ? screenshots : undefined
+}
+
 export function listChatSessions(): HistoryIndexItem[] {
   return readIndex().sessions
 }
@@ -77,6 +102,11 @@ export function getActiveSessionId(): string | null {
 
 export function getChatSession(sessionId: string): ChatSession | null {
   return readJsonFile<ChatSession>(sessionPath(sessionId))
+}
+
+export function getActiveChatSession(): ChatSession | null {
+  const activeSessionId = getActiveSessionId()
+  return activeSessionId ? getChatSession(activeSessionId) : null
 }
 
 export function deleteChatSession(sessionId: string): boolean {
@@ -155,8 +185,12 @@ export function appendChatMessage(
 
   const nextMessage: ChatMessage = {
     ...message,
+    screenshots: message.screenshots ?? embedScreenshots(message.screenshotPaths),
     id: newId("message"),
     createdAt: nowIso(),
+  }
+  if (!nextMessage.screenshotDataUrls && nextMessage.screenshots?.length) {
+    nextMessage.screenshotDataUrls = nextMessage.screenshots.map(screenshot => screenshot.dataUrl)
   }
   const nextTitle =
     session.messages.length === 0 && options.titleHint?.trim()

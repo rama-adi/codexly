@@ -51,6 +51,8 @@ type ChatSession = {
     role: "user" | "assistant"
     content: string
     screenshotPaths?: string[]
+    screenshotDataUrls?: string[]
+    screenshots?: Array<{ path: string; dataUrl: string }>
     createdAt: string
   }>
 }
@@ -86,6 +88,7 @@ interface ElectronAPI {
   updatePersonalization: (patch: Partial<PersonalizationConfig>) => Promise<PersonalizationConfig>
   getChatHistoryIndex: () => Promise<HistoryIndexItem[]>
   getChatSession: (sessionId: string) => Promise<ChatSession | null>
+  getActiveChatSession: () => Promise<ChatSession | null>
   newChatSession: () => Promise<ChatSession>
   showAnswerPreview: () => Promise<void>
   getCurrentLlmConfig: () => Promise<{ provider: string; model: string }>
@@ -157,6 +160,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   updatePersonalization: patch => ipcRenderer.invoke("update-personalization", patch),
   getChatHistoryIndex: () => ipcRenderer.invoke("get-chat-history-index"),
   getChatSession: sessionId => ipcRenderer.invoke("get-chat-session", sessionId),
+  getActiveChatSession: () => ipcRenderer.invoke("get-active-chat-session"),
   newChatSession: () => ipcRenderer.invoke("new-chat-session"),
   showAnswerPreview: () => ipcRenderer.invoke("show-answer-preview"),
   getCurrentLlmConfig: () => ipcRenderer.invoke("get-current-llm-config"),

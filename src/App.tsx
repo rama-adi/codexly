@@ -122,7 +122,6 @@ const App: React.FC = () => {
       queryClient.invalidateQueries(["problem_statement"])
       queryClient.invalidateQueries(["solution"])
       queryClient.invalidateQueries(["new_solution"])
-      window.localStorage.removeItem("wingman-chat-history")
       window.electronAPI.clearChatHistory()
       navigate(viewToPath.queue)
     })
@@ -133,6 +132,7 @@ const App: React.FC = () => {
   }, [navigate])
 
   useEffect(() => {
+    if (isSettingsWindow) return
     if (!containerRef.current) return
 
     const updateHeight = () => {
@@ -168,7 +168,7 @@ const App: React.FC = () => {
       resizeObserver.disconnect()
       mutationObserver.disconnect()
     }
-  }, [view]) // Re-run when view changes
+  }, [view, isSettingsWindow]) // Re-run when view changes
 
   useEffect(() => {
     const cleanupFunctions = [
@@ -181,7 +181,6 @@ const App: React.FC = () => {
         queryClient.removeQueries(["screenshots"])
         queryClient.removeQueries(["solution"])
         queryClient.removeQueries(["problem_statement"])
-        window.localStorage.removeItem("wingman-chat-history")
         window.electronAPI.clearChatHistory()
         navigate(viewToPath.queue)
         console.log("Unauthorized")

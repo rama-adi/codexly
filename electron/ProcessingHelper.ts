@@ -4,9 +4,17 @@ import { AppState } from "./main"
 import { LLMHelper } from "./LLMHelper"
 import dotenv from "dotenv"
 import { getAppSettings, getLaunchWorkingDirectory } from "./AppSettings"
-import { resetActiveSession } from "./HistoryStore"
+import { listChatSessions, resetActiveSession } from "./HistoryStore"
+import { BrowserWindow } from "electron"
 
 dotenv.config()
+
+function broadcastHistoryChanged() {
+  const history = listChatSessions()
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send("history-changed", history)
+  }
+}
 
 export class ProcessingHelper {
   private appState: AppState
@@ -47,11 +55,13 @@ export class ProcessingHelper {
           {
             onDelta: delta =>
               mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.SOLUTION_STREAM_DELTA, delta),
-            onComplete: answer =>
+            onComplete: answer => {
               mainWindow.webContents.send(
                 this.appState.PROCESSING_EVENTS.SOLUTION_STREAM_COMPLETE,
                 { answer }
-              ),
+              )
+              broadcastHistoryChanged()
+            },
           }
         )
       } catch (error: any) {
@@ -87,11 +97,13 @@ export class ProcessingHelper {
         {
           onDelta: delta =>
             mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.SOLUTION_STREAM_DELTA, delta),
-          onComplete: answer =>
+          onComplete: answer => {
             mainWindow.webContents.send(
               this.appState.PROCESSING_EVENTS.SOLUTION_STREAM_COMPLETE,
               { answer }
-            ),
+            )
+            broadcastHistoryChanged()
+          },
         }
       )
 
@@ -116,6 +128,12 @@ export class ProcessingHelper {
   public resetSession(): void {
     resetActiveSession()
     this.llmHelper.clearChatHistory()
+  }
+
+  public async prepareForLaunch(): Promise<void> {
+    this.currentProcessingAbortController?.abort()
+    const settings = getAppSettings()
+    await this.llmHelper.prepareForLaunch(getLaunchWorkingDirectory(settings))
   }
 
   public getLLMHelper() {

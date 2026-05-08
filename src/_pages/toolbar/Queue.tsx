@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react"
 import { useQuery } from "react-query"
 import ScreenshotQueue from "@/components/Queue/ScreenshotQueue"
 import { Trash2 } from "lucide-react"
+import MarkdownMessage from "@/components/MarkdownMessage"
 import {
   Toast,
   ToastTitle,
@@ -10,6 +11,7 @@ import {
   ToastMessage
 } from "@/components/ui/toast"
 import QueueCommands from "@/components/Queue/QueueCommands"
+import type { ChatSession } from "@/types/electron"
 
 interface QueueProps {
   setView: React.Dispatch<
@@ -28,14 +30,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   const contentRef = useRef<HTMLDivElement>(null)
 
   const [chatInput, setChatInput] = useState("")
-  const [chatMessages, setChatMessages] = useState<{role: "user"|"assistant", text: string}[]>(() => {
-    try {
-      const saved = window.localStorage.getItem("wingman-chat-history")
-      return saved ? JSON.parse(saved) : []
-    } catch {
-      return []
-    }
-  })
+  const [activeSession, setActiveSession] = useState<ChatSession | null>(null)
   const [chatLoading, setChatLoading] = useState(false)
   const [isChatOpen, setIsChatOpen] = useState(false)
   const chatInputRef = useRef<HTMLInputElement>(null)
@@ -94,14 +89,29 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
 
   const handleChatSend = async () => {
     if (!chatInput.trim()) return
-    setChatMessages((msgs) => [...msgs, { role: "user", text: chatInput }])
+    const message = chatInput
     setChatLoading(true)
     setChatInput("")
     try {
-      const response = await window.electronAPI.invoke("chat", chatInput)
-      setChatMessages((msgs) => [...msgs, { role: "assistant", text: response }])
+      await window.electronAPI.chat(message)
+      setActiveSession(await window.electronAPI.getActiveChatSession())
     } catch (err) {
-      setChatMessages((msgs) => [...msgs, { role: "assistant", text: "Error: " + String(err) }])
+      setActiveSession(current =>
+        current
+          ? {
+              ...current,
+              messages: [
+                ...current.messages,
+                {
+                  id: `error-${Date.now()}`,
+                  role: "assistant",
+                  content: "Error: " + String(err),
+                  createdAt: new Date().toISOString(),
+                },
+              ],
+            }
+          : current
+      )
     } finally {
       setChatLoading(false)
       chatInputRef.current?.focus()
@@ -109,9 +119,8 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   }
 
   const clearChat = async () => {
-    setChatMessages([])
-    window.localStorage.removeItem("wingman-chat-history")
     await window.electronAPI.clearChatHistory()
+    setActiveSession(await window.electronAPI.getActiveChatSession())
   }
 
   // Load current model configuration on mount
@@ -134,6 +143,13 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   }, []);
 
   useEffect(() => {
+    window.electronAPI.getActiveChatSession().then(setActiveSession).catch(() => undefined)
+    return window.electronAPI.onHistoryChanged(() => {
+      window.electronAPI.getActiveChatSession().then(setActiveSession).catch(() => undefined)
+    })
+  }, [])
+
+  useEffect(() => {
     const updateDimensions = () => {
       if (contentRef.current) {
         const contentHeight = contentRef.current.scrollHeight
@@ -154,8 +170,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     const cleanupFunctions = [
       window.electronAPI.onScreenshotTaken(() => refetch()),
       window.electronAPI.onResetView(() => {
-        setChatMessages([])
-        window.localStorage.removeItem("wingman-chat-history")
+        setActiveSession(null)
         refetch()
       }),
       window.electronAPI.onSolutionStreamError((error: string) => {
@@ -182,13 +197,11 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     }
   }, [])
 
-  useEffect(() => {
-    window.localStorage.setItem("wingman-chat-history", JSON.stringify(chatMessages))
-  }, [chatMessages])
-
   const handleChatToggle = () => {
     setIsChatOpen(!isChatOpen)
   }
+
+  const chatMessages = activeSession?.messages ?? []
 
   return (
     <div
@@ -253,23 +266,45 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
                   </div>
                 </div>
               ) : (
-                chatMessages.map((msg, idx) => (
-                  <div
-                    key={idx}
-                    className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                  >
+                chatMessages.map(msg => {
+                  const messageScreenshots =
+                    msg.screenshots ??
+                    msg.screenshotDataUrls?.map((dataUrl, index) => ({
+                      path: msg.screenshotPaths?.[index] ?? `${msg.id}-${index}`,
+                      dataUrl,
+                    })) ??
+                    []
+
+                  return (
                     <div
-                      className={`max-w-[85%] px-2.5 py-1.5 rounded text-xs leading-relaxed ${
-                        msg.role === "user"
-                          ? "bg-white/15 text-white/95"
-                          : "bg-white/5 text-white/85 border border-white/10"
-                      }`}
-                      style={{ wordBreak: "break-word" }}
+                      key={msg.id}
+                      className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                     >
-                      {msg.text}
+                      <div
+                        className={`max-w-[85%] px-2.5 py-1.5 rounded text-xs leading-relaxed ${
+                          msg.role === "user"
+                            ? "bg-white/15 text-white/95"
+                            : "bg-white/5 text-white/85 border border-white/10"
+                        }`}
+                        style={{ wordBreak: "break-word" }}
+                      >
+                        {messageScreenshots.length > 0 && (
+                          <div className="mb-2 grid grid-cols-2 gap-1.5">
+                            {messageScreenshots.map(screenshot => (
+                              <img
+                                key={screenshot.path}
+                                src={screenshot.dataUrl}
+                                alt="Screenshot"
+                                className="max-h-24 rounded border border-white/10 object-cover"
+                              />
+                            ))}
+                          </div>
+                        )}
+                        <MarkdownMessage markdown={msg.content} className="space-y-2" />
+                      </div>
                     </div>
-                  </div>
-                ))
+                  )
+                })
               )}
               {chatLoading && (
                 <div className="flex justify-start">

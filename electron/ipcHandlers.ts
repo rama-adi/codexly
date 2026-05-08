@@ -6,6 +6,7 @@ import { AppState } from "./main"
 import { getAppSettings, getLaunchWorkingDirectory, updateAppSettings } from "./AppSettings"
 import { getPersonalizationConfig, updatePersonalizationConfig } from "./PersonalizationStore"
 import {
+  getActiveChatSession,
   getChatSession,
   listChatSessions,
   resetActiveSession
@@ -71,10 +72,14 @@ export function initializeIpcHandlers(appState: AppState): void {
   })
 
   ipcMain.handle("toggle-window", async () => {
+    if (!appState.isVisible()) {
+      await appState.processingHelper.prepareForLaunch()
+    }
     appState.toggleMainWindow()
   })
 
   ipcMain.handle("show-main-window", async () => {
+    await appState.processingHelper.prepareForLaunch()
     appState.showMainWindow()
   })
 
@@ -165,6 +170,7 @@ export function initializeIpcHandlers(appState: AppState): void {
   })
 
   ipcMain.handle("center-and-show-window", async () => {
+    await appState.processingHelper.prepareForLaunch()
     appState.centerAndShowWindow()
   })
 
@@ -236,6 +242,10 @@ export function initializeIpcHandlers(appState: AppState): void {
 
   ipcMain.handle("get-chat-session", async (_event, id: string) => {
     return getChatSession(id)
+  })
+
+  ipcMain.handle("get-active-chat-session", async () => {
+    return getActiveChatSession()
   })
 
   ipcMain.handle("new-chat-session", async () => {

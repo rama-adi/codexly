@@ -46,6 +46,8 @@ export interface ChatSession extends HistoryIndexItem {
     role: "user" | "assistant"
     content: string
     screenshotPaths?: string[]
+    screenshotDataUrls?: string[]
+    screenshots?: Array<{ path: string; dataUrl: string }>
     createdAt: string
   }>
 }
@@ -92,6 +94,7 @@ export interface ElectronAPI {
   onPersonalizationChanged: (callback: (config: PersonalizationConfig) => void) => () => void
   getChatHistoryIndex: () => Promise<HistoryIndexItem[]>
   getChatSession: (sessionId: string) => Promise<ChatSession | null>
+  getActiveChatSession: () => Promise<ChatSession | null>
   newChatSession: () => Promise<ChatSession>
   onHistoryChanged: (callback: (history: HistoryIndexItem[]) => void) => () => void
   showAnswerPreview: () => Promise<void>

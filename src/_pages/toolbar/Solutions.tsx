@@ -3,6 +3,7 @@ import { Copy, X } from "lucide-react"
 
 import QueueCommands from "@/components/Queue/QueueCommands"
 import ScreenshotQueue from "@/components/Queue/ScreenshotQueue"
+import MarkdownMessage from "@/components/MarkdownMessage"
 import {
   Toast,
   ToastDescription,
@@ -20,49 +21,6 @@ interface SolutionsProps {
   setView: React.Dispatch<
     React.SetStateAction<"queue" | "solutions" | "home" | "settings">
   >
-}
-
-const MarkdownAnswer: React.FC<{ markdown: string; streaming: boolean }> = ({
-  markdown,
-  streaming
-}) => {
-  const blocks = markdown.split(/(```[\s\S]*?```)/g)
-
-  if (!markdown && streaming) {
-    return (
-      <p className="text-xs bg-gradient-to-r from-gray-300 via-gray-100 to-gray-300 bg-clip-text text-transparent animate-pulse">
-        Generating answer...
-      </p>
-    )
-  }
-
-  return (
-    <div className="space-y-3 text-[13px] leading-relaxed text-gray-100">
-      {blocks.map((block, index) => {
-        const codeMatch = block.match(/^```(\w+)?\n?([\s\S]*?)```$/)
-        if (codeMatch) {
-          return (
-            <pre
-              key={index}
-              className="overflow-x-auto rounded-md border border-white/10 bg-black/70 p-3 font-mono text-xs text-gray-100"
-            >
-              <code>{codeMatch[2]}</code>
-            </pre>
-          )
-        }
-
-        return block
-          .split(/\n{2,}/)
-          .filter(Boolean)
-          .map((paragraph, paragraphIndex) => (
-            <p key={`${index}-${paragraphIndex}`} className="whitespace-pre-wrap break-words">
-              {paragraph}
-            </p>
-          ))
-      })}
-      {streaming && <span className="inline-block h-3 w-1 animate-pulse bg-white/70" />}
-    </div>
-  )
 }
 
 export const ContentSection: React.FC<{
@@ -245,7 +203,11 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
           className="w-full overflow-y-auto rounded-md border border-white/10 bg-black/70 px-3 py-3 pr-14"
           style={isPreview ? { height: `${answerHeight}px` } : { maxHeight: `${answerHeight}px` }}
         >
-          <MarkdownAnswer markdown={answer} streaming={streaming} />
+          <MarkdownMessage
+            markdown={answer}
+            streaming={streaming}
+            className="text-[13px] leading-relaxed text-gray-100"
+          />
         </div>
       </div>
     </div>

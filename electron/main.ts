@@ -357,6 +357,9 @@ async function initializeApp() {
     console.log("App is ready")
     await ensureScreenCaptureAccess()
     appState.createWindow()
+    appState.processingHelper.prepareForLaunch().catch(error => {
+      console.warn("Codex prelaunch failed:", error)
+    })
     appState.openSettingsWindow()
     appState.createTray()
     // Register global shortcuts using ShortcutsHelper

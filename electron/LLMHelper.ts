@@ -120,6 +120,13 @@ export class LLMHelper {
     })
   }
 
+  public async prepareForLaunch(workingDirectory?: string): Promise<void> {
+    const settings = getAppSettings()
+    const configuredCwd = workingDirectory || getLaunchWorkingDirectory(settings)
+    const client = await this.getClient(configuredCwd)
+    await this.ensureThread(client, configuredCwd)
+  }
+
   public async chat(message: string): Promise<string> {
     return this.streamAnswer({ message })
   }

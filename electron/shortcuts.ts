@@ -11,8 +11,9 @@ export class ShortcutsHelper {
 
   public registerGlobalShortcuts(): void {
     // Add global shortcut to show/center window
-    globalShortcut.register("CommandOrControl+Shift+Space", () => {
+    globalShortcut.register("CommandOrControl+Shift+Space", async () => {
       console.log("Show/Center window shortcut pressed...")
+      await this.appState.processingHelper.prepareForLaunch()
       this.appState.centerAndShowWindow()
     })
 
@@ -101,7 +102,10 @@ export class ShortcutsHelper {
       this.appState.moveWindowUp()
     })
 
-    globalShortcut.register("CommandOrControl+B", () => {
+    globalShortcut.register("CommandOrControl+B", async () => {
+      if (!this.appState.isVisible()) {
+        await this.appState.processingHelper.prepareForLaunch()
+      }
       this.appState.toggleMainWindow()
       // If window exists and we're showing it, bring it to front
       const mainWindow = this.appState.getMainWindow()

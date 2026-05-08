@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react"
 import { MessageSquareText, Plus, RotateCcw } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import MarkdownMessage from "@/components/MarkdownMessage"
 import { usePageActions } from "@/components/ui/page-header"
 import type { ChatSession, HistoryIndexItem } from "@/types/electron"
 
@@ -161,15 +162,24 @@ const History: React.FC = () => {
               </div>
 
               <div className="flex flex-col gap-3">
-                {selectedSession.messages.map(message => (
-                  <div
-                    key={message.id}
-                    className={`flex ${
-                      message.role === "user"
-                        ? "justify-end"
-                        : "justify-start"
-                    }`}
-                  >
+                {selectedSession.messages.map(message => {
+                  const screenshots =
+                    message.screenshots ??
+                    message.screenshotDataUrls?.map((dataUrl, index) => ({
+                      path: message.screenshotPaths?.[index] ?? `${message.id}-${index}`,
+                      dataUrl,
+                    })) ??
+                    []
+
+                  return (
+                    <div
+                      key={message.id}
+                      className={`flex ${
+                        message.role === "user"
+                          ? "justify-end"
+                          : "justify-start"
+                      }`}
+                    >
                     <div
                       className={`max-w-[86%] rounded-md px-3 py-2 text-sm leading-relaxed ${
                         message.role === "user"
@@ -180,12 +190,23 @@ const History: React.FC = () => {
                       <div className="mb-1 text-[10px] font-medium uppercase tracking-wide opacity-60">
                         {message.role}
                       </div>
-                      <div className="whitespace-pre-wrap break-words">
-                        {message.content}
-                      </div>
+                      {screenshots.length > 0 && (
+                        <div className="mb-2 grid grid-cols-2 gap-2">
+                          {screenshots.map(screenshot => (
+                            <img
+                              key={screenshot.path}
+                              src={screenshot.dataUrl}
+                              alt="Screenshot"
+                              className="max-h-44 rounded border border-current/10 object-cover"
+                            />
+                          ))}
+                        </div>
+                      )}
+                      <MarkdownMessage markdown={message.content} className="text-sm leading-relaxed" />
                     </div>
                   </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           ) : (
