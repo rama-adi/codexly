@@ -4,6 +4,7 @@ import { AppState } from "./main"
 import { LLMHelper } from "./LLMHelper"
 import dotenv from "dotenv"
 import { getAppSettings } from "./AppSettings"
+import { resetActiveSession } from "./HistoryStore"
 
 dotenv.config()
 
@@ -32,28 +33,30 @@ export class ProcessingHelper {
       }
 
       mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.INITIAL_START)
+      mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.SOLUTION_STREAM_START)
       this.appState.setView("solutions")
       this.currentProcessingAbortController = new AbortController()
       try {
         const settings = getAppSettings()
-        const problemInfo =
-          settings.mode === "coding"
-            ? await this.llmHelper.extractProblemFromImages(screenshotQueue)
-            : {
-                problem_statement: (await this.llmHelper.analyzeImageFiles(screenshotQueue)).text,
-                input_format: { description: "Generated from screenshot", parameters: [] as any[] },
-                output_format: { description: "Generated from screenshot", type: "string", subtype: "text" },
-                complexity: { time: "N/A", space: "N/A" },
-                test_cases: [] as any[],
-                validation_type: "manual",
-                difficulty: "custom",
-              }
-        mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.PROBLEM_EXTRACTED, problemInfo)
-        this.appState.setProblemInfo(problemInfo)
-        const solution = await this.llmHelper.generateSolution(problemInfo)
-        mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.SOLUTION_SUCCESS, solution)
+        await this.llmHelper.streamAnswer(
+          {
+            imagePaths: screenshotQueue,
+            workingDirectory: settings.workingDirectory,
+            signal: this.currentProcessingAbortController.signal,
+          },
+          {
+            onDelta: delta =>
+              mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.SOLUTION_STREAM_DELTA, delta),
+            onComplete: answer =>
+              mainWindow.webContents.send(
+                this.appState.PROCESSING_EVENTS.SOLUTION_STREAM_COMPLETE,
+                { answer }
+              ),
+          }
+        )
       } catch (error: any) {
         console.error("Image processing error:", error)
+        mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.SOLUTION_STREAM_ERROR, error.message)
         mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.INITIAL_SOLUTION_ERROR, error.message)
       } finally {
         this.currentProcessingAbortController = null
@@ -61,7 +64,7 @@ export class ProcessingHelper {
       return
     }
 
-    // Debug mode
+    // Continuation mode: append extra screenshots to the active session.
     const extraScreenshotQueue = this.appState.getScreenshotHelper().getExtraScreenshotQueue()
     if (extraScreenshotQueue.length === 0) {
       console.log("No extra screenshots to process")
@@ -69,31 +72,34 @@ export class ProcessingHelper {
       return
     }
 
-    mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.DEBUG_START)
+    mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.SOLUTION_STREAM_START)
     this.currentExtraProcessingAbortController = new AbortController()
 
     try {
-      const problemInfo = this.appState.getProblemInfo()
-      if (!problemInfo) throw new Error("No problem info available")
-
-      if (getAppSettings().mode !== "coding") {
-        throw new Error("Debugging is only available in coding mode")
-      }
-
-      const currentSolution = await this.llmHelper.generateSolution(problemInfo)
-      const currentCode = currentSolution.solution.code
-
-      const debugResult = await this.llmHelper.debugSolutionWithImages(
-        problemInfo,
-        currentCode,
-        extraScreenshotQueue,
+      const settings = getAppSettings()
+      await this.llmHelper.streamAnswer(
+        {
+          message: "Use these new screenshots to continue the current session and update the answer.",
+          imagePaths: extraScreenshotQueue,
+          workingDirectory: settings.workingDirectory,
+          signal: this.currentExtraProcessingAbortController.signal,
+        },
+        {
+          onDelta: delta =>
+            mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.SOLUTION_STREAM_DELTA, delta),
+          onComplete: answer =>
+            mainWindow.webContents.send(
+              this.appState.PROCESSING_EVENTS.SOLUTION_STREAM_COMPLETE,
+              { answer }
+            ),
+        }
       )
 
-      this.appState.setHasDebugged(true)
-      mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.DEBUG_SUCCESS, debugResult)
+      this.appState.setHasContinuedSession(true)
     } catch (error: any) {
-      console.error("Debug processing error:", error)
-      mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.DEBUG_ERROR, error.message)
+      console.error("Continuation processing error:", error)
+      mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.SOLUTION_STREAM_ERROR, error.message)
+      mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.INITIAL_SOLUTION_ERROR, error.message)
     } finally {
       this.currentExtraProcessingAbortController = null
     }
@@ -104,7 +110,12 @@ export class ProcessingHelper {
     this.currentProcessingAbortController = null
     this.currentExtraProcessingAbortController?.abort()
     this.currentExtraProcessingAbortController = null
-    this.appState.setHasDebugged(false)
+    this.appState.setHasContinuedSession(false)
+  }
+
+  public resetSession(): void {
+    resetActiveSession()
+    this.llmHelper.clearChatHistory()
   }
 
   public getLLMHelper() {

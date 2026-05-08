@@ -1,7 +1,5 @@
-import fs from "fs"
-import os from "os"
-import path from "path"
 import { z } from "zod";
+import { readJsonFile, statePath, writeJsonFile } from "./jsonStorage"
 
 export const appSettingsSchema = z.object({
   model: z.string().default("gpt-5.4"),
@@ -17,30 +15,24 @@ export const appSettingsSchema = z.object({
   responseLanguage: z.string().default(""),
   // Max height of the solutions/answer panel in pixels.
   answerHeight: z.number().min(200).max(1400).default(600),
+  workingDirectory: z.string().default(""),
 });
 
 export type AppSettings = z.infer<typeof appSettingsSchema>;
 
-const SETTINGS_FILE = path.join(os.homedir(), ".codexlysetting.json")
+const SETTINGS_FILE = statePath("app-settings.json")
 
 
 export function getAppSettings(): AppSettings {
-  try {
-    const raw = fs.readFileSync(SETTINGS_FILE, "utf-8")
-    const parsed = JSON.parse(raw)
-    return appSettingsSchema.parse(parsed)
-  } catch {
-    return appSettingsSchema.parse({})
-  }
+  return appSettingsSchema.catch(appSettingsSchema.parse({})).parse(readJsonFile(SETTINGS_FILE) ?? {})
 }
 
 export function updateAppSettings(patch: Partial<AppSettings>): AppSettings {
   const next = appSettingsSchema.parse({ ...getAppSettings(), ...patch })
   try {
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(next, null, 2), "utf-8")
+    writeJsonFile(SETTINGS_FILE, next)
   } catch (error) {
     console.error("Failed to save app settings:", error)
   }
   return next
 }
-

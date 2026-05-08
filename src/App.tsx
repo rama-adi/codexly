@@ -1,11 +1,12 @@
 import { ToastProvider } from "./components/ui/toast"
 import Queue from "./_pages/toolbar/Queue"
 import { ToastViewport } from "@radix-ui/react-toast"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef } from "react"
 import Solutions from "./_pages/toolbar/Solutions"
-import Debug from "./_pages/toolbar/Debug"
 import Home from "./_pages/main-activity/Home"
 import Settings from "./_pages/main-activity/Settings"
+import Personalization from "./_pages/main-activity/Personalization"
+import History from "./_pages/main-activity/History"
 import MainActivityLayout from "./_pages/main-activity/MainActivityLayout"
 import { QueryClient, QueryClientProvider } from "react-query"
 import {
@@ -16,110 +17,6 @@ import {
   useNavigate
 } from "react-router-dom"
 
-declare global {
-  interface Window {
-    electronAPI: {
-      platform: NodeJS.Platform
-      //RANDOM GETTER/SETTERS
-      updateContentDimensions: (dimensions: {
-        width: number
-        height: number
-      }) => Promise<void>
-      getScreenshots: () => Promise<Array<{ path: string; preview: string }>>
-
-      //GLOBAL EVENTS
-      //TODO: CHECK THAT PROCESSING NO SCREENSHOTS AND TAKE SCREENSHOTS ARE BOTH CONDITIONAL
-      onUnauthorized: (callback: () => void) => () => void
-      onScreenshotTaken: (
-        callback: (data: { path: string; preview: string }) => void
-      ) => () => void
-      onProcessingNoScreenshots: (callback: () => void) => () => void
-      onResetView: (callback: () => void) => () => void
-      takeScreenshot: () => Promise<void>
-
-      //INITIAL SOLUTION EVENTS
-      deleteScreenshot: (
-        path: string
-      ) => Promise<{ success: boolean; error?: string }>
-      onSolutionStart: (callback: () => void) => () => void
-      onSolutionError: (callback: (error: string) => void) => () => void
-      onSolutionSuccess: (callback: (data: any) => void) => () => void
-      onProblemExtracted: (callback: (data: any) => void) => () => void
-
-      onDebugSuccess: (callback: (data: any) => void) => () => void
-
-      onDebugStart: (callback: () => void) => () => void
-      onDebugError: (callback: (error: string) => void) => () => void
-
-      moveWindowLeft: () => Promise<void>
-      moveWindowRight: () => Promise<void>
-      moveWindowUp: () => Promise<void>
-      moveWindowDown: () => Promise<void>
-      analyzeImageFile: (path: string) => Promise<{ text: string; timestamp: number }>
-      clearChatHistory: () => Promise<{ success: boolean }>
-      quitApp: () => Promise<void>
-      openSettingsWindow: () => Promise<void>
-      closeSettingsWindow: () => Promise<void>
-      minimizeSettingsWindow: () => Promise<void>
-      showMainWindow: () => Promise<void>
-      hideMainWindow: () => Promise<void>
-      toggleMainWindow: () => Promise<void>
-      toggleCurrentWindowMaximize: () => Promise<void>
-      setIgnoreMouseEvents: (ignore: boolean) => Promise<void>
-      getStealthEnabled: () => Promise<{ stealthEnabled: boolean }>
-      setStealthEnabled: (enabled: boolean) => Promise<{ stealthEnabled: boolean }>
-      onStealthChanged: (callback: (config: { stealthEnabled: boolean }) => void) => () => void
-      getAppSettings: () => Promise<{
-        model: string
-        stealthEnabled: boolean
-        mode: "simpleQA" | "coding"
-        responseType: "concise" | "thorough"
-        codingLanguage: string
-        responseLanguage: string
-        answerHeight: number
-}>
-      updateAppSettings: (patch: Partial<{
-        model: string
-        stealthEnabled: boolean
-        mode: "simpleQA" | "coding"
-        responseType: "concise" | "thorough"
-        codingLanguage: string
-        responseLanguage: string
-        answerHeight: number
-}>) => Promise<{
-        model: string
-        stealthEnabled: boolean
-        mode: "simpleQA" | "coding"
-        responseType: "concise" | "thorough"
-        codingLanguage: string
-        responseLanguage: string
-        answerHeight: number
-}>
-      onAppSettingsChanged: (callback: (settings: {
-        model: string
-        stealthEnabled: boolean
-        mode: "simpleQA" | "coding"
-        responseType: "concise" | "thorough"
-        codingLanguage: string
-        responseLanguage: string
-        answerHeight: number
-}) => void) => () => void
-      
-      showAnswerPreview: () => Promise<void>
-      onShowAnswerPreview: (callback: () => void) => () => void
-
-      // LLM Model Management
-      getCurrentLlmConfig: () => Promise<{ provider: string; model: string }>
-      getAvailableLlmModels: () => Promise<Array<{ id: string; name: string }>>
-      setCurrentLlmModel: (model: string) => Promise<{ provider: string; model: string }>
-      testLlmConnection: () => Promise<{ success: boolean; error?: string }>
-      onLlmConfigChanged: (callback: (config: { provider: string; model: string }) => void) => () => void
-      
-      invoke: (channel: string, ...args: any[]) => Promise<any>
-    }
-  }
-}
-
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -129,22 +26,36 @@ const queryClient = new QueryClient({
   }
 })
 
-type AppView = "queue" | "solutions" | "debug" | "home" | "settings"
+type AppView =
+  | "queue"
+  | "solutions"
+  | "home"
+  | "personalization"
+  | "history"
+  | "settings"
+type ToolbarView = "queue" | "solutions" | "home" | "settings"
 
 const viewToPath: Record<AppView, string> = {
   queue: "/queue",
   solutions: "/solutions",
-  debug: "/debug",
   home: "/home",
+  personalization: "/personalization",
+  history: "/history",
   settings: "/settings"
 }
 
-const mainActivityViews = new Set<AppView>(["home", "settings"])
+const mainActivityViews = new Set<AppView>([
+  "home",
+  "personalization",
+  "history",
+  "settings"
+])
 
 const getViewFromPath = (pathname: string): AppView => {
   if (pathname.startsWith("/solutions")) return "solutions"
-  if (pathname.startsWith("/debug")) return "debug"
   if (pathname.startsWith("/home")) return "home"
+  if (pathname.startsWith("/personalization")) return "personalization"
+  if (pathname.startsWith("/history")) return "history"
   if (pathname.startsWith("/settings")) return "settings"
   return "queue"
 }
@@ -152,7 +63,6 @@ const getViewFromPath = (pathname: string): AppView => {
 const App: React.FC = () => {
   const location = useLocation()
   const navigate = useNavigate()
-  const [isDebugProcessing, setIsDebugProcessing] = useState(false)
   const windowParams = new URLSearchParams(window.location.search)
   const isSettingsWindow =
     windowParams.get("window") === "settings" ||
@@ -163,6 +73,14 @@ const App: React.FC = () => {
   const setView: React.Dispatch<React.SetStateAction<AppView>> = (nextView) => {
     const resolvedView =
       typeof nextView === "function" ? nextView(view) : nextView
+    navigate(viewToPath[resolvedView])
+  }
+  const setToolbarView: React.Dispatch<React.SetStateAction<ToolbarView>> = (
+    nextView
+  ) => {
+    const toolbarView = view === "personalization" || view === "history" ? "home" : view
+    const resolvedView =
+      typeof nextView === "function" ? nextView(toolbarView) : nextView
     navigate(viewToPath[resolvedView])
   }
 
@@ -254,7 +172,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const cleanupFunctions = [
-      window.electronAPI.onSolutionStart(() => {
+      window.electronAPI.onSolutionStreamStart(() => {
         navigate(viewToPath.solutions)
         console.log("starting processing")
       }),
@@ -278,31 +196,7 @@ const App: React.FC = () => {
         navigate(viewToPath.queue)
         console.log("View reset to 'queue' via Command+R shortcut")
       }),
-      window.electronAPI.onProblemExtracted((data: any) => {
-        console.log("Problem extracted successfully")
-        queryClient.invalidateQueries(["problem_statement"])
-        queryClient.setQueryData(["problem_statement"], data)
-      }),
       window.electronAPI.onShowAnswerPreview(() => {
-        const existingSolution = queryClient.getQueryData(["solution"])
-        if (!existingSolution) {
-          queryClient.setQueryData(["solution"], {
-            answer:
-              "This is a preview of how your answer will appear. Adjust the answer view height in settings to find a size that works for you. The panel scrolls when content exceeds the configured height, so longer responses stay readable without resizing the overlay window.",
-            code: "function preview() {\n  const items = [1, 2, 3, 4, 5]\n  return items.reduce((sum, n) => sum + n, 0)\n}\n\npreview()",
-            thoughts: [
-              "Identify the input shape and constraints.",
-              "Pick a straightforward approach first, then optimize.",
-              "Verify edge cases before finalizing the answer."
-            ],
-            time_complexity: "O(n)",
-            space_complexity: "O(1)"
-          })
-          queryClient.setQueryData(["problem_statement"], {
-            problem_statement:
-              "Sample problem statement shown for preview purposes."
-          })
-        }
         navigate(viewToPath.solutions)
       })
     ]
@@ -320,19 +214,12 @@ const App: React.FC = () => {
                 <Navigate to={isSettingsWindow ? "/home" : "/queue"} replace />
               }
             />
-            <Route path="/queue" element={<Queue setView={setView} />} />
-            <Route path="/solutions" element={<Solutions setView={setView} />} />
-            <Route
-              path="/debug"
-              element={
-                <Debug
-                  isProcessing={isDebugProcessing}
-                  setIsProcessing={setIsDebugProcessing}
-                />
-              }
-            />
+            <Route path="/queue" element={<Queue setView={setToolbarView} />} />
+            <Route path="/solutions" element={<Solutions setView={setToolbarView} />} />
             <Route element={<MainActivityLayout />}>
               <Route path="/home" element={<Home />} />
+              <Route path="/personalization" element={<Personalization />} />
+              <Route path="/history" element={<History />} />
               <Route path="/settings" element={<Settings />} />
             </Route>
             <Route

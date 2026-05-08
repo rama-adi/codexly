@@ -26,7 +26,7 @@ export class AppState {
     test_cases: Array<Record<string, any>>
   } | null = null // Allow null
 
-  private hasDebugged: boolean = false
+  private hasContinuedSession: boolean = false
 
   // Processing events
   public readonly PROCESSING_EVENTS = {
@@ -36,14 +36,12 @@ export class AppState {
 
     //states for generating the initial solution
     INITIAL_START: "initial-start",
-    PROBLEM_EXTRACTED: "problem-extracted",
-    SOLUTION_SUCCESS: "solution-success",
     INITIAL_SOLUTION_ERROR: "solution-error",
+    SOLUTION_STREAM_START: "solution-stream-start",
+    SOLUTION_STREAM_DELTA: "solution-stream-delta",
+    SOLUTION_STREAM_COMPLETE: "solution-stream-complete",
+    SOLUTION_STREAM_ERROR: "solution-stream-error",
 
-    //states for processing the debugging
-    DEBUG_START: "debug-start",
-    DEBUG_SUCCESS: "debug-success",
-    DEBUG_ERROR: "debug-error"
   } as const
 
   constructor() {
@@ -177,6 +175,7 @@ export class AppState {
 
   public clearQueues(): void {
     this.screenshotHelper.clearQueues()
+    this.processingHelper.getLLMHelper().clearChatHistory()
 
     // Clear problem info
     this.problemInfo = null
@@ -311,12 +310,12 @@ export class AppState {
     })
   }
 
-  public setHasDebugged(value: boolean): void {
-    this.hasDebugged = value
+  public setHasContinuedSession(value: boolean): void {
+    this.hasContinuedSession = value
   }
 
-  public getHasDebugged(): boolean {
-    return this.hasDebugged
+  public getHasContinuedSession(): boolean {
+    return this.hasContinuedSession
   }
 }
 

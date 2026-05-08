@@ -13,7 +13,7 @@ import QueueCommands from "@/components/Queue/QueueCommands"
 
 interface QueueProps {
   setView: React.Dispatch<
-    React.SetStateAction<"queue" | "solutions" | "debug" | "home" | "settings">
+    React.SetStateAction<"queue" | "solutions" | "home" | "settings">
   >
 }
 
@@ -158,7 +158,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
         window.localStorage.removeItem("wingman-chat-history")
         refetch()
       }),
-      window.electronAPI.onSolutionError((error: string) => {
+      window.electronAPI.onSolutionStreamError((error: string) => {
         showToast(
           "Processing Failed",
           "There was an error processing your screenshots.",

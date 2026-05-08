@@ -1,71 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron"
 
-// Types for the exposed Electron API
-interface ElectronAPI {
-  platform: NodeJS.Platform
-  updateContentDimensions: (dimensions: {
-    width: number
-    height: number
-  }) => Promise<void>
-  getScreenshots: () => Promise<Array<{ path: string; preview: string }>>
-  deleteScreenshot: (
-    path: string
-  ) => Promise<{ success: boolean; error?: string }>
-  onScreenshotTaken: (
-    callback: (data: { path: string; preview: string }) => void
-  ) => () => void
-  onSolutionsReady: (callback: (solutions: string) => void) => () => void
-  onResetView: (callback: () => void) => () => void
-  onSolutionStart: (callback: () => void) => () => void
-  onDebugStart: (callback: () => void) => () => void
-  onDebugSuccess: (callback: (data: any) => void) => () => void
-  onSolutionError: (callback: (error: string) => void) => () => void
-  onProcessingNoScreenshots: (callback: () => void) => () => void
-  onProblemExtracted: (callback: (data: any) => void) => () => void
-  onSolutionSuccess: (callback: (data: any) => void) => () => void
-
-  onUnauthorized: (callback: () => void) => () => void
-  onDebugError: (callback: (error: string) => void) => () => void
-  takeScreenshot: () => Promise<void>
-  moveWindowLeft: () => Promise<void>
-  moveWindowRight: () => Promise<void>
-  moveWindowUp: () => Promise<void>
-  moveWindowDown: () => Promise<void>
-  analyzeImageFile: (path: string) => Promise<{ text: string; timestamp: number }>
-  clearChatHistory: () => Promise<{ success: boolean }>
-  quitApp: () => Promise<void>
-  openSettingsWindow: () => Promise<void>
-  closeSettingsWindow: () => Promise<void>
-  minimizeSettingsWindow: () => Promise<void>
-  showMainWindow: () => Promise<void>
-  hideMainWindow: () => Promise<void>
-  toggleMainWindow: () => Promise<void>
-  toggleCurrentWindowMaximize: () => Promise<void>
-  setIgnoreMouseEvents: (ignore: boolean) => Promise<void>
-  getStealthEnabled: () => Promise<{ stealthEnabled: boolean }>
-  setStealthEnabled: (enabled: boolean) => Promise<{ stealthEnabled: boolean }>
-  onStealthChanged: (
-    callback: (config: { stealthEnabled: boolean }) => void
-  ) => () => void
-  getAppSettings: () => Promise<AppSettings>
-  updateAppSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>
-  onAppSettingsChanged: (callback: (settings: AppSettings) => void) => () => void
-
-  showAnswerPreview: () => Promise<void>
-  onShowAnswerPreview: (callback: () => void) => () => void
-
-  // LLM Model Management
-  getCurrentLlmConfig: () => Promise<{ provider: string; model: string }>
-  getAvailableLlmModels: () => Promise<Array<{ id: string; name: string }>>
-  setCurrentLlmModel: (model: string) => Promise<{ provider: string; model: string }>
-  testLlmConnection: () => Promise<{ success: boolean; error?: string }>
-  onLlmConfigChanged: (
-    callback: (config: { provider: string; model: string }) => void
-  ) => () => void
-
-  invoke: (channel: string, ...args: any[]) => Promise<any>
-}
-
 type AppMode = "simpleQA" | "coding"
 type ResponseType = "concise" | "thorough"
 type AppSettings = {
@@ -76,141 +10,117 @@ type AppSettings = {
   codingLanguage: string
   responseLanguage: string
   answerHeight: number
+  workingDirectory: string
+}
+
+type PersonalizationConfig = {
+  mode: "question" | "coding"
+  verbosity: "concise" | "verbose"
+  customInstructionsEnabled: boolean
+  customInstructions: string
+}
+
+type HistoryIndexItem = {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  messageCount: number
+}
+
+type ChatSession = {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  workingDirectory?: string
+  messages: Array<{
+    id: string
+    role: "user" | "assistant"
+    content: string
+    screenshotPaths?: string[]
+    createdAt: string
+  }>
+}
+
+interface ElectronAPI {
+  platform: NodeJS.Platform
+  updateContentDimensions: (dimensions: { width: number; height: number }) => Promise<void>
+  takeScreenshot: () => Promise<{ path: string; preview: string }>
+  getScreenshots: () => Promise<Array<{ path: string; preview: string }>>
+  deleteScreenshot: (path: string) => Promise<{ success: boolean; error?: string }>
+  clearChatHistory: () => Promise<{ success: boolean }>
+  chat: (message: string) => Promise<string>
+  quitApp: () => Promise<void>
+  openSettingsWindow: () => Promise<void>
+  closeSettingsWindow: () => Promise<void>
+  minimizeSettingsWindow: () => Promise<void>
+  showMainWindow: () => Promise<void>
+  hideMainWindow: () => Promise<void>
+  toggleMainWindow: () => Promise<void>
+  toggleCurrentWindowMaximize: () => Promise<void>
+  setIgnoreMouseEvents: (ignore: boolean) => Promise<void>
+  moveWindowLeft: () => Promise<void>
+  moveWindowRight: () => Promise<void>
+  moveWindowUp: () => Promise<void>
+  moveWindowDown: () => Promise<void>
+  getStealthEnabled: () => Promise<{ stealthEnabled: boolean }>
+  setStealthEnabled: (enabled: boolean) => Promise<{ stealthEnabled: boolean }>
+  getAppSettings: () => Promise<AppSettings>
+  updateAppSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>
+  pickWorkingDirectory: (options?: { initialPath?: string }) => Promise<string | null>
+  getPersonalization: () => Promise<PersonalizationConfig>
+  updatePersonalization: (patch: Partial<PersonalizationConfig>) => Promise<PersonalizationConfig>
+  getChatHistoryIndex: () => Promise<HistoryIndexItem[]>
+  getChatSession: (sessionId: string) => Promise<ChatSession | null>
+  newChatSession: () => Promise<ChatSession>
+  showAnswerPreview: () => Promise<void>
+  getCurrentLlmConfig: () => Promise<{ provider: string; model: string }>
+  getAvailableLlmModels: () => Promise<Array<{ id: string; name: string }>>
+  setCurrentLlmModel: (model: string) => Promise<{ provider: string; model: string }>
+  testLlmConnection: () => Promise<{ success: boolean; error?: string }>
+  onScreenshotTaken: (callback: (data: { path: string; preview: string }) => void) => () => void
+  onResetView: (callback: () => void) => () => void
+  onSolutionStreamStart: (callback: () => void) => () => void
+  onSolutionStreamDelta: (callback: (delta: string) => void) => () => void
+  onSolutionStreamComplete: (callback: (data: { answer: string }) => void) => () => void
+  onSolutionStreamError: (callback: (error: string) => void) => () => void
+  onProcessingNoScreenshots: (callback: () => void) => () => void
+  onUnauthorized: (callback: () => void) => () => void
+  onStealthChanged: (callback: (config: { stealthEnabled: boolean }) => void) => () => void
+  onAppSettingsChanged: (callback: (settings: AppSettings) => void) => () => void
+  onPersonalizationChanged: (callback: (config: PersonalizationConfig) => void) => () => void
+  onHistoryChanged: (callback: (history: HistoryIndexItem[]) => void) => () => void
+  onShowAnswerPreview: (callback: () => void) => () => void
+  onLlmConfigChanged: (callback: (config: { provider: string; model: string }) => void) => () => void
+  invoke: (channel: string, ...args: any[]) => Promise<any>
 }
 
 export const PROCESSING_EVENTS = {
-  //global states
   UNAUTHORIZED: "procesing-unauthorized",
   NO_SCREENSHOTS: "processing-no-screenshots",
-
-  //states for generating the initial solution
   INITIAL_START: "initial-start",
-  PROBLEM_EXTRACTED: "problem-extracted",
-  SOLUTION_SUCCESS: "solution-success",
   INITIAL_SOLUTION_ERROR: "solution-error",
-
-  //states for processing the debugging
-  DEBUG_START: "debug-start",
-  DEBUG_SUCCESS: "debug-success",
-  DEBUG_ERROR: "debug-error"
+  SOLUTION_STREAM_START: "solution-stream-start",
+  SOLUTION_STREAM_DELTA: "solution-stream-delta",
+  SOLUTION_STREAM_COMPLETE: "solution-stream-complete",
+  SOLUTION_STREAM_ERROR: "solution-stream-error",
 } as const
 
-// Expose the Electron API to the renderer process
+function on<T>(channel: string, callback: (payload: T) => void): () => void {
+  const subscription = (_: unknown, payload: T) => callback(payload)
+  ipcRenderer.on(channel, subscription)
+  return () => ipcRenderer.removeListener(channel, subscription)
+}
+
 contextBridge.exposeInMainWorld("electronAPI", {
   platform: process.platform,
-  updateContentDimensions: (dimensions: { width: number; height: number }) =>
-    ipcRenderer.invoke("update-content-dimensions", dimensions),
+  updateContentDimensions: dimensions => ipcRenderer.invoke("update-content-dimensions", dimensions),
   takeScreenshot: () => ipcRenderer.invoke("take-screenshot"),
   getScreenshots: () => ipcRenderer.invoke("get-screenshots"),
-  deleteScreenshot: (path: string) =>
-    ipcRenderer.invoke("delete-screenshot", path),
-
-  // Event listeners
-  onScreenshotTaken: (
-    callback: (data: { path: string; preview: string }) => void
-  ) => {
-    const subscription = (_: any, data: { path: string; preview: string }) =>
-      callback(data)
-    ipcRenderer.on("screenshot-taken", subscription)
-    return () => {
-      ipcRenderer.removeListener("screenshot-taken", subscription)
-    }
-  },
-  onSolutionsReady: (callback: (solutions: string) => void) => {
-    const subscription = (_: any, solutions: string) => callback(solutions)
-    ipcRenderer.on("solutions-ready", subscription)
-    return () => {
-      ipcRenderer.removeListener("solutions-ready", subscription)
-    }
-  },
-  onResetView: (callback: () => void) => {
-    const subscription = () => callback()
-    ipcRenderer.on("reset-view", subscription)
-    return () => {
-      ipcRenderer.removeListener("reset-view", subscription)
-    }
-  },
-  onSolutionStart: (callback: () => void) => {
-    const subscription = () => callback()
-    ipcRenderer.on(PROCESSING_EVENTS.INITIAL_START, subscription)
-    return () => {
-      ipcRenderer.removeListener(PROCESSING_EVENTS.INITIAL_START, subscription)
-    }
-  },
-  onDebugStart: (callback: () => void) => {
-    const subscription = () => callback()
-    ipcRenderer.on(PROCESSING_EVENTS.DEBUG_START, subscription)
-    return () => {
-      ipcRenderer.removeListener(PROCESSING_EVENTS.DEBUG_START, subscription)
-    }
-  },
-
-  onDebugSuccess: (callback: (data: any) => void) => {
-    ipcRenderer.on("debug-success", (_event, data) => callback(data))
-    return () => {
-      ipcRenderer.removeListener("debug-success", (_event, data) =>
-        callback(data)
-      )
-    }
-  },
-  onDebugError: (callback: (error: string) => void) => {
-    const subscription = (_: any, error: string) => callback(error)
-    ipcRenderer.on(PROCESSING_EVENTS.DEBUG_ERROR, subscription)
-    return () => {
-      ipcRenderer.removeListener(PROCESSING_EVENTS.DEBUG_ERROR, subscription)
-    }
-  },
-  onSolutionError: (callback: (error: string) => void) => {
-    const subscription = (_: any, error: string) => callback(error)
-    ipcRenderer.on(PROCESSING_EVENTS.INITIAL_SOLUTION_ERROR, subscription)
-    return () => {
-      ipcRenderer.removeListener(
-        PROCESSING_EVENTS.INITIAL_SOLUTION_ERROR,
-        subscription
-      )
-    }
-  },
-  onProcessingNoScreenshots: (callback: () => void) => {
-    const subscription = () => callback()
-    ipcRenderer.on(PROCESSING_EVENTS.NO_SCREENSHOTS, subscription)
-    return () => {
-      ipcRenderer.removeListener(PROCESSING_EVENTS.NO_SCREENSHOTS, subscription)
-    }
-  },
-
-  onProblemExtracted: (callback: (data: any) => void) => {
-    const subscription = (_: any, data: any) => callback(data)
-    ipcRenderer.on(PROCESSING_EVENTS.PROBLEM_EXTRACTED, subscription)
-    return () => {
-      ipcRenderer.removeListener(
-        PROCESSING_EVENTS.PROBLEM_EXTRACTED,
-        subscription
-      )
-    }
-  },
-  onSolutionSuccess: (callback: (data: any) => void) => {
-    const subscription = (_: any, data: any) => callback(data)
-    ipcRenderer.on(PROCESSING_EVENTS.SOLUTION_SUCCESS, subscription)
-    return () => {
-      ipcRenderer.removeListener(
-        PROCESSING_EVENTS.SOLUTION_SUCCESS,
-        subscription
-      )
-    }
-  },
-  onUnauthorized: (callback: () => void) => {
-    const subscription = () => callback()
-    ipcRenderer.on(PROCESSING_EVENTS.UNAUTHORIZED, subscription)
-    return () => {
-      ipcRenderer.removeListener(PROCESSING_EVENTS.UNAUTHORIZED, subscription)
-    }
-  },
-  moveWindowLeft: () => ipcRenderer.invoke("move-window-left"),
-  moveWindowRight: () => ipcRenderer.invoke("move-window-right"),
-  moveWindowUp: () => ipcRenderer.invoke("move-window-up"),
-  moveWindowDown: () => ipcRenderer.invoke("move-window-down"),
-  analyzeImageFile: (path: string) => ipcRenderer.invoke("analyze-image-file", path),
+  deleteScreenshot: path => ipcRenderer.invoke("delete-screenshot", path),
   clearChatHistory: () => ipcRenderer.invoke("clear-chat-history"),
+  chat: message => ipcRenderer.invoke("chat", message),
   quitApp: () => ipcRenderer.invoke("quit-app"),
   openSettingsWindow: () => ipcRenderer.invoke("open-settings-window"),
   closeSettingsWindow: () => ipcRenderer.invoke("close-settings-window"),
@@ -219,53 +129,59 @@ contextBridge.exposeInMainWorld("electronAPI", {
   hideMainWindow: () => ipcRenderer.invoke("hide-main-window"),
   toggleMainWindow: () => ipcRenderer.invoke("toggle-window"),
   toggleCurrentWindowMaximize: () => ipcRenderer.invoke("toggle-current-window-maximize"),
-  setIgnoreMouseEvents: (ignore: boolean) => ipcRenderer.invoke("set-ignore-mouse-events", ignore),
+  setIgnoreMouseEvents: ignore => ipcRenderer.invoke("set-ignore-mouse-events", ignore),
+  moveWindowLeft: () => ipcRenderer.invoke("move-window-left"),
+  moveWindowRight: () => ipcRenderer.invoke("move-window-right"),
+  moveWindowUp: () => ipcRenderer.invoke("move-window-up"),
+  moveWindowDown: () => ipcRenderer.invoke("move-window-down"),
   getStealthEnabled: () => ipcRenderer.invoke("get-stealth-enabled"),
-  setStealthEnabled: (enabled: boolean) => ipcRenderer.invoke("set-stealth-enabled", enabled),
-  onStealthChanged: (
-    callback: (config: { stealthEnabled: boolean }) => void
-  ) => {
-    const subscription = (_: any, config: { stealthEnabled: boolean }) =>
-      callback(config)
-    ipcRenderer.on("stealth-changed", subscription)
-    return () => {
-      ipcRenderer.removeListener("stealth-changed", subscription)
-    }
-  },
+  setStealthEnabled: enabled => ipcRenderer.invoke("set-stealth-enabled", enabled),
   getAppSettings: () => ipcRenderer.invoke("get-app-settings"),
-  updateAppSettings: (patch: Partial<AppSettings>) => ipcRenderer.invoke("update-app-settings", patch),
-  onAppSettingsChanged: (callback: (settings: AppSettings) => void) => {
-    const subscription = (_: any, settings: AppSettings) => callback(settings)
-    ipcRenderer.on("app-settings-changed", subscription)
-    return () => {
-      ipcRenderer.removeListener("app-settings-changed", subscription)
-    }
-  },
-
+  updateAppSettings: patch => ipcRenderer.invoke("update-app-settings", patch),
+  pickWorkingDirectory: options => ipcRenderer.invoke("pick-working-directory", options),
+  getPersonalization: () => ipcRenderer.invoke("get-personalization"),
+  updatePersonalization: patch => ipcRenderer.invoke("update-personalization", patch),
+  getChatHistoryIndex: () => ipcRenderer.invoke("get-chat-history-index"),
+  getChatSession: sessionId => ipcRenderer.invoke("get-chat-session", sessionId),
+  newChatSession: () => ipcRenderer.invoke("new-chat-session"),
   showAnswerPreview: () => ipcRenderer.invoke("show-answer-preview"),
-  onShowAnswerPreview: (callback: () => void) => {
-    const subscription = () => callback()
-    ipcRenderer.on("show-answer-preview", subscription)
-    return () => {
-      ipcRenderer.removeListener("show-answer-preview", subscription)
-    }
-  },
-
-  // LLM Model Management
   getCurrentLlmConfig: () => ipcRenderer.invoke("get-current-llm-config"),
   getAvailableLlmModels: () => ipcRenderer.invoke("get-available-llm-models"),
-  setCurrentLlmModel: (model: string) => ipcRenderer.invoke("set-current-llm-model", model),
+  setCurrentLlmModel: model => ipcRenderer.invoke("set-current-llm-model", model),
   testLlmConnection: () => ipcRenderer.invoke("test-llm-connection"),
-  onLlmConfigChanged: (
-    callback: (config: { provider: string; model: string }) => void
-  ) => {
-    const subscription = (_: any, config: { provider: string; model: string }) =>
-      callback(config)
-    ipcRenderer.on("llm-config-changed", subscription)
-    return () => {
-      ipcRenderer.removeListener("llm-config-changed", subscription)
-    }
+  onScreenshotTaken: callback => on("screenshot-taken", callback),
+  onResetView: callback => {
+    const subscription = () => callback()
+    ipcRenderer.on("reset-view", subscription)
+    return () => ipcRenderer.removeListener("reset-view", subscription)
   },
-
-  invoke: (channel: string, ...args: any[]) => ipcRenderer.invoke(channel, ...args)
-} as ElectronAPI)
+  onSolutionStreamStart: callback => {
+    const subscription = () => callback()
+    ipcRenderer.on(PROCESSING_EVENTS.SOLUTION_STREAM_START, subscription)
+    return () => ipcRenderer.removeListener(PROCESSING_EVENTS.SOLUTION_STREAM_START, subscription)
+  },
+  onSolutionStreamDelta: callback => on(PROCESSING_EVENTS.SOLUTION_STREAM_DELTA, callback),
+  onSolutionStreamComplete: callback => on(PROCESSING_EVENTS.SOLUTION_STREAM_COMPLETE, callback),
+  onSolutionStreamError: callback => on(PROCESSING_EVENTS.SOLUTION_STREAM_ERROR, callback),
+  onProcessingNoScreenshots: callback => {
+    const subscription = () => callback()
+    ipcRenderer.on(PROCESSING_EVENTS.NO_SCREENSHOTS, subscription)
+    return () => ipcRenderer.removeListener(PROCESSING_EVENTS.NO_SCREENSHOTS, subscription)
+  },
+  onUnauthorized: callback => {
+    const subscription = () => callback()
+    ipcRenderer.on(PROCESSING_EVENTS.UNAUTHORIZED, subscription)
+    return () => ipcRenderer.removeListener(PROCESSING_EVENTS.UNAUTHORIZED, subscription)
+  },
+  onStealthChanged: callback => on("stealth-changed", callback),
+  onAppSettingsChanged: callback => on("app-settings-changed", callback),
+  onPersonalizationChanged: callback => on("personalization-changed", callback),
+  onHistoryChanged: callback => on("history-changed", callback),
+  onShowAnswerPreview: callback => {
+    const subscription = () => callback()
+    ipcRenderer.on("show-answer-preview", subscription)
+    return () => ipcRenderer.removeListener("show-answer-preview", subscription)
+  },
+  onLlmConfigChanged: callback => on("llm-config-changed", callback),
+  invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
+} satisfies ElectronAPI)

@@ -1,7 +1,9 @@
 import React from "react"
 import { Link, Outlet, useLocation } from "react-router-dom"
 import {
+  History as HistoryIcon,
   Home as HomeIcon,
+  SlidersHorizontal,
   Settings as SettingsIcon,
   Sparkles
 } from "lucide-react"
@@ -28,7 +30,9 @@ type NavItem = {
 }
 
 const primaryNav: NavItem[] = [
-  { title: "Home", to: "/home", icon: HomeIcon }
+  { title: "Home", to: "/home", icon: HomeIcon },
+  { title: "Personalization", to: "/personalization", icon: SlidersHorizontal },
+  { title: "History", to: "/history", icon: HistoryIcon }
 ]
 
 const footerNav: NavItem[] = [
@@ -37,6 +41,8 @@ const footerNav: NavItem[] = [
 
 const titleByPath: Record<string, string> = {
   "/home": "Home",
+  "/personalization": "Personalization",
+  "/history": "History",
   "/settings": "Settings"
 }
 

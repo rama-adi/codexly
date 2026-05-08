@@ -1,40 +1,16 @@
-import { generateText, generateObject, ModelMessage, LanguageModel } from "ai"
-import { z } from "zod"
-import fs from "fs"
+import os from "os"
 import { AppSettings, getAppSettings, updateAppSettings } from "./AppSettings"
+import { CodexAppServerClient } from "./CodexAppServerClient"
+import { appendChatMessage, getActiveSessionId, getChatSession } from "./HistoryStore"
+import { getPersonalizationConfig } from "./PersonalizationStore"
 
-// `openai-oauth-provider` is ESM-only; load it dynamically so this CommonJS
-// build can still consume it at runtime. The Function-constructor trick stops
-// TS from rewriting the dynamic import into `require`.
-const dynamicImport = new Function("s", "return import(s)") as <T = any>(s: string) => Promise<T>
-
-const problemSchema = z.object({
-  problem_statement: z.string(),
-  context: z.string(),
-  suggested_responses: z.array(z.string()),
-  reasoning: z.string(),
-})
-
-const solutionSchema = z.object({
-  solution: z.object({
-    answer: z.string(),
-    code: z.string(),
-    problem_statement: z.string(),
-    context: z.string(),
-    suggested_responses: z.array(z.string()),
-    reasoning: z.string(),
-    thoughts: z.array(z.string()),
-    why: z.string(),
-    time_complexity: z.string(),
-    space_complexity: z.string(),
-  }),
-})
-
-export type ProblemInfo = z.infer<typeof problemSchema>
-export type SolutionInfo = z.infer<typeof solutionSchema>
-
-type ProviderFactory = (modelId: string) => LanguageModel
 type ModelOption = { id: string; name: string }
+type StreamCallbacks = {
+  onStart?: () => void
+  onDelta?: (delta: string) => void
+  onComplete?: (text: string) => void
+  onError?: (error: Error) => void
+}
 
 const DEFAULT_MODEL = "gpt-5.4"
 const FALLBACK_MODELS: ModelOption[] = [
@@ -42,204 +18,218 @@ const FALLBACK_MODELS: ModelOption[] = [
   { id: "gpt-5.4-mini", name: "GPT-5.4 Mini" },
   { id: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
   { id: "gpt-5.2", name: "GPT-5.2" },
-  { id: "gpt-5.1-codex-max", name: "GPT-5.1 Codex Max" },
-  { id: "gpt-5.1-codex-mini", name: "GPT-5.1 Codex Mini" },
 ]
 
 export class LLMHelper {
   private modelName = DEFAULT_MODEL
-  private providerPromise: Promise<ProviderFactory> | null = null
-  private chatHistory: ModelMessage[] = []
-  private readonly baseSystemPrompt = `You are Wingman, a terse assistant. No preamble. Be direct and useful.`
+  private client: CodexAppServerClient | null = null
+  private codexThreadId: string | null = null
+  private clientCwd: string | null = null
 
   constructor() {
     this.modelName = this.loadSavedModel()
-    console.log(`[LLMHelper] Using OpenAI model: ${this.modelName}`)
+    console.log(`[LLMHelper] Using Codex app-server model: ${this.modelName}`)
   }
 
-  private async getModel(): Promise<LanguageModel> {
-    if (!this.providerPromise) {
-      this.providerPromise = dynamicImport<{ createOpenAIOAuth: () => ProviderFactory }>("openai-oauth-provider")
-        .then(mod => mod.createOpenAIOAuth())
-    }
-    const provider = await this.providerPromise
-    return provider(this.modelName)
-  }
+  public async streamAnswer(input: {
+    message?: string
+    imagePaths?: string[]
+    workingDirectory?: string
+    signal?: AbortSignal
+  }, callbacks: StreamCallbacks = {}): Promise<string> {
+    const settings = getAppSettings()
+    const cwd = input.workingDirectory || settings.workingDirectory || os.homedir()
+    const client = await this.getClient(cwd)
+    const threadId = await this.ensureThread(client, cwd)
+    const prompt = this.buildPrompt(input.message, input.imagePaths ?? [])
+    const userInput = [
+      { type: "text", text: prompt },
+      ...(input.imagePaths ?? []).map(path => ({ type: "localImage", path })),
+    ]
 
-  private async imagePart(imagePath: string) {
-    const data = await fs.promises.readFile(imagePath)
-    return { type: "image" as const, image: data, mediaType: "image/png" }
-  }
+    callbacks.onStart?.()
+    appendChatMessage(
+      {
+        role: "user",
+        content: input.message?.trim() || "Solve the attached screenshot.",
+        screenshotPaths: input.imagePaths,
+      },
+      { titleHint: input.message || "Screenshot session", workingDirectory: cwd }
+    )
 
-  private async runText(messages: ModelMessage[]): Promise<string> {
-    const { text } = await generateText({ model: await this.getModel(), messages })
-    return text
-  }
+    let answer = ""
+    let turnId: string | null = null
+    let settled = false
+    const cleanups: Array<() => void> = []
 
-  private getSettings(): AppSettings {
-    return getAppSettings()
-  }
+    return new Promise<string>(async (resolve, reject) => {
+      const finish = (error?: Error) => {
+        if (settled) return
+        settled = true
+        cleanups.forEach(cleanup => cleanup())
+        if (error) {
+          callbacks.onError?.(error)
+          reject(error)
+          return
+        }
+        appendChatMessage({ role: "assistant", content: answer }, { workingDirectory: cwd })
+        callbacks.onComplete?.(answer)
+        resolve(answer)
+      }
 
-  private buildPromptInstructions(settings = this.getSettings()): string {
-    const codingLanguage = settings.codingLanguage?.trim() || "javascript"
-    const modeInstructions =
-      settings.mode === "coding"
-        ? `Mode: coding. Solve programming problems. Use ${codingLanguage} for code solutions unless the screenshot or user explicitly requires another language. Return a plain-language answer and a complete ${codingLanguage} code solution when code is relevant.`
-        : "Mode: simpleQA. Answer the question directly. Do not include code unless the user explicitly asks for it."
+      cleanups.push(
+        client.on("turn/started", params => {
+          if (params?.threadId === threadId) turnId = params.turnId
+        }),
+        client.on("item/agentMessage/delta", params => {
+          if (params?.threadId !== threadId) return
+          if (turnId && params.turnId !== turnId) return
+          const delta = String(params.delta ?? "")
+          answer += delta
+          callbacks.onDelta?.(delta)
+        }),
+        client.on("turn/completed", params => {
+          if (params?.threadId !== threadId) return
+          if (turnId && params.turnId !== turnId) return
+          finish()
+        }),
+        client.on("error", params => {
+          finish(new Error(params?.message ?? "Codex app-server error"))
+        })
+      )
 
-    const detailInstructions =
-      settings.responseType === "thorough"
-        ? "Response type: thorough. Include concise thoughts, why the answer is correct, and complexity for coding tasks."
-        : "Response type: concise. Keep the answer short. For coding, include only the answer and code."
+      if (input.signal) {
+        const onAbort = () => finish(new Error("Request cancelled"))
+        input.signal.addEventListener("abort", onAbort, { once: true })
+        cleanups.push(() => input.signal?.removeEventListener("abort", onAbort))
+      }
 
-    const responseLanguage = settings.responseLanguage?.trim()
-    const languageInstructions = responseLanguage
-      ? `Respond in ${responseLanguage}. Write all natural-language fields (answer, thoughts, why, problem_statement, context, reasoning, suggested_responses) in ${responseLanguage}. Keep code, identifiers, and technical tokens unchanged.`
-      : ""
-
-    return [this.baseSystemPrompt, modeInstructions, detailInstructions, languageInstructions]
-      .filter(Boolean)
-      .join("\n")
-  }
-
-  public async extractProblemFromImages(imagePaths: string[]): Promise<ProblemInfo> {
-    const imageParts = await Promise.all(imagePaths.map(p => this.imagePart(p)))
-    const prompt = `${this.buildPromptInstructions()}\n\nAnalyze these images and extract the problem statement, context, suggested responses, and reasoning.`
-    const { object } = await generateObject({
-      model: await this.getModel(),
-      schema: problemSchema,
-      messages: [{ role: "user", content: [{ type: "text", text: prompt }, ...imageParts] }],
+      try {
+        await client.request("turn/start", {
+          threadId,
+          input: userInput,
+          cwd,
+          model: this.modelName,
+          personality: "pragmatic",
+          effort: settings.responseType === "thorough" ? "medium" : "low",
+          summary: "none",
+        })
+      } catch (error: any) {
+        finish(new Error(error?.message ?? String(error)))
+      }
     })
-    return object
-  }
-
-  public async generateSolution(problemInfo: any): Promise<SolutionInfo> {
-    const settings = this.getSettings()
-    const codingLanguage = settings.codingLanguage?.trim() || "javascript"
-    const prompt = `${this.buildPromptInstructions(settings)}\n\nGiven this problem or situation:\n${JSON.stringify(problemInfo, null, 2)}\n\nReturn JSON matching the schema. Every schema field is required. For simpleQA, put the final response in answer, set code to an empty string, set thoughts to an empty array, and use "N/A" for complexity. For coding, put the explanation/answer in answer and the complete ${codingLanguage} code in code unless the problem explicitly requires another language. In concise mode, keep thoughts/reasoning/why short or empty strings where appropriate.`
-    const { object } = await generateObject({
-      model: await this.getModel(),
-      schema: solutionSchema,
-      messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
-    })
-    return object
-  }
-
-  public async debugSolutionWithImages(problemInfo: any, currentCode: string, debugImagePaths: string[]): Promise<SolutionInfo> {
-    const imageParts = await Promise.all(debugImagePaths.map(p => this.imagePart(p)))
-    const settings = { ...this.getSettings(), mode: "coding" as const }
-    const codingLanguage = settings.codingLanguage?.trim() || "javascript"
-    const prompt = `${this.buildPromptInstructions(settings)}\n\nGiven:\n1. Original problem: ${JSON.stringify(problemInfo, null, 2)}\n2. Current response: ${currentCode}\n3. Debug information in the provided images\n\nAnalyze the debug information and produce an updated ${codingLanguage} coding solution unless the original response is clearly in another required language. Set answer to what changed, code to the updated code, and include thoughts plus complexity when available.`
-    const { object } = await generateObject({
-      model: await this.getModel(),
-      schema: solutionSchema,
-      messages: [{ role: "user", content: [{ type: "text", text: prompt }, ...imageParts] }],
-    })
-    return object
-  }
-
-  public async analyzeImageFile(imagePath: string) {
-    return this.analyzeImageFiles([imagePath])
-  }
-
-  public async analyzeImageFiles(imagePaths: string[]) {
-    const imageParts = await Promise.all(imagePaths.map(p => this.imagePart(p)))
-    const prompt = `${this.buildPromptInstructions()}\n\nLook at the image${imagePaths.length === 1 ? "" : "s"} and answer directly.`
-    const text = await this.runText([
-      { role: "user", content: [{ type: "text", text: prompt }, ...imageParts] },
-    ])
-    return { text, timestamp: Date.now() }
   }
 
   public async chat(message: string): Promise<string> {
-    if (this.chatHistory.length === 0) {
-      this.chatHistory = [{ role: "system", content: this.buildPromptInstructions() }]
-    }
-
-    this.chatHistory.push({ role: "user", content: message })
-    const { text } = await generateText({
-      model: await this.getModel(),
-      messages: this.chatHistory,
-    })
-    this.chatHistory.push({ role: "assistant", content: text })
-    return text
+    return this.streamAnswer({ message })
   }
 
   public clearChatHistory(): void {
-    this.chatHistory = []
+    this.codexThreadId = null
   }
 
-  public getCurrentProvider(): "openai" {
-    return "openai"
+  public getCurrentProvider(): "codex" {
+    return "codex"
   }
 
   public getCurrentModel(): string {
     return this.modelName
   }
 
-  public setCurrentModel(modelName: string): { provider: "openai"; model: string } {
+  public setCurrentModel(modelName: string): { provider: "codex"; model: string } {
     const normalized = modelName.trim()
-    if (!normalized) {
-      throw new Error("Model name is required")
-    }
-
+    if (!normalized) throw new Error("Model name is required")
     this.modelName = normalized
-    this.saveModel(normalized)
-    console.log(`[LLMHelper] Switched OpenAI model: ${this.modelName}`)
-    return { provider: "openai", model: this.modelName }
+    updateAppSettings({ model: normalized })
+    return { provider: "codex", model: this.modelName }
   }
 
   public async getAvailableModels(): Promise<ModelOption[]> {
-    const discovered = await this.discoverModels()
-    return mergeModels(discovered, FALLBACK_MODELS)
+    try {
+      const client = await this.getClient(getAppSettings().workingDirectory || os.homedir())
+      const result = await client.request("model/list", {})
+      const models = Array.isArray(result?.models) ? result.models : []
+      const discovered = models
+        .map((model: any) => ({ id: String(model.id ?? model.slug ?? ""), name: String(model.name ?? model.id ?? "") }))
+        .filter((model: ModelOption) => model.id)
+      return mergeModels(discovered, FALLBACK_MODELS)
+    } catch {
+      return FALLBACK_MODELS
+    }
   }
 
   public async testConnection(): Promise<{ success: boolean; error?: string }> {
     try {
-      const text = await this.chat("Hello")
-      return text ? { success: true } : { success: false, error: "Empty response from OpenAI" }
+      await this.getClient(getAppSettings().workingDirectory || os.homedir())
+      return { success: true }
     } catch (error: any) {
       return { success: false, error: error?.message ?? String(error) }
     }
   }
 
+  private async getClient(cwd: string): Promise<CodexAppServerClient> {
+    if (!this.client || this.clientCwd !== cwd) {
+      this.client?.stop()
+      this.client = new CodexAppServerClient(cwd)
+      this.clientCwd = cwd
+      this.codexThreadId = null
+      await this.client.start()
+    }
+    return this.client
+  }
+
+  private async ensureThread(client: CodexAppServerClient, cwd: string): Promise<string> {
+    if (this.codexThreadId) return this.codexThreadId
+    const response = await client.request("thread/start", {
+      cwd,
+      model: this.modelName,
+      personality: "pragmatic",
+      sandbox: "read-only",
+      approvalPolicy: "never",
+      sessionStartSource: getActiveSessionId() ? "startup" : "clear",
+    })
+    this.codexThreadId = response?.thread?.id ?? response?.threadId ?? response?.id
+    if (!this.codexThreadId) throw new Error("Codex app-server did not return a thread id")
+    return this.codexThreadId
+  }
+
+  private buildPrompt(message = "", imagePaths: string[]): string {
+    const settings = getAppSettings()
+    const personalization = getPersonalizationConfig()
+    const session = getActiveSessionId() ? getChatSession(getActiveSessionId()!) : null
+    const history = session?.messages.slice(-8).map(item => `${item.role}: ${item.content}`).join("\n")
+    const modeInstructions =
+      personalization.mode === "coding"
+        ? `Mode: coding. Provide code, implementation guidance, or debugging detail when useful. Use ${settings.codingLanguage || "javascript"} unless the user or screenshot clearly requires another language.`
+        : "Mode: question. Answer directly and avoid code unless the user explicitly asks for it."
+    const verbosityInstructions =
+      personalization.verbosity === "verbose"
+        ? "Verbosity: verbose. Break the problem into clear steps and explain the reasoning like a human would."
+        : "Verbosity: concise. Answer only."
+    const languageInstructions = settings.responseLanguage
+      ? `Respond in ${settings.responseLanguage}. Keep code and identifiers unchanged.`
+      : ""
+    const screenshotInstructions = imagePaths.length
+      ? `There ${imagePaths.length === 1 ? "is" : "are"} ${imagePaths.length} screenshot${imagePaths.length === 1 ? "" : "s"} attached. Read them directly and answer in streamed markdown.`
+      : ""
+    const customInstructions =
+      personalization.customInstructionsEnabled && personalization.customInstructions.trim()
+        ? `\n\nUser-enabled custom instructions:\n${personalization.customInstructions.trim()}`
+        : ""
+
+    return [
+      "You are Codexly, a direct assistant. Return only markdown for the answer.",
+      modeInstructions,
+      verbosityInstructions,
+      languageInstructions,
+      history ? `Recent chat history:\n${history}` : "",
+      screenshotInstructions,
+      message.trim() ? `User message:\n${message.trim()}` : "User message:\nSolve the attached screenshot.",
+    ].filter(Boolean).join("\n\n") + customInstructions
+  }
+
   private loadSavedModel(): string {
     return getAppSettings().model || DEFAULT_MODEL
-  }
-
-  private saveModel(model: string): void {
-    updateAppSettings({ model })
-  }
-
-  private async discoverModels(): Promise<ModelOption[]> {
-    try {
-      const mod = await dynamicImport<{
-        loadAuthTokens: (options: { fetch: typeof fetch; ensureFresh?: boolean }) => Promise<{
-          accessToken: string
-          accountId: string
-        }>
-      }>("openai-oauth-provider")
-      const auth = await mod.loadAuthTokens({ fetch, ensureFresh: true })
-      const headers = {
-        Authorization: `Bearer ${auth.accessToken}`,
-        "chatgpt-account-id": auth.accountId,
-      }
-
-      for (const endpoint of [
-        "https://chatgpt.com/backend-api/codex/models",
-        "https://chatgpt.com/backend-api/codex/model_list",
-      ]) {
-        const response = await fetch(endpoint, { headers })
-        if (!response.ok) continue
-        const payload = await response.json()
-        const models = extractModelOptions(payload)
-        if (models.length > 0) return models
-      }
-    } catch (error) {
-      console.warn("Could not discover OpenAI OAuth models, using fallback list:", error)
-    }
-
-    return []
   }
 }
 
@@ -254,42 +244,4 @@ function mergeModels(...groups: ModelOption[][]): ModelOption[] {
     }
   }
   return merged
-}
-
-function extractModelOptions(value: unknown): ModelOption[] {
-  const models: ModelOption[] = []
-  const visit = (item: unknown) => {
-    if (Array.isArray(item)) {
-      item.forEach(visit)
-      return
-    }
-    if (!item || typeof item !== "object") return
-
-    const record = item as Record<string, unknown>
-    const id = firstString(record.id, record.slug, record.model, record.model_slug, record.name)
-    if (id && /^gpt-|^o\d|^codex/.test(id)) {
-      models.push({
-        id,
-        name: firstString(record.title, record.display_name, record.displayName, record.name) ?? formatModelName(id),
-      })
-    }
-
-    for (const nested of Object.values(record)) {
-      if (Array.isArray(nested)) visit(nested)
-    }
-  }
-
-  visit(value)
-  return mergeModels(models)
-}
-
-function firstString(...values: unknown[]): string | undefined {
-  return values.find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim()
-}
-
-function formatModelName(id: string): string {
-  return id
-    .split("-")
-    .map(part => part.toUpperCase() === "GPT" ? "GPT" : part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ")
 }

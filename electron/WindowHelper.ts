@@ -88,9 +88,9 @@ export class WindowHelper {
     const primaryDisplay = screen.getPrimaryDisplay()
     const workArea = primaryDisplay.workAreaSize
 
-    // Use 75% width if debugging has occurred, otherwise use 60%
+    // Allow more width once the answer contains continued session context.
     const maxAllowedWidth = Math.floor(
-      workArea.width * (this.appState.getHasDebugged() ? 0.75 : 0.5)
+      workArea.width * (this.appState.getHasContinuedSession() ? 0.75 : 0.5)
     )
 
     // Ensure width doesn't exceed max allowed width and height is reasonable

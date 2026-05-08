@@ -1,10 +1,23 @@
 // ipcHandlers.ts
 
-import { BrowserWindow, ipcMain, app } from "electron"
+import { BrowserWindow, ipcMain, app, dialog } from "electron"
 import { AppState } from "./main"
 import { getAppSettings, updateAppSettings } from "./AppSettings"
+import { getPersonalizationConfig, updatePersonalizationConfig } from "./PersonalizationStore"
+import {
+  getChatSession,
+  listChatSessions,
+  resetActiveSession
+} from "./HistoryStore"
 
 export function initializeIpcHandlers(appState: AppState): void {
+  const broadcastHistoryChanged = () => {
+    const history = listChatSessions()
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send("history-changed", history)
+    }
+  }
+
   ipcMain.handle(
     "update-content-dimensions",
     async (event, { width, height }: { width: number; height: number }) => {
@@ -84,6 +97,7 @@ export function initializeIpcHandlers(appState: AppState): void {
   ipcMain.handle("reset-queues", async () => {
     try {
       appState.clearQueues()
+      appState.processingHelper.resetSession()
       console.log("Screenshot queues have been cleared.")
       return { success: true }
     } catch (error: any) {
@@ -92,20 +106,23 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   })
 
-  // IPC handler for analyzing image from file path
-  ipcMain.handle("analyze-image-file", async (event, path: string) => {
-    try {
-      const result = await appState.processingHelper.getLLMHelper().analyzeImageFile(path)
-      return result
-    } catch (error: any) {
-      console.error("Error in analyze-image-file handler:", error)
-      throw error
-    }
-  })
-
   ipcMain.handle("chat", async (event, message: string) => {
     try {
-      return await appState.processingHelper.getLLMHelper().chat(message);
+      const mainWindow = appState.getMainWindow()
+      mainWindow?.webContents.send(appState.PROCESSING_EVENTS.SOLUTION_STREAM_START)
+      const response = await appState.processingHelper.getLLMHelper().streamAnswer(
+        { message, workingDirectory: getAppSettings().workingDirectory },
+        {
+          onDelta: delta =>
+            mainWindow?.webContents.send(appState.PROCESSING_EVENTS.SOLUTION_STREAM_DELTA, delta),
+          onComplete: answer =>
+            mainWindow?.webContents.send(appState.PROCESSING_EVENTS.SOLUTION_STREAM_COMPLETE, { answer }),
+          onError: error =>
+            mainWindow?.webContents.send(appState.PROCESSING_EVENTS.SOLUTION_STREAM_ERROR, error.message),
+        }
+      )
+      broadcastHistoryChanged()
+      return response
     } catch (error: any) {
       console.error("Error in chat handler:", error);
       throw error;
@@ -113,7 +130,9 @@ export function initializeIpcHandlers(appState: AppState): void {
   });
 
   ipcMain.handle("clear-chat-history", async () => {
+    resetActiveSession()
     appState.processingHelper.getLLMHelper().clearChatHistory()
+    broadcastHistoryChanged()
     return { success: true }
   })
 
@@ -196,6 +215,49 @@ export function initializeIpcHandlers(appState: AppState): void {
       window.webContents.send("app-settings-changed", settings)
     }
     return settings
+  })
+
+  ipcMain.handle("get-personalization", async () => {
+    return getPersonalizationConfig()
+  })
+
+  ipcMain.handle("update-personalization", async (_event, patch) => {
+    const settings = updatePersonalizationConfig(patch)
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send("personalization-changed", settings)
+    }
+    return settings
+  })
+
+  ipcMain.handle("get-chat-history-index", async () => {
+    return listChatSessions()
+  })
+
+  ipcMain.handle("get-chat-session", async (_event, id: string) => {
+    return getChatSession(id)
+  })
+
+  ipcMain.handle("new-chat-session", async () => {
+    const session = resetActiveSession()
+    appState.processingHelper.getLLMHelper().clearChatHistory()
+    broadcastHistoryChanged()
+    return session
+  })
+
+  ipcMain.handle("pick-working-directory", async (_event, options?: { initialPath?: string }) => {
+    const settings = getAppSettings()
+    const defaultPath = options?.initialPath?.trim() || settings.workingDirectory || app.getPath("home")
+    const result = await (dialog as any).showOpenDialog({
+      defaultPath,
+      properties: ["openDirectory", "createDirectory"],
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    const selected = result.filePaths[0]
+    const nextSettings = updateAppSettings({ workingDirectory: selected })
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send("app-settings-changed", nextSettings)
+    }
+    return selected
   })
 
   // LLM Model Management Handlers
