@@ -9,6 +9,7 @@ export interface AppSettings {
   codingLanguage: string
   responseLanguage: string
   answerHeight: number
+  reasoningEffort: "none" | "minimal" | "low" | "medium" | "high" | "xhigh"
   launchMode: "direct" | "directory"
   selectedDirectoryId: string | null
   directoryProfiles: DirectoryProfile[]

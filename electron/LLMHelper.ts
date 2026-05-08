@@ -111,7 +111,7 @@ export class LLMHelper {
           ...(configuredCwd ? { cwd: configuredCwd } : {}),
           model: this.modelName,
           personality: "pragmatic",
-          effort: settings.responseType === "thorough" ? "medium" : "low",
+          effort: settings.reasoningEffort,
           summary: "none",
         })
       } catch (error: any) {
