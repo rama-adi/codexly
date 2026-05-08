@@ -10,6 +10,13 @@ import {
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import {
+  Card,
+  CardActions,
+  CardDescription,
+  CardHeader,
+  CardTitle
+} from "@/components/ui/card"
 import type { AppSettings, DirectoryProfile } from "@/types/electron"
 
 const Home: React.FC = () => {
@@ -74,40 +81,44 @@ const Home: React.FC = () => {
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto bg-[#f7f7f5] p-6 text-[#1f2328]">
-      <div className="mx-auto flex max-w-5xl flex-col gap-5">
-        <section className="rounded-md border border-black/10 bg-white p-4">
-          <div className="flex items-center justify-between gap-4">
+    <div className="min-h-0 flex-1 overflow-y-auto bg-background text-foreground">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-6 py-5">
+        <Card>
+          <CardHeader>
             <div className="min-w-0">
-              <h2 className="text-base font-semibold">Direct</h2>
-              <p className="mt-1 text-sm text-[#5f6368]">
-                Start without a directory. Codexly uses your prompt, screenshots,
-                and Codex knowledge.
-              </p>
+              <CardTitle>Direct</CardTitle>
+              <CardDescription>
+                Start without a directory. Codexly uses your prompt,
+                screenshots, and Codex knowledge.
+              </CardDescription>
             </div>
-            <Button onClick={launchDirect}>
-              <ScreenShare data-icon="inline-start" />
-              Launch direct
-            </Button>
-          </div>
-        </section>
+            <CardActions>
+              <Button onClick={launchDirect}>
+                <ScreenShare data-icon="inline-start" />
+                Launch
+              </Button>
+            </CardActions>
+          </CardHeader>
+        </Card>
 
-        <section className="rounded-md border border-black/10 bg-white">
-          <div className="flex items-center justify-between gap-4 border-b border-black/10 px-4 py-3">
-            <div>
-              <h2 className="text-base font-semibold">Directories</h2>
-              <p className="mt-1 text-sm text-[#5f6368]">
-                Launch with a saved cwd, or open the folder.
-              </p>
+        <Card>
+          <CardHeader>
+            <div className="min-w-0">
+              <CardTitle>Directories</CardTitle>
+              <CardDescription>
+                Launch with a saved working directory.
+              </CardDescription>
             </div>
-            <Button variant="outline" onClick={importDirectory}>
-              <Plus data-icon="inline-start" />
-              Add directory
-            </Button>
-          </div>
+            <CardActions>
+              <Button variant="outline" size="sm" onClick={importDirectory}>
+                <Plus data-icon="inline-start" />
+                Add
+              </Button>
+            </CardActions>
+          </CardHeader>
 
           {settings?.directoryProfiles.length ? (
-            <div className="divide-y divide-black/10">
+            <div className="divide-y divide-border">
               {settings.directoryProfiles.map(profile => {
                 const active =
                   settings.launchMode === "directory" &&
@@ -117,57 +128,65 @@ const Home: React.FC = () => {
                 return (
                   <div
                     key={profile.id}
-                    className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3 ${
-                      active ? "bg-[#f7f7f5]" : ""
+                    className={`group grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-2.5 transition-colors ${
+                      active ? "bg-muted" : "hover:bg-muted/60"
                     }`}
                   >
                     <div className="min-w-0">
                       <div className="flex min-w-0 items-center gap-2">
-                        <FolderOpen className="size-4 shrink-0 text-[#5f6368]" />
+                        <FolderOpen className="size-4 shrink-0 text-muted-foreground" />
                         {editing ? (
                           <input
                             value={titleDraft}
                             autoFocus
-                            onChange={event => setTitleDraft(event.target.value)}
+                            onChange={event =>
+                              setTitleDraft(event.target.value)
+                            }
                             onBlur={() => saveTitle(profile)}
                             onKeyDown={event => {
-                              if (event.key === "Enter") event.currentTarget.blur()
+                              if (event.key === "Enter")
+                                event.currentTarget.blur()
                               if (event.key === "Escape") setEditingId(null)
                             }}
-                            className="h-8 min-w-0 flex-1 rounded-md border border-black/15 bg-white px-2 text-sm text-[#1f2328] outline-none"
+                            className="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
                           />
                         ) : (
-                          <div className="truncate text-sm font-semibold">
+                          <div className="truncate text-sm font-medium">
                             {profile.title}
                           </div>
                         )}
-                        {active && <Check className="size-4 shrink-0 text-[#1f883d]" />}
+                        {active && (
+                          <Check className="size-4 shrink-0 text-primary" />
+                        )}
                       </div>
-                      <div className="mt-1 truncate font-mono text-xs text-[#5f6368]">
+                      <div className="mt-0.5 truncate pl-6 font-mono text-[11px] text-muted-foreground">
                         {profile.path}
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      <Button size="sm" onClick={() => launchDirectory(profile)}>
-                        <Play data-icon="inline-start" />
-                        Launch
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="icon-sm"
+                        variant="ghost"
+                        aria-label="Rename"
+                        onClick={() => startEditing(profile)}
+                      >
+                        <Pencil />
                       </Button>
                       <Button
                         size="icon-sm"
                         variant="ghost"
-                        aria-label="Open directory"
+                        aria-label="Open in Finder"
                         onClick={() => openDirectory(profile)}
                       >
                         <ExternalLink />
                       </Button>
                       <Button
-                        size="icon-sm"
-                        variant="ghost"
-                        aria-label="Rename directory"
-                        onClick={() => startEditing(profile)}
+                        size="sm"
+                        onClick={() => launchDirectory(profile)}
                       >
-                        <Pencil />
+                        <Play data-icon="inline-start" />
+                        Launch
                       </Button>
                     </div>
                   </div>
@@ -175,11 +194,23 @@ const Home: React.FC = () => {
               })}
             </div>
           ) : (
-            <div className="flex min-h-40 items-center justify-center px-6 py-10 text-sm text-[#5f6368]">
-              No directories yet. Add one to launch Codexly with project context.
+            <div className="flex flex-col items-center justify-center gap-3 px-6 py-12 text-center">
+              <div className="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                <FolderOpen className="size-5" />
+              </div>
+              <div className="space-y-1">
+                <div className="text-sm font-medium">No directories yet</div>
+                <div className="max-w-72 text-xs text-muted-foreground">
+                  Add one to launch Codexly with project context.
+                </div>
+              </div>
+              <Button size="sm" variant="outline" onClick={importDirectory}>
+                <Plus data-icon="inline-start" />
+                Add directory
+              </Button>
             </div>
           )}
-        </section>
+        </Card>
       </div>
     </div>
   )

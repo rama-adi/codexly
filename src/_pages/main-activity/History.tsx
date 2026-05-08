@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react"
 import { MessageSquareText, Plus, RotateCcw } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { usePageActions } from "@/components/ui/page-header"
 import type { ChatSession, HistoryIndexItem } from "@/types/electron"
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
@@ -14,7 +15,9 @@ const dateFormatter = new Intl.DateTimeFormat(undefined, {
 const History: React.FC = () => {
   const [items, setItems] = useState<HistoryIndexItem[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [selectedSession, setSelectedSession] = useState<ChatSession | null>(null)
+  const [selectedSession, setSelectedSession] = useState<ChatSession | null>(
+    null
+  )
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
 
@@ -57,7 +60,8 @@ const History: React.FC = () => {
       setSelectedSession(null)
       return
     }
-    window.electronAPI.getChatSession(selectedIndexItem.id)
+    window.electronAPI
+      .getChatSession(selectedIndexItem.id)
       .then(setSelectedSession)
       .catch(error => setError(String(error)))
   }, [selectedIndexItem])
@@ -67,41 +71,53 @@ const History: React.FC = () => {
     await load()
   }
 
-  return (
-    <section className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4">
-      <div className="flex items-center justify-between gap-4">
-        <div className="min-w-0">
-          <h2 className="text-sm font-semibold">History</h2>
-          <p className="mt-1 text-xs text-[#5f6368]">
-            {items.length === 1 ? "1 saved session" : `${items.length} saved sessions`}
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <Button size="sm" variant="outline" onClick={load} disabled={loading}>
-            <RotateCcw data-icon="inline-start" />
-            Refresh
-          </Button>
-          <Button size="sm" onClick={newSession}>
-            <Plus data-icon="inline-start" />
-            New session
-          </Button>
-        </div>
-      </div>
+  const headerActions = useMemo(
+    () => (
+      <>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={load}
+          disabled={loading}
+          aria-label="Refresh history"
+        >
+          <RotateCcw />
+        </Button>
+        <Button size="sm" onClick={newSession}>
+          <Plus data-icon="inline-start" />
+          New session
+        </Button>
+      </>
+    ),
+    [loading]
+  )
+  usePageActions(headerActions)
 
+  return (
+    <div className="flex min-h-0 flex-1 flex-col bg-background text-foreground">
       {error && (
-        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+        <div className="mx-6 mt-5 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
           {error}
         </div>
       )}
 
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(190px,0.42fr)_minmax(260px,1fr)] overflow-hidden rounded-md border border-black/10 bg-white">
-        <div className="min-h-0 overflow-y-auto border-r border-black/10">
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(220px,0.4fr)_minmax(320px,1fr)] overflow-hidden">
+        <div className="min-h-0 overflow-y-auto border-r border-border bg-card">
+          <div className="sticky top-0 z-10 border-b border-border bg-card px-4 py-2.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            {items.length === 1
+              ? "1 session"
+              : `${items.length} sessions`}
+          </div>
           {items.length === 0 ? (
             <div className="flex h-full min-h-56 flex-col items-center justify-center gap-2 p-6 text-center">
-              <MessageSquareText className="text-[#5f6368]" />
-              <div className="text-sm font-medium">No history yet</div>
-              <div className="max-w-56 text-xs leading-relaxed text-[#5f6368]">
-                Toolbar sessions will appear here after the first answer.
+              <div className="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                <MessageSquareText className="size-5" />
+              </div>
+              <div className="space-y-1">
+                <div className="text-sm font-medium">No history yet</div>
+                <div className="max-w-56 text-xs leading-relaxed text-muted-foreground">
+                  Toolbar sessions will appear here after the first answer.
+                </div>
               </div>
             </div>
           ) : (
@@ -112,15 +128,16 @@ const History: React.FC = () => {
                   key={item.id}
                   type="button"
                   onClick={() => setSelectedId(item.id)}
-                  className={`flex min-h-16 w-full flex-col items-start gap-1 border-b border-black/10 px-3 py-2 text-left transition-colors ${
-                    active ? "bg-[#eeeeea]" : "hover:bg-[#f7f7f5]"
+                  className={`flex min-h-14 w-full flex-col items-start gap-0.5 border-b border-border px-4 py-2.5 text-left transition-colors ${
+                    active ? "bg-muted" : "hover:bg-muted/60"
                   }`}
                 >
-                  <span className="line-clamp-2 text-sm font-medium leading-snug text-[#1f2328]">
+                  <span className="line-clamp-2 text-sm font-medium leading-snug text-foreground">
                     {item.title}
                   </span>
-                  <span className="text-xs text-[#5f6368]">
-                    {dateFormatter.format(new Date(item.updatedAt))} · {item.messageCount} messages
+                  <span className="text-[11px] text-muted-foreground">
+                    {dateFormatter.format(new Date(item.updatedAt))} ·{" "}
+                    {item.messageCount} messages
                   </span>
                 </button>
               )
@@ -128,16 +145,18 @@ const History: React.FC = () => {
           )}
         </div>
 
-        <div className="min-h-0 overflow-y-auto">
+        <div className="min-h-0 overflow-y-auto bg-background">
           {selectedSession ? (
-            <div className="flex min-h-full flex-col gap-4 p-4">
-              <div className="border-b border-black/10 pb-3">
+            <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-6 py-5">
+              <div className="border-b border-border pb-3">
                 <h3 className="line-clamp-2 text-sm font-semibold">
                   {selectedSession.title}
                 </h3>
-                <p className="mt-1 text-xs text-[#5f6368]">
+                <p className="mt-1 text-xs text-muted-foreground">
                   {dateFormatter.format(new Date(selectedSession.createdAt))}
-                  {selectedSession.workingDirectory ? ` · ${selectedSession.workingDirectory}` : ""}
+                  {selectedSession.workingDirectory
+                    ? ` · ${selectedSession.workingDirectory}`
+                    : ""}
                 </p>
               </div>
 
@@ -145,16 +164,20 @@ const History: React.FC = () => {
                 {selectedSession.messages.map(message => (
                   <div
                     key={message.id}
-                    className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
+                    className={`flex ${
+                      message.role === "user"
+                        ? "justify-end"
+                        : "justify-start"
+                    }`}
                   >
                     <div
                       className={`max-w-[86%] rounded-md px-3 py-2 text-sm leading-relaxed ${
                         message.role === "user"
-                          ? "bg-[#1f2328] text-white"
-                          : "border border-black/10 bg-[#f7f7f5] text-[#1f2328]"
+                          ? "bg-primary text-primary-foreground"
+                          : "border border-border bg-card text-card-foreground"
                       }`}
                     >
-                      <div className="mb-1 text-[11px] font-medium uppercase tracking-wide opacity-60">
+                      <div className="mb-1 text-[10px] font-medium uppercase tracking-wide opacity-60">
                         {message.role}
                       </div>
                       <div className="whitespace-pre-wrap break-words">
@@ -166,13 +189,13 @@ const History: React.FC = () => {
               </div>
             </div>
           ) : (
-            <div className="flex h-full min-h-56 items-center justify-center p-6 text-sm text-[#5f6368]">
-              Select a history item.
+            <div className="flex h-full min-h-56 items-center justify-center p-6 text-sm text-muted-foreground">
+              Select a session to view it.
             </div>
           )}
         </div>
       </div>
-    </section>
+    </div>
   )
 }
 

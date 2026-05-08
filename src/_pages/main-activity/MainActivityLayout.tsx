@@ -22,6 +22,7 @@ import {
   SidebarMenuItem,
   SidebarProvider
 } from "@/components/ui/sidebar"
+import { PageActionsProvider } from "@/components/ui/page-header"
 
 type NavItem = {
   title: string
@@ -51,9 +52,9 @@ const InactiveMacTrafficLights: React.FC = () => (
     className="pointer-events-none absolute left-4 top-1/2 flex -translate-y-1/2 items-center gap-2"
     aria-hidden="true"
   >
-    <span className="size-3 rounded-full border border-black/10 bg-[#c8c8c4]" />
-    <span className="size-3 rounded-full border border-black/10 bg-[#c8c8c4]" />
-    <span className="size-3 rounded-full border border-black/10 bg-[#c8c8c4]" />
+    <span className="size-3 rounded-full border border-border bg-muted" />
+    <span className="size-3 rounded-full border border-border bg-muted" />
+    <span className="size-3 rounded-full border border-border bg-muted" />
   </div>
 )
 
@@ -77,6 +78,7 @@ const MainActivityLayout: React.FC = () => {
   const [isWindowFocused, setIsWindowFocused] = React.useState(
     document.hasFocus()
   )
+  const [actions, setActions] = React.useState<React.ReactNode>(null)
   const location = useLocation()
   const title = titleByPath[location.pathname] ?? "Home"
   const toggleWindowMaximize = () => {
@@ -101,23 +103,23 @@ const MainActivityLayout: React.FC = () => {
       style={{ "--sidebar-width": "12rem" } as React.CSSProperties}
     >
       <div
-        className="h-screen min-h-screen w-full overflow-hidden bg-[#f7f7f5] text-[#1f2328]"
+        className="h-screen min-h-screen w-full overflow-hidden bg-background text-foreground"
         data-clickable-root
       >
         <div className="flex h-full min-h-0 w-full">
           <Sidebar
             collapsible="none"
-            className="h-full min-h-screen shrink-0 border-r border-[#d8d8d2] bg-[#eeeeea]"
+            className="h-full min-h-screen shrink-0 border-r border-sidebar-border bg-sidebar"
           >
             <SidebarHeader
               onDoubleClick={toggleWindowMaximize}
-              className={`draggable-area relative h-[52px] shrink-0 flex-row items-center gap-2 border-b border-[#d8d8d2] px-4 py-0 wco:h-[env(titlebar-area-height)] wco:pl-[calc(env(titlebar-area-x)+1em)] ${
+              className={`draggable-area relative h-12 shrink-0 flex-row items-center gap-2 border-b border-sidebar-border px-4 py-0 wco:h-[env(titlebar-area-height)] wco:pl-[calc(env(titlebar-area-x)+1em)] ${
                 isMac ? "pl-[90px]" : ""
               }`}
             >
               {isMac && !isWindowFocused && <InactiveMacTrafficLights />}
               <div className="flex min-w-0 items-center gap-2">
-                <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-[#1f2328] text-white">
+                <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
                   <Sparkles className="size-3.5" />
                 </span>
                 <span className="truncate text-sm font-semibold tracking-normal">
@@ -135,23 +137,30 @@ const MainActivityLayout: React.FC = () => {
                 </SidebarGroupContent>
               </SidebarGroup>
             </SidebarContent>
-            <SidebarFooter className="shrink-0 border-t border-[#d8d8d2]">
+            <SidebarFooter className="shrink-0 border-t border-sidebar-border">
               <SidebarMenu>
                 {footerNav.map(item => renderNavItem(item, location.pathname))}
               </SidebarMenu>
             </SidebarFooter>
           </Sidebar>
-          <SidebarInset className="flex min-h-0 flex-col bg-transparent">
+          <SidebarInset className="flex min-h-0 flex-col bg-background">
             <header
               onDoubleClick={toggleWindowMaximize}
-              className="draggable-area sticky top-0 z-10 flex h-[52px] shrink-0 items-center gap-2 border-b border-[#d8d8d2] bg-white px-4 wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]"
+              className="draggable-area sticky top-0 z-10 flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border bg-card px-4 wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]"
             >
               <h1 className="truncate text-sm font-semibold tracking-normal">
                 {title}
               </h1>
+              {actions && (
+                <div className="flex shrink-0 items-center gap-2">
+                  {actions}
+                </div>
+              )}
             </header>
-            <main className="min-h-0 flex-1 overflow-hidden">
-              <Outlet />
+            <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <PageActionsProvider setActions={setActions}>
+                <Outlet />
+              </PageActionsProvider>
             </main>
           </SidebarInset>
         </div>

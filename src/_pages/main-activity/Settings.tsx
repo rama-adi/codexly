@@ -1,10 +1,18 @@
 import React, { useEffect, useState } from "react"
+import { CheckCircle2, Loader2, XCircle } from "lucide-react"
+
+import { Button } from "@/components/ui/button"
 import {
-  CheckCircle2,
-  ChevronDown,
-  Loader2,
-  XCircle
-} from "lucide-react"
+  Card,
+  CardDescription,
+  CardHeader,
+  CardRows,
+  CardTitle
+} from "@/components/ui/card"
+import { Select } from "@/components/ui/select"
+import { SettingRow } from "@/components/ui/setting-row"
+import { Skeleton } from "@/components/ui/skeleton"
+import { Switch } from "@/components/ui/switch"
 
 type ConnectionStatus = "idle" | "testing" | "success" | "error"
 type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh"
@@ -25,6 +33,15 @@ const statusCopy: Record<ConnectionStatus, string> = {
   success: "Connected",
   error: "Failed"
 }
+
+const reasoningOptions: ReasoningEffort[] = [
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh"
+]
 
 const Settings: React.FC = () => {
   const [config, setConfig] = useState<ModelConfig | null>(null)
@@ -97,7 +114,9 @@ const Settings: React.FC = () => {
     const previous = reasoningEffort
     setReasoningEffort(nextEffort)
     try {
-      const settings = await window.electronAPI.updateAppSettings({ reasoningEffort: nextEffort })
+      const settings = await window.electronAPI.updateAppSettings({
+        reasoningEffort: nextEffort
+      })
       setReasoningEffort(settings.reasoningEffort)
     } catch (error) {
       setReasoningEffort(previous)
@@ -123,147 +142,154 @@ const Settings: React.FC = () => {
   }
 
   return (
-    <section className="min-h-0 flex-1 overflow-y-auto bg-[#f7f7f5] p-6 text-[#1f2328]">
-        <div className="space-y-1">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-[#5f6368]">
-            Model
-          </h2>
-          <div className="divide-y divide-black/10 rounded-md border border-black/10 bg-white">
-            <SettingRow label="Provider" value={loadingConfig ? "Loading" : config?.provider ?? "OpenAI"} />
-            <div className="flex min-h-12 items-center justify-between gap-4 px-3 py-2">
-              <div className="text-sm font-medium">Model</div>
-              <div className="relative min-w-0">
-                <select
-                  value={config?.model ?? ""}
-                  onChange={event => changeModel(event.target.value)}
-                  disabled={loadingConfig || savingModel}
-                  className="h-8 max-w-[210px] appearance-none rounded-md border border-black/15 bg-[#f7f7f5] py-0 pl-3 pr-8 font-mono text-xs text-[#1f2328] outline-none transition-colors hover:bg-[#eeeeea] disabled:cursor-default disabled:opacity-60"
-                  title={config?.model}
-                >
-                  {config && !models.some(model => model.id === config.model) && (
-                    <option value={config.model}>{config.model}</option>
-                  )}
-                  {models.map(model => (
-                    <option key={model.id} value={model.id}>
-                      {model.name}
-                    </option>
-                  ))}
-                </select>
-                {savingModel ? (
-                  <Loader2 className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-[#5f6368]" />
+    <div className="min-h-0 flex-1 overflow-y-auto bg-background text-foreground">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-6 py-5">
+        <Card>
+          <CardHeader>
+            <div className="min-w-0">
+              <CardTitle>Model</CardTitle>
+              <CardDescription>
+                Choose the Codex model and verify the connection.
+              </CardDescription>
+            </div>
+          </CardHeader>
+          <CardRows>
+            <SettingRow
+              label="Provider"
+              control={
+                loadingConfig ? (
+                  <Skeleton className="h-4 w-20" />
                 ) : (
-                  <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#5f6368]" />
-                )}
-              </div>
-            </div>
-            <div className="flex min-h-12 items-center justify-between gap-4 px-3 py-2">
-              <div>
-                <div className="text-sm font-medium">Connection</div>
-                <ConnectionStatus status={status} errorMessage={errorMessage} />
-              </div>
-              <button
-                type="button"
-                onClick={testConnection}
-                disabled={status === "testing"}
-                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-black/15 bg-[#f7f7f5] px-3 text-xs font-medium text-[#1f2328] transition-colors hover:bg-[#eeeeea] disabled:cursor-default disabled:opacity-60"
-              >
-                {status === "testing" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                Test
-              </button>
-            </div>
-            <div className="flex min-h-12 items-center justify-between gap-4 px-3 py-2">
-              <div>
-                <div className="text-sm font-medium">Reasoning effort</div>
-                <div className="mt-0.5 text-xs text-[#5f6368]">
-                  Controls Codex reasoning depth for new turns
-                </div>
-              </div>
-              <div className="relative min-w-0">
-                <select
-                  value={reasoningEffort}
-                  onChange={event => changeReasoningEffort(event.target.value as ReasoningEffort)}
-                  disabled={loadingConfig}
-                  className="h-8 max-w-[210px] appearance-none rounded-md border border-black/15 bg-[#f7f7f5] py-0 pl-3 pr-8 text-xs text-[#1f2328] outline-none transition-colors hover:bg-[#eeeeea] disabled:cursor-default disabled:opacity-60"
+                  <span className="text-xs text-muted-foreground">
+                    {config?.provider ?? "OpenAI"}
+                  </span>
+                )
+              }
+            />
+            <SettingRow
+              label="Model"
+              control={
+                loadingConfig ? (
+                  <Skeleton className="h-8 w-[210px]" />
+                ) : (
+                  <Select
+                    value={config?.model ?? ""}
+                    onChange={event => changeModel(event.target.value)}
+                    disabled={savingModel}
+                    loading={savingModel}
+                    monospace
+                    title={config?.model}
+                    className="max-w-[210px]"
+                  >
+                    {config &&
+                      !models.some(model => model.id === config.model) && (
+                        <option value={config.model}>{config.model}</option>
+                      )}
+                    {models.map(model => (
+                      <option key={model.id} value={model.id}>
+                        {model.name}
+                      </option>
+                    ))}
+                  </Select>
+                )
+              }
+            />
+            <SettingRow
+              label="Connection"
+              description={
+                <ConnectionStatusLine
+                  status={status}
+                  errorMessage={errorMessage}
+                />
+              }
+              control={
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={testConnection}
+                  disabled={status === "testing"}
                 >
-                  {["none", "minimal", "low", "medium", "high", "xhigh"].map(effort => (
+                  {status === "testing" && (
+                    <Loader2 data-icon="inline-start" className="animate-spin" />
+                  )}
+                  Test
+                </Button>
+              }
+            />
+            <SettingRow
+              label="Reasoning effort"
+              description="Controls Codex reasoning depth for new turns."
+              control={
+                <Select
+                  value={reasoningEffort}
+                  onChange={event =>
+                    changeReasoningEffort(event.target.value as ReasoningEffort)
+                  }
+                  disabled={loadingConfig}
+                  className="max-w-[160px]"
+                >
+                  {reasoningOptions.map(effort => (
                     <option key={effort} value={effort}>
                       {effort}
                     </option>
                   ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#5f6368]" />
-              </div>
+                </Select>
+              }
+            />
+          </CardRows>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <div className="min-w-0">
+              <CardTitle>Privacy</CardTitle>
+              <CardDescription>
+                Behavior of the overlay and screenshot capture.
+              </CardDescription>
             </div>
-            <div className="flex min-h-12 items-center justify-between gap-4 px-3 py-2">
-              <div>
-                <div className="text-sm font-medium">Stealth behavior</div>
-                <div className="mt-0.5 text-xs text-[#5f6368]">
-                  Hide overlay during screenshots
-                </div>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={stealthEnabled}
-                disabled={loadingConfig || savingStealth}
-                onClick={() => changeStealth(!stealthEnabled)}
-                className={`relative h-6 w-10 rounded-full transition-colors disabled:cursor-default disabled:opacity-60 ${
-                  stealthEnabled ? "bg-[#1f883d]" : "bg-black/20"
-                }`}
-              >
-                <span
-                  className={`absolute left-0 top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
-                    stealthEnabled ? "translate-x-5" : "translate-x-1"
-                  }`}
+          </CardHeader>
+          <CardRows>
+            <SettingRow
+              label="Stealth behavior"
+              description="Hide the overlay during screenshots."
+              control={
+                <Switch
+                  checked={stealthEnabled}
+                  disabled={loadingConfig || savingStealth}
+                  onCheckedChange={changeStealth}
                 />
-              </button>
-            </div>
-          </div>
-        </div>
-    </section>
+              }
+            />
+          </CardRows>
+        </Card>
+      </div>
+    </div>
   )
 }
 
-const SettingRow: React.FC<{
-  label: string
-  value: string
-  monospace?: boolean
-}> = ({ label, value, monospace = false }) => (
-  <div className="flex min-h-11 items-center justify-between gap-4 px-3 py-2">
-    <div className="text-sm font-medium">{label}</div>
-    <div
-      className={`max-w-[190px] truncate text-right text-sm text-[#5f6368] ${
-        monospace ? "font-mono" : ""
-      }`}
-      title={value}
-    >
-      {value}
-    </div>
-  </div>
-)
-
-const ConnectionStatus: React.FC<{
+const ConnectionStatusLine: React.FC<{
   status: ConnectionStatus
   errorMessage: string
 }> = ({ status, errorMessage }) => {
   const icon =
     status === "testing" ? (
-      <Loader2 className="h-3.5 w-3.5 animate-spin text-[#6b7280]" />
+      <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
     ) : status === "success" ? (
-      <CheckCircle2 className="h-3.5 w-3.5 text-[#188038]" />
+      <CheckCircle2 className="size-3.5 text-primary" />
     ) : status === "error" ? (
-      <XCircle className="h-3.5 w-3.5 text-[#c5221f]" />
+      <XCircle className="size-3.5 text-destructive" />
     ) : null
 
   return (
-    <div className="mt-0.5 flex max-w-[220px] items-center gap-1.5 text-xs text-[#5f6368]">
+    <span className="mt-0.5 inline-flex max-w-[260px] items-center gap-1.5 align-middle">
       {icon}
-      <span className="truncate" title={errorMessage || statusCopy[status]}>
-        {status === "error" && errorMessage
-          ? errorMessage
-          : statusCopy[status]}
+      <span
+        className="truncate"
+        title={errorMessage || statusCopy[status]}
+      >
+        {status === "error" && errorMessage ? errorMessage : statusCopy[status]}
       </span>
-    </div>
+    </span>
   )
 }
 
