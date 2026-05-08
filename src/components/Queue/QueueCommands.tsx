@@ -63,6 +63,7 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
       >
         <RotateCcw className="h-3.5 w-3.5" />
         Reset
+        <Key>⌘R</Key>
       </button>
 
       <div className="h-4 w-px bg-white/15" />
