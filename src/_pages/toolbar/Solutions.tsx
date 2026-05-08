@@ -124,6 +124,13 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
       window.electronAPI.onProcessingNoScreenshots(() => {
         showToast("No Screenshots", "There are no screenshots to process.", "neutral")
       }),
+      window.electronAPI.onBufferCleared(() => {
+        setIsPreview(false)
+        setIsChatOpen(false)
+        setScreenshots([])
+        setAnswer("")
+        setStreaming(false)
+      }),
       window.electronAPI.onResetView(() => {
         setIsPreview(false)
         setIsChatOpen(false)
@@ -154,8 +161,13 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
   }
 
   const clearBuffer = async () => {
+    setIsPreview(false)
+    setIsChatOpen(false)
+    setAnswer("")
+    setStreaming(false)
     setScreenshots([])
     await window.electronAPI.clearScreenshots()
+    setView("queue")
   }
 
   const resetSession = async () => {

@@ -34,10 +34,13 @@ export function initializeIpcHandlers(appState: AppState): void {
   })
 
   ipcMain.handle("clear-screenshots", async () => {
+    appState.processingHelper.cancelOngoingRequests()
     appState.getScreenshotHelper().clearQueues()
     appState.setView("queue")
+    appState.setHasContinuedSession(false)
     for (const window of BrowserWindow.getAllWindows()) {
       window.webContents.send("screenshots-cleared")
+      window.webContents.send("buffer-cleared")
     }
     return { success: true }
   })

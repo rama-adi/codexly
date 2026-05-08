@@ -46,11 +46,12 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
         className="inline-flex items-center gap-1 rounded px-2 py-1 text-white/80 transition-colors hover:bg-white/10"
         onClick={onClearBuffer}
         type="button"
-        title="Clear current screenshot buffer"
+        title="Clear current screenshot buffer (Cmd+K)"
         aria-label="Clear current screenshot buffer"
       >
         <Trash2 className="h-3.5 w-3.5" />
         Clear
+        <Key>⌘K</Key>
       </button>
 
       <button

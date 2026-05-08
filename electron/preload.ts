@@ -112,6 +112,7 @@ interface ElectronAPI {
   testLlmConnection: () => Promise<{ success: boolean; error?: string }>
   onScreenshotTaken: (callback: (data: { path: string; preview: string }) => void) => () => void
   onScreenshotsCleared: (callback: () => void) => () => void
+  onBufferCleared: (callback: () => void) => () => void
   onResetView: (callback: () => void) => () => void
   onSolutionStreamStart: (callback: () => void) => () => void
   onSolutionStreamDelta: (callback: (delta: string) => void) => () => void
@@ -194,6 +195,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     const subscription = () => callback()
     ipcRenderer.on("screenshots-cleared", subscription)
     return () => ipcRenderer.removeListener("screenshots-cleared", subscription)
+  },
+  onBufferCleared: callback => {
+    const subscription = () => callback()
+    ipcRenderer.on("buffer-cleared", subscription)
+    return () => ipcRenderer.removeListener("buffer-cleared", subscription)
   },
   onResetView: callback => {
     const subscription = () => callback()

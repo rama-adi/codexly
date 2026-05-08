@@ -197,6 +197,10 @@ const App: React.FC = () => {
       }),
       window.electronAPI.onShowAnswerPreview(() => {
         navigate(viewToPath.solutions)
+      }),
+      window.electronAPI.onBufferCleared(() => {
+        queryClient.removeQueries(["screenshots"])
+        navigate(viewToPath.queue)
       })
     ]
     return () => cleanupFunctions.forEach((cleanup) => cleanup())

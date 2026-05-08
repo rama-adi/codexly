@@ -100,6 +100,10 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     const cleanupFunctions = [
       window.electronAPI.onScreenshotTaken(() => refetch()),
       window.electronAPI.onScreenshotsCleared(() => refetch()),
+      window.electronAPI.onBufferCleared(() => {
+        setIsChatOpen(false)
+        refetch()
+      }),
       window.electronAPI.onResetView(() => {
         refetch()
       }),
@@ -132,6 +136,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
   }
 
   const clearBuffer = async () => {
+    setIsChatOpen(false)
     await window.electronAPI.clearScreenshots()
     await refetch()
   }

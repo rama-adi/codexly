@@ -59,6 +59,21 @@ export class ShortcutsHelper {
       await this.appState.processingHelper.processScreenshots()
     })
 
+    globalShortcut.register("CommandOrControl+K", () => {
+      console.log("Command + K pressed. Clearing current screenshot buffer...")
+
+      this.appState.processingHelper.cancelOngoingRequests()
+      this.appState.getScreenshotHelper().clearQueues()
+      this.appState.setHasContinuedSession(false)
+      this.appState.setView("queue")
+
+      const mainWindow = this.appState.getMainWindow()
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("screenshots-cleared")
+        mainWindow.webContents.send("buffer-cleared")
+      }
+    })
+
     globalShortcut.register("CommandOrControl+R", () => {
       console.log(
         "Command + R pressed. Canceling requests and resetting queues..."
