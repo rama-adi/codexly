@@ -36,6 +36,9 @@ export function initializeIpcHandlers(appState: AppState): void {
   ipcMain.handle("clear-screenshots", async () => {
     appState.getScreenshotHelper().clearQueues()
     appState.setView("queue")
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send("screenshots-cleared")
+    }
     return { success: true }
   })
 

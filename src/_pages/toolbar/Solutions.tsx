@@ -4,6 +4,7 @@ import { Copy, X } from "lucide-react"
 import QueueCommands from "@/components/Queue/QueueCommands"
 import ScreenshotQueue from "@/components/Queue/ScreenshotQueue"
 import MarkdownMessage from "@/components/MarkdownMessage"
+import ToolbarChatPanel from "@/components/ToolbarChatPanel"
 import {
   Toast,
   ToastDescription,
@@ -69,6 +70,7 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
   const [streaming, setStreaming] = useState(true)
   const [answerHeight, setAnswerHeight] = useState(600)
   const [isPreview, setIsPreview] = useState(false)
+  const [isChatOpen, setIsChatOpen] = useState(false)
   const [screenshots, setScreenshots] = useState<ScreenshotPreview[]>([])
   const [toastOpen, setToastOpen] = useState(false)
   const [toastMessage, setToastMessage] = useState<ToastMessage>({
@@ -104,6 +106,7 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
       }),
       window.electronAPI.onSolutionStreamStart(() => {
         setIsPreview(false)
+        setIsChatOpen(false)
         setStreaming(true)
         setAnswer("")
       }),
@@ -123,6 +126,8 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
       }),
       window.electronAPI.onResetView(() => {
         setIsPreview(false)
+        setIsChatOpen(false)
+        setScreenshots([])
         setAnswer("")
         setStreaming(false)
       })
@@ -163,11 +168,14 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
 
       <QueueCommands
         screenshots={[]}
+        onChatToggle={() => setIsChatOpen(open => !open)}
         onTooltipVisibilityChange={() => undefined}
         onSettingsOpen={() => window.electronAPI.openSettingsWindow()}
       />
 
-      {screenshots.length > 0 && (
+      {isChatOpen ? (
+        <ToolbarChatPanel onClose={() => setIsChatOpen(false)} />
+      ) : screenshots.length > 0 && (
         <div className="w-fit rounded-md border border-white/10 bg-black/60 p-1.5">
           <ScreenshotQueue
             isLoading={streaming}
@@ -182,7 +190,7 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
         </div>
       )}
 
-      <div className="relative w-full">
+      {!isChatOpen && <div className="relative w-full">
         <div className="absolute right-1.5 top-1.5 z-10 flex gap-1">
           <button
             type="button"
@@ -211,7 +219,7 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
             className="text-[13px] leading-relaxed text-gray-100"
           />
         </div>
-      </div>
+      </div>}
     </div>
   )
 }

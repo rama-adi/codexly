@@ -69,6 +69,7 @@ export interface ElectronAPI {
   deleteScreenshot: (path: string) => Promise<{ success: boolean; error?: string }>
   clearScreenshots: () => Promise<{ success: boolean }>
   onScreenshotTaken: (callback: (data: { path: string; preview: string }) => void) => () => void
+  onScreenshotsCleared: (callback: () => void) => () => void
   onResetView: (callback: () => void) => () => void
   onSolutionStreamStart: (callback: () => void) => () => void
   onSolutionStreamDelta: (callback: (delta: string) => void) => () => void
