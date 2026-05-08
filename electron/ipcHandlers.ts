@@ -365,7 +365,6 @@ export function initializeIpcHandlers(appState: AppState): void {
 
   ipcMain.handle("get-available-llm-models", async () => {
     try {
-      await appState.processingHelper.prepareForLaunch()
       const llmHelper = appState.processingHelper.getLLMHelper();
       return await llmHelper.getAvailableModels();
     } catch (error: any) {

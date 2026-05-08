@@ -67,6 +67,24 @@ type CodexReadyStatus = {
   error?: string
 }
 
+type LlmModelOption = {
+  id: string
+  model: string
+  name: string
+  displayName: string
+  hidden: boolean
+  defaultReasoningEffort?: string
+  supportedReasoningEfforts: Array<{
+    reasoningEffort: string
+    description?: string
+  }>
+  inputModalities: string[]
+  supportsPersonality: boolean
+  isDefault: boolean
+  upgrade?: string
+  upgradeInfo?: unknown
+}
+
 interface ElectronAPI {
   platform: NodeJS.Platform
   updateContentDimensions: (dimensions: { width: number; height: number }) => Promise<void>
@@ -107,7 +125,7 @@ interface ElectronAPI {
   newChatSession: () => Promise<ChatSession>
   showAnswerPreview: () => Promise<void>
   getCurrentLlmConfig: () => Promise<{ provider: string; model: string }>
-  getAvailableLlmModels: () => Promise<Array<{ id: string; name: string }>>
+  getAvailableLlmModels: () => Promise<LlmModelOption[]>
   setCurrentLlmModel: (model: string) => Promise<{ provider: string; model: string }>
   testLlmConnection: () => Promise<{ success: boolean; error?: string }>
   onScreenshotTaken: (callback: (data: { path: string; preview: string }) => void) => () => void

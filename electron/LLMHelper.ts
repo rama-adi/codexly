@@ -10,7 +10,25 @@ import {
 } from "./HistoryStore"
 import { getPersonalizationConfig } from "./PersonalizationStore"
 
-type ModelOption = { id: string; name: string }
+type ReasoningEffortOption = {
+  reasoningEffort: string
+  description?: string
+}
+
+type ModelOption = {
+  id: string
+  model: string
+  name: string
+  displayName: string
+  hidden: boolean
+  defaultReasoningEffort?: string
+  supportedReasoningEfforts: ReasoningEffortOption[]
+  inputModalities: string[]
+  supportsPersonality: boolean
+  isDefault: boolean
+  upgrade?: string
+  upgradeInfo?: unknown
+}
 type StreamCallbacks = {
   onStart?: () => void
   onDelta?: (delta: string) => void
@@ -186,13 +204,28 @@ export class LLMHelper {
 
   public async getAvailableModels(): Promise<ModelOption[]> {
     try {
-      const client = await this.getClient(getLaunchWorkingDirectory(getAppSettings()))
-      const result = await client.request("model/list", {})
-      const models = Array.isArray(result?.models) ? result.models : []
+      const cwd = getLaunchWorkingDirectory(getAppSettings())
+      const client = await this.getClient(cwd)
+      try {
+        await this.ensureThread(client, cwd)
+      } catch (error) {
+        console.warn("Codex thread warmup failed before model discovery:", error)
+      }
+      const result = await client.request("model/list", {
+        limit: 20,
+        includeHidden: false,
+      })
+      const models = Array.isArray(result?.data)
+        ? result.data
+        : Array.isArray(result?.models)
+          ? result.models
+          : []
       return models
-        .map((model: any) => ({ id: String(model.id ?? model.slug ?? ""), name: String(model.name ?? model.id ?? "") }))
-        .filter((model: ModelOption) => model.id)
-    } catch {
+        .map((model: any) => this.normalizeModelOption(model))
+        .filter((model: ModelOption | null): model is ModelOption => Boolean(model))
+        .filter((model: ModelOption) => model.inputModalities.includes("image"))
+    } catch (error) {
+      console.warn("Failed to list Codex models:", error)
       return []
     }
   }
@@ -233,6 +266,40 @@ export class LLMHelper {
     this.codexThreadId = response?.thread?.id ?? response?.threadId ?? response?.id
     if (!this.codexThreadId) throw new Error("Codex app-server did not return a thread id")
     return this.codexThreadId
+  }
+
+  private normalizeModelOption(model: any): ModelOption | null {
+    const id = String(model?.id ?? model?.model ?? model?.slug ?? "").trim()
+    if (!id) return null
+
+    const inputModalities = Array.isArray(model?.inputModalities)
+      ? model.inputModalities.map((modality: unknown) => String(modality)).filter(Boolean)
+      : ["text", "image"]
+    const supportedReasoningEfforts = Array.isArray(model?.supportedReasoningEfforts)
+      ? model.supportedReasoningEfforts
+          .map((effort: any) => ({
+            reasoningEffort: String(effort?.reasoningEffort ?? effort?.id ?? effort ?? "").trim(),
+            description: typeof effort?.description === "string" ? effort.description : undefined,
+          }))
+          .filter((effort: ReasoningEffortOption) => effort.reasoningEffort)
+      : []
+    const displayName = String(model?.displayName ?? model?.name ?? model?.model ?? id)
+
+    return {
+      id,
+      model: String(model?.model ?? id),
+      name: displayName,
+      displayName,
+      hidden: Boolean(model?.hidden),
+      defaultReasoningEffort:
+        typeof model?.defaultReasoningEffort === "string" ? model.defaultReasoningEffort : undefined,
+      supportedReasoningEfforts,
+      inputModalities,
+      supportsPersonality: model?.supportsPersonality !== false,
+      isDefault: Boolean(model?.isDefault),
+      upgrade: typeof model?.upgrade === "string" ? model.upgrade : undefined,
+      upgradeInfo: model?.upgradeInfo,
+    }
   }
 
   private syncCodexTitle(

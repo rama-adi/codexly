@@ -24,7 +24,16 @@ interface ModelConfig {
 
 interface ModelOption {
   id: string
+  model: string
   name: string
+  displayName: string
+  defaultReasoningEffort?: string
+  supportedReasoningEfforts: Array<{
+    reasoningEffort: string
+    description?: string
+  }>
+  inputModalities: string[]
+  isDefault: boolean
 }
 
 const statusCopy: Record<ConnectionStatus, string> = {
@@ -34,7 +43,7 @@ const statusCopy: Record<ConnectionStatus, string> = {
   error: "Failed"
 }
 
-const reasoningOptions: ReasoningEffort[] = [
+const allowedReasoningEfforts: ReasoningEffort[] = [
   "none",
   "minimal",
   "low",
@@ -54,6 +63,8 @@ const Settings: React.FC = () => {
   const [status, setStatus] = useState<ConnectionStatus>("idle")
   const [errorMessage, setErrorMessage] = useState("")
   const modelDiscoveryFailed = !loadingConfig && models.length === 0
+  const selectedModel = models.find(model => model.id === config?.model)
+  const reasoningOptions = getReasoningOptions(selectedModel, reasoningEffort)
 
   useEffect(() => {
     ;(async () => {
@@ -63,7 +74,9 @@ const Settings: React.FC = () => {
           window.electronAPI.getAppSettings()
         ])
         setConfig(currentConfig)
-        await window.electronAPI.prepareCodex()
+        window.electronAPI.prepareCodex().catch(error => {
+          console.warn("Codex prelaunch failed while loading settings:", error)
+        })
         const availableModels = await window.electronAPI.getAvailableLlmModels()
         setModels(availableModels)
         setStealthEnabled(settings.stealthEnabled)
@@ -113,6 +126,7 @@ const Settings: React.FC = () => {
   }
 
   const changeReasoningEffort = async (nextEffort: ReasoningEffort) => {
+    if (!allowedReasoningEfforts.includes(nextEffort)) return
     const previous = reasoningEffort
     setReasoningEffort(nextEffort)
     try {
@@ -126,6 +140,16 @@ const Settings: React.FC = () => {
       setStatus("error")
     }
   }
+
+  useEffect(() => {
+    if (loadingConfig || !selectedModel || reasoningOptions.length === 0) return
+    if (reasoningOptions.some(option => option.reasoningEffort === reasoningEffort)) return
+
+    const defaultEffort = selectedModel.defaultReasoningEffort
+    const nextEffort = reasoningOptions.find(option => option.reasoningEffort === defaultEffort)
+      ?? reasoningOptions[0]
+    changeReasoningEffort(nextEffort.reasoningEffort)
+  }, [loadingConfig, selectedModel, reasoningOptions, reasoningEffort])
 
   const changeStealth = async (enabled: boolean) => {
     const previous = stealthEnabled
@@ -205,7 +229,7 @@ const Settings: React.FC = () => {
               description={
                 modelDiscoveryFailed ? (
                   <span className="text-xs text-destructive">
-                    Codex model list unavailable. Check connection.
+                    No image-capable Codex models returned. Check connection.
                   </span>
                 ) : (
                   <ConnectionStatusLine
@@ -230,22 +254,48 @@ const Settings: React.FC = () => {
             />
             <SettingRow
               label="Reasoning effort"
-              description="Controls Codex reasoning depth for new turns."
+              description={
+                selectedModel
+                  ? `Options for ${selectedModel.displayName}.`
+                  : "Options are loaded from Codex for the selected model."
+              }
+              className="items-start"
               control={
-                <Select
-                  value={reasoningEffort}
-                  onChange={event =>
-                    changeReasoningEffort(event.target.value as ReasoningEffort)
-                  }
-                  disabled={loadingConfig}
-                  className="max-w-[160px]"
-                >
-                  {reasoningOptions.map(effort => (
-                    <option key={effort} value={effort}>
-                      {effort}
-                    </option>
-                  ))}
-                </Select>
+                loadingConfig ? (
+                  <Skeleton className="h-20 w-[340px]" />
+                ) : (
+                  <div className="flex w-[340px] flex-col gap-2">
+                    {reasoningOptions.map(option => (
+                      <label
+                        key={option.reasoningEffort}
+                        className={`flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-left transition-colors ${
+                          reasoningEffort === option.reasoningEffort
+                            ? "border-primary bg-primary/5"
+                            : "border-border bg-background hover:bg-accent/60"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="reasoning-effort"
+                          value={option.reasoningEffort}
+                          checked={reasoningEffort === option.reasoningEffort}
+                          onChange={() => changeReasoningEffort(option.reasoningEffort)}
+                          className="mt-0.5 size-3.5 accent-primary"
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-xs font-medium capitalize text-foreground">
+                            {option.reasoningEffort}
+                          </span>
+                          {option.description && (
+                            <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">
+                              {option.description}
+                            </span>
+                          )}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                )
               }
             />
           </CardRows>
@@ -277,6 +327,21 @@ const Settings: React.FC = () => {
       </div>
     </div>
   )
+}
+
+function getReasoningOptions(
+  model: ModelOption | undefined,
+  currentEffort: ReasoningEffort
+): Array<{ reasoningEffort: ReasoningEffort; description?: string }> {
+  const options = (model?.supportedReasoningEfforts ?? [])
+    .map(option => ({
+      reasoningEffort: option.reasoningEffort as ReasoningEffort,
+      description: option.description,
+    }))
+    .filter(option => allowedReasoningEfforts.includes(option.reasoningEffort))
+
+  if (options.length > 0) return options
+  return [{ reasoningEffort: currentEffort, description: "Current saved setting." }]
 }
 
 const ConnectionStatusLine: React.FC<{

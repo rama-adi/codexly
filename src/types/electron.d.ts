@@ -62,6 +62,24 @@ export interface CodexReadyStatus {
   error?: string
 }
 
+export interface LlmModelOption {
+  id: string
+  model: string
+  name: string
+  displayName: string
+  hidden: boolean
+  defaultReasoningEffort?: string
+  supportedReasoningEfforts: Array<{
+    reasoningEffort: string
+    description?: string
+  }>
+  inputModalities: string[]
+  supportsPersonality: boolean
+  isDefault: boolean
+  upgrade?: string
+  upgradeInfo?: unknown
+}
+
 export interface ElectronAPI {
   platform: NodeJS.Platform
   updateContentDimensions: (dimensions: { width: number; height: number }) => Promise<void>
@@ -118,7 +136,7 @@ export interface ElectronAPI {
   showAnswerPreview: () => Promise<void>
   onShowAnswerPreview: (callback: () => void) => () => void
   getCurrentLlmConfig: () => Promise<{ provider: string; model: string }>
-  getAvailableLlmModels: () => Promise<Array<{ id: string; name: string }>>
+  getAvailableLlmModels: () => Promise<LlmModelOption[]>
   setCurrentLlmModel: (model: string) => Promise<{ provider: string; model: string }>
   testLlmConnection: () => Promise<{ success: boolean; error?: string }>
   onLlmConfigChanged: (callback: (config: { provider: string; model: string }) => void) => () => void
