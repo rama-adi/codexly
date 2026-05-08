@@ -46,6 +46,7 @@ type ChatSession = {
   createdAt: string
   updatedAt: string
   workingDirectory?: string
+  codexThreadId?: string
   messages: Array<{
     id: string
     role: "user" | "assistant"
@@ -55,6 +56,15 @@ type ChatSession = {
     screenshots?: Array<{ path: string; dataUrl: string }>
     createdAt: string
   }>
+}
+
+type CodexReadyStatus = {
+  state: "idle" | "warming" | "ready" | "error"
+  key: string
+  model: string
+  cwd?: string
+  threadId?: string | null
+  error?: string
 }
 
 interface ElectronAPI {
@@ -71,6 +81,8 @@ interface ElectronAPI {
   closeSettingsWindow: () => Promise<void>
   minimizeSettingsWindow: () => Promise<void>
   showMainWindow: () => Promise<void>
+  prepareCodex: () => Promise<CodexReadyStatus>
+  getCodexReadyStatus: () => Promise<CodexReadyStatus>
   hideMainWindow: () => Promise<void>
   toggleMainWindow: () => Promise<void>
   toggleCurrentWindowMaximize: () => Promise<void>
@@ -108,6 +120,7 @@ interface ElectronAPI {
   onAppSettingsChanged: (callback: (settings: AppSettings) => void) => () => void
   onPersonalizationChanged: (callback: (config: PersonalizationConfig) => void) => () => void
   onHistoryChanged: (callback: (history: HistoryIndexItem[]) => void) => () => void
+  onCodexReadyStatusChanged: (callback: (status: CodexReadyStatus) => void) => () => void
   onShowAnswerPreview: (callback: () => void) => () => void
   onLlmConfigChanged: (callback: (config: { provider: string; model: string }) => void) => () => void
   invoke: (channel: string, ...args: any[]) => Promise<any>
@@ -144,6 +157,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   closeSettingsWindow: () => ipcRenderer.invoke("close-settings-window"),
   minimizeSettingsWindow: () => ipcRenderer.invoke("minimize-settings-window"),
   showMainWindow: () => ipcRenderer.invoke("show-main-window"),
+  prepareCodex: () => ipcRenderer.invoke("prepare-codex"),
+  getCodexReadyStatus: () => ipcRenderer.invoke("get-codex-ready-status"),
   hideMainWindow: () => ipcRenderer.invoke("hide-main-window"),
   toggleMainWindow: () => ipcRenderer.invoke("toggle-window"),
   toggleCurrentWindowMaximize: () => ipcRenderer.invoke("toggle-current-window-maximize"),
@@ -197,6 +212,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onAppSettingsChanged: callback => on("app-settings-changed", callback),
   onPersonalizationChanged: callback => on("personalization-changed", callback),
   onHistoryChanged: callback => on("history-changed", callback),
+  onCodexReadyStatusChanged: callback => on("codex-ready-status-changed", callback),
   onShowAnswerPreview: callback => {
     const subscription = () => callback()
     ipcRenderer.on("show-answer-preview", subscription)

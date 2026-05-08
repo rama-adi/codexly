@@ -3,6 +3,7 @@ import {
   Check,
   ExternalLink,
   FolderOpen,
+  Loader2,
   Pencil,
   Play,
   Plus,
@@ -17,16 +18,33 @@ import {
   CardHeader,
   CardTitle
 } from "@/components/ui/card"
-import type { AppSettings, DirectoryProfile } from "@/types/electron"
+import type { AppSettings, CodexReadyStatus, DirectoryProfile } from "@/types/electron"
 
 const Home: React.FC = () => {
   const [settings, setSettings] = React.useState<AppSettings | null>(null)
+  const [readyStatus, setReadyStatus] = React.useState<CodexReadyStatus | null>(null)
+  const [launchingKey, setLaunchingKey] = React.useState<string | null>(null)
   const [editingId, setEditingId] = React.useState<string | null>(null)
   const [titleDraft, setTitleDraft] = React.useState("")
 
   React.useEffect(() => {
     window.electronAPI.getAppSettings().then(setSettings)
-    return window.electronAPI.onAppSettingsChanged(setSettings)
+    window.electronAPI.getCodexReadyStatus().then(setReadyStatus)
+    window.electronAPI.prepareCodex().then(setReadyStatus).catch(error => {
+      setReadyStatus({
+        state: "error",
+        key: "__direct__",
+        model: "gpt-5.4",
+        threadId: null,
+        error: error?.message ?? String(error),
+      })
+    })
+    const cleanupSettings = window.electronAPI.onAppSettingsChanged(setSettings)
+    const cleanupReady = window.electronAPI.onCodexReadyStatusChanged(setReadyStatus)
+    return () => {
+      cleanupSettings()
+      cleanupReady()
+    }
   }, [])
 
   const updateSettings = async (patch: Partial<AppSettings>) => {
@@ -36,8 +54,14 @@ const Home: React.FC = () => {
   }
 
   const launchDirect = async () => {
-    await updateSettings({ launchMode: "direct", selectedDirectoryId: null })
-    window.electronAPI.showMainWindow()
+    setLaunchingKey("__direct__")
+    try {
+      await updateSettings({ launchMode: "direct", selectedDirectoryId: null })
+      await window.electronAPI.prepareCodex()
+      await window.electronAPI.showMainWindow()
+    } finally {
+      setLaunchingKey(null)
+    }
   }
 
   const importDirectory = async () => {
@@ -50,12 +74,18 @@ const Home: React.FC = () => {
   }
 
   const launchDirectory = async (profile: DirectoryProfile) => {
-    await updateSettings({
-      launchMode: "directory",
-      selectedDirectoryId: profile.id,
-      workingDirectory: profile.path
-    })
-    window.electronAPI.showMainWindow()
+    setLaunchingKey(profile.id)
+    try {
+      await updateSettings({
+        launchMode: "directory",
+        selectedDirectoryId: profile.id,
+        workingDirectory: profile.path
+      })
+      await window.electronAPI.prepareCodex()
+      await window.electronAPI.showMainWindow()
+    } finally {
+      setLaunchingKey(null)
+    }
   }
 
   const openDirectory = async (profile: DirectoryProfile) => {
@@ -80,6 +110,17 @@ const Home: React.FC = () => {
     setEditingId(null)
   }
 
+  const statusCopy =
+    readyStatus?.state === "ready"
+      ? "Codex ready"
+      : readyStatus?.state === "warming"
+        ? "Preparing Codex..."
+        : readyStatus?.state === "error"
+          ? "Codex failed to prepare"
+          : "Codex not ready"
+  const directBusy = readyStatus?.key === "__direct__" && readyStatus.state === "warming"
+  const directLaunching = launchingKey === "__direct__"
+
   return (
     <div className="min-h-0 flex-1 overflow-y-auto bg-background text-foreground">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-6 py-5">
@@ -93,13 +134,35 @@ const Home: React.FC = () => {
               </CardDescription>
             </div>
             <CardActions>
-              <Button onClick={launchDirect}>
-                <ScreenShare data-icon="inline-start" />
-                Launch
-              </Button>
+              <div className="flex items-center gap-3">
+                <div
+                  className={`text-xs ${
+                    readyStatus?.state === "error"
+                      ? "text-destructive"
+                      : "text-muted-foreground"
+                  }`}
+                  title={readyStatus?.error}
+                >
+                  {statusCopy}
+                </div>
+                <Button onClick={launchDirect} disabled={directBusy || directLaunching}>
+                  {directBusy || directLaunching ? (
+                    <Loader2 data-icon="inline-start" className="animate-spin" />
+                  ) : (
+                    <ScreenShare data-icon="inline-start" />
+                  )}
+                  {directBusy || directLaunching ? "Preparing" : "Launch"}
+                </Button>
+              </div>
             </CardActions>
           </CardHeader>
         </Card>
+
+        {readyStatus?.state === "error" && (
+          <div className="rounded-md border border-destructive/25 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            {readyStatus.error || "Codex app-server is not ready."}
+          </div>
+        )}
 
         <Card>
           <CardHeader>
@@ -124,6 +187,9 @@ const Home: React.FC = () => {
                   settings.launchMode === "directory" &&
                   settings.selectedDirectoryId === profile.id
                 const editing = editingId === profile.id
+                const profileBusy =
+                  launchingKey === profile.id ||
+                  (active && readyStatus?.state === "warming")
 
                 return (
                   <div
@@ -184,9 +250,14 @@ const Home: React.FC = () => {
                       <Button
                         size="sm"
                         onClick={() => launchDirectory(profile)}
+                        disabled={profileBusy}
                       >
-                        <Play data-icon="inline-start" />
-                        Launch
+                        {profileBusy ? (
+                          <Loader2 data-icon="inline-start" className="animate-spin" />
+                        ) : (
+                          <Play data-icon="inline-start" />
+                        )}
+                        {profileBusy ? "Preparing" : "Launch"}
                       </Button>
                     </div>
                   </div>

@@ -114,6 +114,7 @@ export class CodexAppServerClient {
     this.child?.kill()
     this.child = null
     this.initialized = false
+    this.startPromise = null
   }
 
   private async ensureChild(): Promise<void> {

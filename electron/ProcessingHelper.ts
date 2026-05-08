@@ -9,6 +9,15 @@ import { BrowserWindow } from "electron"
 
 dotenv.config()
 
+export type CodexReadyStatus = {
+  state: "idle" | "warming" | "ready" | "error"
+  key: string
+  model: string
+  cwd?: string
+  threadId?: string | null
+  error?: string
+}
+
 function broadcastHistoryChanged() {
   const history = listChatSessions()
   for (const window of BrowserWindow.getAllWindows()) {
@@ -21,6 +30,13 @@ export class ProcessingHelper {
   private llmHelper: LLMHelper
   private currentProcessingAbortController: AbortController | null = null
   private currentExtraProcessingAbortController: AbortController | null = null
+  private readyStatus: CodexReadyStatus = {
+    state: "idle",
+    key: "__direct__",
+    model: getAppSettings().model,
+    threadId: null,
+  }
+  private preparePromise: Promise<void> | null = null
 
   constructor(appState: AppState) {
     this.appState = appState
@@ -62,6 +78,7 @@ export class ProcessingHelper {
               )
               broadcastHistoryChanged()
             },
+            onHistoryChanged: broadcastHistoryChanged,
           }
         )
       } catch (error: any) {
@@ -104,6 +121,7 @@ export class ProcessingHelper {
             )
             broadcastHistoryChanged()
           },
+          onHistoryChanged: broadcastHistoryChanged,
         }
       )
 
@@ -128,14 +146,72 @@ export class ProcessingHelper {
   public resetSession(): void {
     resetActiveSession()
     this.llmHelper.clearChatHistory()
+    this.invalidateReadyStatus()
   }
 
   public async prepareForLaunch(): Promise<void> {
     const settings = getAppSettings()
-    await this.llmHelper.prepareForLaunch(getLaunchWorkingDirectory(settings))
+    const cwd = getLaunchWorkingDirectory(settings)
+    const key = cwd || "__direct__"
+    if (this.readyStatus.state === "ready" && this.readyStatus.key === key) return
+    if (this.readyStatus.state === "warming" && this.readyStatus.key === key && this.preparePromise) {
+      return this.preparePromise
+    }
+
+    this.setReadyStatus({ state: "warming", key, model: settings.model, cwd, threadId: null })
+    this.preparePromise = this.llmHelper.prepareForLaunch(cwd)
+      .then(async () => {
+        const ready = await this.llmHelper.getReadyState(cwd)
+        this.setReadyStatus({
+          state: ready.ready ? "ready" : "idle",
+          key,
+          model: ready.model,
+          cwd,
+          threadId: ready.threadId,
+        })
+      })
+      .catch(error => {
+        this.setReadyStatus({
+          state: "error",
+          key,
+          model: settings.model,
+          cwd,
+          threadId: null,
+          error: error?.message ?? String(error),
+        })
+        throw error
+      })
+      .finally(() => {
+        this.preparePromise = null
+      })
+
+    return this.preparePromise
+  }
+
+  public getReadyStatus(): CodexReadyStatus {
+    return this.readyStatus
+  }
+
+  public invalidateReadyStatus(): void {
+    const settings = getAppSettings()
+    const cwd = getLaunchWorkingDirectory(settings)
+    this.setReadyStatus({
+      state: "idle",
+      key: cwd || "__direct__",
+      model: settings.model,
+      cwd,
+      threadId: null,
+    })
   }
 
   public getLLMHelper() {
     return this.llmHelper
+  }
+
+  private setReadyStatus(status: CodexReadyStatus): void {
+    this.readyStatus = status
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send("codex-ready-status-changed", status)
+    }
   }
 }

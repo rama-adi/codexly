@@ -21,6 +21,7 @@ export type ChatMessage = {
 type AppendChatMessageOptions = {
   titleHint?: string
   workingDirectory?: string
+  codexThreadId?: string
   embedScreenshots?: boolean
 }
 
@@ -30,6 +31,7 @@ export type ChatSession = {
   createdAt: string
   updatedAt: string
   workingDirectory?: string
+  codexThreadId?: string
   messages: ChatMessage[]
 }
 
@@ -211,6 +213,7 @@ export function appendChatMessage(
     title: nextTitle,
     updatedAt: nextMessage.createdAt,
     workingDirectory: options.workingDirectory ?? session.workingDirectory,
+    codexThreadId: options.codexThreadId ?? session.codexThreadId,
     messages: [...session.messages, nextMessage],
   }
   writeSession(next)
@@ -228,6 +231,26 @@ export function appendChatMessage(
     ...nextIndex.sessions.filter(item => item.id !== next.id),
   ]
   writeIndex(nextIndex)
+  return next
+}
+
+export function updateChatSessionTitle(sessionId: string, title: string): ChatSession | null {
+  const cleanTitle = title.trim().slice(0, 120)
+  const session = getChatSession(sessionId)
+  if (!session || !cleanTitle || session.title === cleanTitle) return session
+
+  const next = { ...session, title: cleanTitle, updatedAt: nowIso() }
+  writeSession(next)
+
+  const index = readIndex()
+  writeIndex({
+    ...index,
+    sessions: index.sessions.map(item =>
+      item.id === sessionId
+        ? { ...item, title: cleanTitle, updatedAt: next.updatedAt }
+        : item
+    ),
+  })
   return next
 }
 

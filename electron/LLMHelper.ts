@@ -1,7 +1,13 @@
 import os from "os"
 import { getAppSettings, getLaunchWorkingDirectory, updateAppSettings } from "./AppSettings"
 import { CodexAppServerClient } from "./CodexAppServerClient"
-import { appendChatMessage, embedMessageScreenshots, getActiveSessionId, getChatSession } from "./HistoryStore"
+import {
+  appendChatMessage,
+  embedMessageScreenshots,
+  getActiveSessionId,
+  getChatSession,
+  updateChatSessionTitle,
+} from "./HistoryStore"
 import { getPersonalizationConfig } from "./PersonalizationStore"
 
 type ModelOption = { id: string; name: string }
@@ -10,6 +16,7 @@ type StreamCallbacks = {
   onDelta?: (delta: string) => void
   onComplete?: (text: string) => void
   onError?: (error: Error) => void
+  onHistoryChanged?: () => void
 }
 
 const DEFAULT_MODEL = "gpt-5.4"
@@ -57,6 +64,7 @@ export class LLMHelper {
       {
         titleHint: input.message || "Screenshot session",
         workingDirectory: configuredCwd,
+        codexThreadId: threadId,
         embedScreenshots: false,
       }
     )
@@ -77,7 +85,11 @@ export class LLMHelper {
           reject(error)
           return
         }
-        appendChatMessage({ role: "assistant", content: answer }, { workingDirectory: configuredCwd })
+        appendChatMessage(
+          { role: "assistant", content: answer },
+          { workingDirectory: configuredCwd, codexThreadId: threadId }
+        )
+        this.syncCodexTitle(client, threadId, userSession.id, callbacks.onHistoryChanged)
         callbacks.onComplete?.(answer)
         resolve(answer)
       }
@@ -122,6 +134,7 @@ export class LLMHelper {
         if (userMessageId && input.imagePaths?.length) {
           setImmediate(() => {
             embedMessageScreenshots(userSession.id, userMessageId)
+            callbacks.onHistoryChanged?.()
           })
         }
       } catch (error: any) {
@@ -135,6 +148,22 @@ export class LLMHelper {
     const configuredCwd = workingDirectory || getLaunchWorkingDirectory(settings)
     const client = await this.getClient(configuredCwd)
     await this.ensureThread(client, configuredCwd)
+  }
+
+  public async getReadyState(workingDirectory?: string): Promise<{
+    ready: boolean
+    threadId: string | null
+    cwd?: string
+    model: string
+  }> {
+    const settings = getAppSettings()
+    const configuredCwd = workingDirectory || getLaunchWorkingDirectory(settings)
+    return {
+      ready: Boolean(this.client && this.codexThreadId && this.clientKey === (configuredCwd || "__direct__")),
+      threadId: this.codexThreadId,
+      cwd: configuredCwd,
+      model: this.modelName,
+    }
   }
 
   public async chat(message: string): Promise<string> {
@@ -205,11 +234,39 @@ export class LLMHelper {
       personality: "pragmatic",
       sandbox: "read-only",
       approvalPolicy: "never",
+      serviceName: "codexly",
       sessionStartSource: getActiveSessionId() ? "startup" : "clear",
     })
     this.codexThreadId = response?.thread?.id ?? response?.threadId ?? response?.id
     if (!this.codexThreadId) throw new Error("Codex app-server did not return a thread id")
     return this.codexThreadId
+  }
+
+  private syncCodexTitle(
+    client: CodexAppServerClient,
+    threadId: string,
+    sessionId: string,
+    onHistoryChanged?: () => void
+  ): void {
+    setImmediate(async () => {
+      try {
+        for (const delay of [0, 500, 1500]) {
+          if (delay) await new Promise(resolve => setTimeout(resolve, delay))
+          const response = await client.request("thread/read", {
+            threadId,
+            includeTurns: false,
+          })
+          const title = response?.thread?.name || response?.thread?.preview
+          if (typeof title === "string" && title.trim()) {
+            updateChatSessionTitle(sessionId, title)
+            onHistoryChanged?.()
+            return
+          }
+        }
+      } catch (error) {
+        console.warn("Failed to sync Codex thread title:", error)
+      }
+    })
   }
 
   private buildPrompt(message = "", imagePaths: string[]): string {

@@ -89,6 +89,15 @@ export function initializeIpcHandlers(appState: AppState): void {
     appState.showMainWindow()
   })
 
+  ipcMain.handle("prepare-codex", async () => {
+    await appState.processingHelper.prepareForLaunch()
+    return appState.processingHelper.getReadyStatus()
+  })
+
+  ipcMain.handle("get-codex-ready-status", async () => {
+    return appState.processingHelper.getReadyStatus()
+  })
+
   ipcMain.handle("hide-main-window", async () => {
     appState.hideMainWindow()
   })
@@ -122,6 +131,7 @@ export function initializeIpcHandlers(appState: AppState): void {
     try {
       const response = await appState.processingHelper.getLLMHelper().streamAnswer(
         { message, workingDirectory: getLaunchWorkingDirectory(getAppSettings()) },
+        { onHistoryChanged: broadcastHistoryChanged }
       )
       broadcastHistoryChanged()
       return response
@@ -134,6 +144,10 @@ export function initializeIpcHandlers(appState: AppState): void {
   ipcMain.handle("clear-chat-history", async () => {
     resetActiveSession()
     appState.processingHelper.getLLMHelper().clearChatHistory()
+    appState.processingHelper.invalidateReadyStatus()
+    appState.processingHelper.prepareForLaunch().catch(error => {
+      console.warn("Codex prelaunch failed after clearing chat:", error)
+    })
     broadcastHistoryChanged()
     return { success: true }
   })
@@ -221,8 +235,11 @@ export function initializeIpcHandlers(appState: AppState): void {
       "launchMode" in patch ||
       "selectedDirectoryId" in patch ||
       "directoryProfiles" in patch ||
-      "workingDirectory" in patch
+      "workingDirectory" in patch ||
+      "model" in patch ||
+      "reasoningEffort" in patch
     ) {
+      appState.processingHelper.invalidateReadyStatus()
       appState.processingHelper.prepareForLaunch().catch(error => {
         console.warn("Codex prelaunch failed after settings update:", error)
       })
@@ -257,6 +274,10 @@ export function initializeIpcHandlers(appState: AppState): void {
   ipcMain.handle("new-chat-session", async () => {
     const session = resetActiveSession()
     appState.processingHelper.getLLMHelper().clearChatHistory()
+    appState.processingHelper.invalidateReadyStatus()
+    appState.processingHelper.prepareForLaunch().catch(error => {
+      console.warn("Codex prelaunch failed after creating session:", error)
+    })
     broadcastHistoryChanged()
     return session
   })
@@ -291,6 +312,7 @@ export function initializeIpcHandlers(appState: AppState): void {
     for (const window of BrowserWindow.getAllWindows()) {
       window.webContents.send("app-settings-changed", nextSettings)
     }
+    appState.processingHelper.invalidateReadyStatus()
     appState.processingHelper.prepareForLaunch().catch(error => {
       console.warn("Codex prelaunch failed after picking directory:", error)
     })
@@ -330,6 +352,10 @@ export function initializeIpcHandlers(appState: AppState): void {
     try {
       const llmHelper = appState.processingHelper.getLLMHelper();
       const config = llmHelper.setCurrentModel(model);
+      appState.processingHelper.invalidateReadyStatus()
+      appState.processingHelper.prepareForLaunch().catch(error => {
+        console.warn("Codex prelaunch failed after model update:", error)
+      })
       for (const window of BrowserWindow.getAllWindows()) {
         window.webContents.send("llm-config-changed", config);
       }

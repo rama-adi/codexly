@@ -41,6 +41,7 @@ export interface HistoryIndexItem {
 
 export interface ChatSession extends HistoryIndexItem {
   workingDirectory?: string
+  codexThreadId?: string
   messages: Array<{
     id: string
     role: "user" | "assistant"
@@ -50,6 +51,15 @@ export interface ChatSession extends HistoryIndexItem {
     screenshots?: Array<{ path: string; dataUrl: string }>
     createdAt: string
   }>
+}
+
+export interface CodexReadyStatus {
+  state: "idle" | "warming" | "ready" | "error"
+  key: string
+  model: string
+  cwd?: string
+  threadId?: string | null
+  error?: string
 }
 
 export interface ElectronAPI {
@@ -75,6 +85,8 @@ export interface ElectronAPI {
   chat: (message: string) => Promise<string>
   quitApp: () => Promise<void>
   openSettingsWindow: () => Promise<void>
+  prepareCodex: () => Promise<CodexReadyStatus>
+  getCodexReadyStatus: () => Promise<CodexReadyStatus>
   closeSettingsWindow: () => Promise<void>
   minimizeSettingsWindow: () => Promise<void>
   showMainWindow: () => Promise<void>
@@ -98,6 +110,7 @@ export interface ElectronAPI {
   getActiveChatSession: () => Promise<ChatSession | null>
   newChatSession: () => Promise<ChatSession>
   onHistoryChanged: (callback: (history: HistoryIndexItem[]) => void) => () => void
+  onCodexReadyStatusChanged: (callback: (status: CodexReadyStatus) => void) => () => void
   showAnswerPreview: () => Promise<void>
   onShowAnswerPreview: (callback: () => void) => () => void
   getCurrentLlmConfig: () => Promise<{ provider: string; model: string }>
