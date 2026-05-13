@@ -94,6 +94,7 @@ interface ElectronAPI {
   clearScreenshots: () => Promise<{ success: boolean }>
   resetQueues: () => Promise<{ success: boolean; error?: string }>
   clearChatHistory: () => Promise<{ success: boolean }>
+  clearChatSessions: () => Promise<{ success: boolean }>
   chat: (message: string) => Promise<string>
   quitApp: () => Promise<void>
   closeCurrentWindow: () => Promise<void>
@@ -125,6 +126,7 @@ interface ElectronAPI {
   getChatSession: (sessionId: string) => Promise<ChatSession | null>
   getActiveChatSession: () => Promise<ChatSession | null>
   activateChatSession: (sessionId: string) => Promise<ChatSession | null>
+  deleteChatSession: (sessionId: string) => Promise<{ success: boolean }>
   newChatSession: () => Promise<ChatSession>
   showAnswerPreview: () => Promise<void>
   getCurrentLlmConfig: () => Promise<{ provider: string; model: string }>
@@ -177,6 +179,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   clearScreenshots: () => ipcRenderer.invoke("clear-screenshots"),
   resetQueues: () => ipcRenderer.invoke("reset-queues"),
   clearChatHistory: () => ipcRenderer.invoke("clear-chat-history"),
+  clearChatSessions: () => ipcRenderer.invoke("clear-chat-sessions"),
   chat: message => ipcRenderer.invoke("chat", message),
   quitApp: () => ipcRenderer.invoke("quit-app"),
   closeCurrentWindow: () => ipcRenderer.invoke("close-current-window"),
@@ -208,6 +211,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getChatSession: sessionId => ipcRenderer.invoke("get-chat-session", sessionId),
   getActiveChatSession: () => ipcRenderer.invoke("get-active-chat-session"),
   activateChatSession: sessionId => ipcRenderer.invoke("activate-chat-session", sessionId),
+  deleteChatSession: sessionId => ipcRenderer.invoke("delete-chat-session", sessionId),
   newChatSession: () => ipcRenderer.invoke("new-chat-session"),
   showAnswerPreview: () => ipcRenderer.invoke("show-answer-preview"),
   getCurrentLlmConfig: () => ipcRenderer.invoke("get-current-llm-config"),

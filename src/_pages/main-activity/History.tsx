@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react"
-import { Loader2, MessageSquareText, Plus, RotateCcw, Send } from "lucide-react"
+import { Loader2, MessageSquareText, Send, Trash2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import MarkdownMessage from "@/components/MarkdownMessage"
@@ -19,6 +19,7 @@ const History: React.FC = () => {
   const [selectedSession, setSelectedSession] = useState<ChatSession | null>(
     null
   )
+  const chatInputRef = React.useRef<HTMLInputElement>(null)
   const [loading, setLoading] = useState(true)
   const [chatInput, setChatInput] = useState("")
   const [chatLoading, setChatLoading] = useState(false)
@@ -69,15 +70,63 @@ const History: React.FC = () => {
       .catch(error => setError(String(error)))
   }, [selectedIndexItem])
 
-  const newSession = async () => {
-    await window.electronAPI.newChatSession()
-    await load()
-  }
-
   const reloadSelectedSession = async (sessionId: string) => {
     const session = await window.electronAPI.getChatSession(sessionId)
     setSelectedSession(session)
     return session
+  }
+
+  const deleteSelectedSession = async () => {
+    if (!selectedSession || chatLoading) return
+    const confirmed = window.confirm(
+      `Delete "${selectedSession.title}"? This cannot be undone.`
+    )
+    if (!confirmed) return
+
+    setError("")
+    try {
+      const deletedId = selectedSession.id
+      const result = await window.electronAPI.deleteChatSession(deletedId)
+      if (!result.success) throw new Error("Selected session could not be deleted.")
+      setSelectedSession(null)
+      setSelectedId(current => (current === deletedId ? null : current))
+      await load()
+    } catch (error) {
+      setError(String(error))
+    }
+  }
+
+  const clearSessions = async () => {
+    if (items.length === 0 || chatLoading) return
+    const confirmed = window.confirm(
+      `Clear ${items.length === 1 ? "1 session" : `${items.length} sessions`}? This cannot be undone.`
+    )
+    if (!confirmed) return
+
+    setError("")
+    try {
+      const result = await window.electronAPI.clearChatSessions()
+      if (!result.success) throw new Error("Sessions could not be cleared.")
+      setItems([])
+      setSelectedId(null)
+      setSelectedSession(null)
+    } catch (error) {
+      setError(String(error))
+    }
+  }
+
+  const continueSelectedSession = async () => {
+    if (!selectedSession || chatLoading) return
+
+    setError("")
+    try {
+      const activated = await window.electronAPI.activateChatSession(selectedSession.id)
+      if (!activated) throw new Error("Selected session could not be loaded.")
+      setSelectedSession(activated)
+      requestAnimationFrame(() => chatInputRef.current?.focus())
+    } catch (error) {
+      setError(String(error))
+    }
   }
 
   const sendMessage = async () => {
@@ -102,27 +151,45 @@ const History: React.FC = () => {
     }
   }
 
-  const headerActions = useMemo(
-    () => (
-      <>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={load}
-          disabled={loading}
-          aria-label="Refresh history"
-        >
-          <RotateCcw />
-        </Button>
-        <Button size="sm" onClick={newSession}>
-          <Plus data-icon="inline-start" />
-          New session
-        </Button>
-      </>
-    ),
-    [loading]
+  const titlebarContent = useMemo(
+    () =>
+      selectedSession ? (
+        <div className="flex w-full min-w-0 max-w-full items-center gap-2 overflow-hidden">
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="outline"
+            onClick={continueSelectedSession}
+            disabled={chatLoading}
+            aria-label="Continue current chat"
+            title="Continue current chat"
+            className="shrink-0"
+          >
+            <MessageSquareText />
+          </Button>
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            onClick={deleteSelectedSession}
+            disabled={chatLoading}
+            aria-label="Delete current chat"
+            title="Delete current chat"
+            className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+          >
+            <Trash2 />
+          </Button>
+          <h2
+            className="min-w-0 flex-1 truncate text-sm font-semibold tracking-normal"
+            title={selectedSession.title}
+          >
+            {selectedSession.title}
+          </h2>
+        </div>
+      ) : null,
+    [chatLoading, selectedSession]
   )
-  usePageActions(headerActions)
+  usePageActions(titlebarContent)
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background text-foreground">
@@ -132,12 +199,25 @@ const History: React.FC = () => {
         </div>
       )}
 
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(220px,0.4fr)_minmax(320px,1fr)] overflow-hidden">
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(220px,260px)_minmax(0,1fr)] overflow-hidden">
         <div className="min-h-0 overflow-y-auto border-r border-border bg-card">
-          <div className="sticky top-0 z-10 border-b border-border bg-card px-4 py-2.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            {items.length === 1
-              ? "1 session"
-              : `${items.length} sessions`}
+          <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-border bg-card px-4 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            <span>
+              {items.length === 1
+                ? "1 session"
+                : `${items.length} sessions`}
+            </span>
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              onClick={clearSessions}
+              disabled={items.length === 0 || chatLoading}
+              aria-label="Clear all sessions"
+              className="h-6 px-1.5 text-[11px] uppercase tracking-wide text-muted-foreground hover:text-destructive"
+            >
+              Clear
+            </Button>
           </div>
           {items.length === 0 ? (
             <div className="flex h-full min-h-56 flex-col items-center justify-center gap-2 p-6 text-center">
@@ -181,18 +261,6 @@ const History: React.FC = () => {
             <>
               <div className="min-h-0 flex-1 overflow-y-auto">
                 <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-6 py-5">
-                  <div className="border-b border-border pb-3">
-                    <h3 className="line-clamp-2 text-sm font-semibold">
-                      {selectedSession.title}
-                    </h3>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {dateFormatter.format(new Date(selectedSession.createdAt))}
-                      {selectedSession.workingDirectory
-                        ? ` · ${selectedSession.workingDirectory}`
-                        : ""}
-                    </p>
-                  </div>
-
                   <div className="flex flex-col gap-3">
                     {selectedSession.messages.map(message => {
                       const screenshots =
@@ -219,8 +287,11 @@ const History: React.FC = () => {
                                 : "border border-border bg-card text-card-foreground"
                             }`}
                           >
-                            <div className="mb-1 text-[10px] font-medium uppercase tracking-wide opacity-60">
-                              {message.role}
+                            <div className="mb-1 flex items-center justify-between gap-3 text-[10px] font-medium uppercase tracking-wide opacity-60">
+                              <span>{message.role}</span>
+                              <span className="shrink-0">
+                                {dateFormatter.format(new Date(message.createdAt))}
+                              </span>
                             </div>
                             {screenshots.length > 0 && (
                               <div className="mb-2 grid grid-cols-2 gap-2">
@@ -259,6 +330,7 @@ const History: React.FC = () => {
               >
                 <div className="mx-auto flex w-full max-w-3xl items-center gap-2">
                   <input
+                    ref={chatInputRef}
                     className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-ring"
                     value={chatInput}
                     onChange={event => setChatInput(event.target.value)}

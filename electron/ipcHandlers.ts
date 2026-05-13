@@ -7,7 +7,10 @@ import { getAppSettings, getLaunchWorkingDirectory, updateAppSettings } from "./
 import { getPersonalizationConfig, updatePersonalizationConfig } from "./PersonalizationStore"
 import {
   activateChatSession,
+  clearChatSessions,
+  deleteChatSession,
   getActiveChatSession,
+  getActiveSessionId,
   getChatSession,
   listChatSessions,
   resetActiveSession
@@ -173,6 +176,17 @@ export function initializeIpcHandlers(appState: AppState): void {
     return { success: true }
   })
 
+  ipcMain.handle("clear-chat-sessions", async () => {
+    clearChatSessions()
+    appState.processingHelper.getLLMHelper().clearChatHistory()
+    appState.processingHelper.invalidateReadyStatus()
+    appState.processingHelper.prepareForLaunch().catch(error => {
+      console.warn("Codex prelaunch failed after clearing sessions:", error)
+    })
+    broadcastHistoryChanged()
+    return { success: true }
+  })
+
   ipcMain.handle("quit-app", () => {
     appState.quitApp()
   })
@@ -326,6 +340,23 @@ export function initializeIpcHandlers(appState: AppState): void {
       broadcastHistoryChanged()
     }
     return session
+  })
+
+  ipcMain.handle("delete-chat-session", async (_event, id: string) => {
+    const wasActive = getActiveSessionId() === id
+    const deleted = deleteChatSession(id)
+    if (deleted) {
+      if (wasActive) {
+        const nextActiveSession = getActiveChatSession()
+        appState.processingHelper.getLLMHelper().clearChatHistory()
+        appState.processingHelper.invalidateReadyStatus()
+        appState.processingHelper.prepareForLaunch(nextActiveSession?.workingDirectory).catch(error => {
+          console.warn("Codex prelaunch failed after deleting active session:", error)
+        })
+      }
+      broadcastHistoryChanged()
+    }
+    return { success: deleted }
   })
 
   ipcMain.handle("new-chat-session", async () => {

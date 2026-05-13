@@ -93,6 +93,25 @@ const WindowControls: React.FC = () => (
   </div>
 )
 
+const CodexlyMark: React.FC<{ showText?: boolean }> = ({ showText = true }) => (
+  <div className="flex min-w-0 items-center gap-2">
+    <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
+      <Sparkles className="size-3.5" />
+    </span>
+    {showText && (
+      <span className="truncate text-sm font-semibold tracking-normal">
+        Codexly
+      </span>
+    )}
+  </div>
+)
+
+const SidebarBrandBlock: React.FC = () => (
+  <div className="px-2 pb-2 pt-1 text-sidebar-foreground">
+    <CodexlyMark />
+  </div>
+)
+
 const renderNavItem = (item: NavItem, activePath: string) => {
   const Icon = item.icon
   const active = activePath === item.to
@@ -117,6 +136,7 @@ const MainActivityLayout: React.FC = () => {
   const [actions, setActions] = React.useState<React.ReactNode>(null)
   const location = useLocation()
   const title = titleByPath[location.pathname] ?? "Home"
+  const isHistory = location.pathname === "/history"
   const toggleWindowMaximize = () => {
     window.electronAPI.toggleCurrentWindowMaximize?.()
   }
@@ -154,17 +174,10 @@ const MainActivityLayout: React.FC = () => {
               }`}
             >
               {isMac && !isWindowFocused && <InactiveMacTrafficLights />}
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
-                  <Sparkles className="size-3.5" />
-                </span>
-                <span className="truncate text-sm font-semibold tracking-normal">
-                  Codexly
-                </span>
-              </div>
             </SidebarHeader>
             <SidebarContent className="min-h-0">
               <SidebarGroup>
+                <SidebarBrandBlock />
                 <SidebarGroupLabel>Navigation</SidebarGroupLabel>
                 <SidebarGroupContent>
                   <SidebarMenu>
@@ -180,18 +193,35 @@ const MainActivityLayout: React.FC = () => {
             </SidebarFooter>
           </Sidebar>
           <SidebarInset className="flex min-h-0 flex-col bg-background">
-            <header
-              onDoubleClick={toggleWindowMaximize}
-              className="draggable-area sticky top-0 z-10 flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border bg-card px-4 wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]"
-            >
-              <h1 className="truncate text-sm font-semibold tracking-normal">
-                {title}
-              </h1>
-              <div className="flex shrink-0 items-center gap-2">
-                {actions}
-                {showCustomWindowControls && <WindowControls />}
-              </div>
-            </header>
+            {isHistory ? (
+              <header
+                onDoubleClick={toggleWindowMaximize}
+                className="draggable-area sticky top-0 z-10 grid h-12 shrink-0 grid-cols-[minmax(220px,260px)_minmax(0,1fr)] border-b border-border bg-card wco:h-[env(titlebar-area-height)]"
+              >
+                <div className="flex min-w-0 items-center border-r border-border px-4">
+                  <h1 className="truncate text-sm font-semibold tracking-normal">
+                    {title}
+                  </h1>
+                </div>
+                <div className="flex min-w-0 items-center gap-3 px-6 wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]">
+                  <div className="min-w-0 flex-1 overflow-hidden">{actions}</div>
+                  {showCustomWindowControls && <WindowControls />}
+                </div>
+              </header>
+            ) : (
+              <header
+                onDoubleClick={toggleWindowMaximize}
+                className="draggable-area sticky top-0 z-10 flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border bg-card px-4 wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]"
+              >
+                <h1 className="truncate text-sm font-semibold tracking-normal">
+                  {title}
+                </h1>
+                <div className="flex shrink-0 items-center gap-2">
+                  {actions}
+                  {showCustomWindowControls && <WindowControls />}
+                </div>
+              </header>
+            )}
             <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
               <PageActionsProvider setActions={setActions}>
                 <Outlet />

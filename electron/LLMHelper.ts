@@ -9,6 +9,7 @@ import {
   updateChatSessionTitle,
 } from "./HistoryStore"
 import { getPersonalizationConfig } from "./PersonalizationStore"
+import { canReplaceThreadTitle, generateThreadTitle, sanitizeThreadTitle } from "./ThreadTitleHelper"
 
 type ReasoningEffortOption = {
   reasoningEffort: string
@@ -65,6 +66,7 @@ export class LLMHelper {
       { type: "text", text: prompt },
       ...(input.imagePaths ?? []).map(path => ({ type: "localImage", path })),
     ]
+    const titleSeed = sanitizeThreadTitle(input.message?.trim() || "Screenshot session")
 
     callbacks.onStart?.()
     const userSession = appendChatMessage(
@@ -74,13 +76,21 @@ export class LLMHelper {
         screenshotPaths: input.imagePaths,
       },
       {
-        titleHint: input.message || "Screenshot session",
+        titleHint: titleSeed,
         workingDirectory: configuredCwd,
         codexThreadId: threadId,
         embedScreenshots: false,
       }
     )
     const userMessageId = userSession.messages.at(-1)?.id
+    this.generateTitleForFirstTurn({
+      sessionId: userSession.id,
+      titleSeed,
+      message: input.message?.trim() || "Solve the attached screenshot.",
+      imagePaths: input.imagePaths,
+      workingDirectory: configuredCwd,
+      onHistoryChanged: callbacks.onHistoryChanged,
+    })
 
     let answer = ""
     let turnId: string | null = null
@@ -101,7 +111,6 @@ export class LLMHelper {
           { role: "assistant", content: answer },
           { workingDirectory: configuredCwd, codexThreadId: threadId }
         )
-        this.syncCodexTitle(client, threadId, userSession.id, callbacks.onHistoryChanged)
         callbacks.onComplete?.(answer)
         resolve(answer)
       }
@@ -309,29 +318,34 @@ export class LLMHelper {
     }
   }
 
-  private syncCodexTitle(
-    client: CodexAppServerClient,
-    threadId: string,
-    sessionId: string,
+  private generateTitleForFirstTurn(input: {
+    sessionId: string
+    titleSeed: string
+    message: string
+    imagePaths?: string[]
+    workingDirectory?: string
     onHistoryChanged?: () => void
-  ): void {
+  }): void {
     setImmediate(async () => {
       try {
-        for (const delay of [0, 500, 1500]) {
-          if (delay) await new Promise(resolve => setTimeout(resolve, delay))
-          const response = await client.request("thread/read", {
-            threadId,
-            includeTurns: false,
-          })
-          const title = response?.thread?.name || response?.thread?.preview
-          if (typeof title === "string" && title.trim()) {
-            updateChatSessionTitle(sessionId, title)
-            onHistoryChanged?.()
-            return
-          }
-        }
+        const session = getChatSession(input.sessionId)
+        if (!session || session.messages.length !== 1) return
+        if (!canReplaceThreadTitle(session.title, input.titleSeed)) return
+
+        const title = await generateThreadTitle({
+          message: input.message,
+          imagePaths: input.imagePaths,
+          workingDirectory: input.workingDirectory,
+          model: this.modelName,
+        })
+        if (!title) return
+
+        const latestSession = getChatSession(input.sessionId)
+        if (!latestSession || !canReplaceThreadTitle(latestSession.title, input.titleSeed)) return
+        updateChatSessionTitle(input.sessionId, title)
+        input.onHistoryChanged?.()
       } catch (error) {
-        console.warn("Failed to sync Codex thread title:", error)
+        console.warn("Failed to generate Codex thread title:", error)
       }
     })
   }

@@ -2,6 +2,7 @@ import crypto from "crypto"
 import fs from "fs"
 import path from "path"
 import { readJsonFile, statePath, writeJsonFile } from "./jsonStorage"
+import { sanitizeThreadTitle } from "./ThreadTitleHelper"
 
 export type ScreenshotRecord = {
   path: string
@@ -65,12 +66,18 @@ function sessionPath(sessionId: string) {
   return path.join(HISTORY_DIR, `${sessionId}.json`)
 }
 
+function cleanSessionTitle(title: string | undefined): string {
+  return sanitizeThreadTitle(title?.trim() || "New session")
+}
+
 function readIndex(): HistoryIndex {
   const value = readJsonFile<HistoryIndex>(INDEX_PATH)
   if (!value || !Array.isArray(value.sessions)) return emptyIndex()
   return {
     activeSessionId: typeof value.activeSessionId === "string" ? value.activeSessionId : null,
-    sessions: value.sessions.filter(item => typeof item.id === "string"),
+    sessions: value.sessions
+      .filter(item => typeof item.id === "string")
+      .map(item => ({ ...item, title: cleanSessionTitle(item.title) })),
   }
 }
 
@@ -109,7 +116,8 @@ export function getActiveSessionId(): string | null {
 }
 
 export function getChatSession(sessionId: string): ChatSession | null {
-  return readJsonFile<ChatSession>(sessionPath(sessionId))
+  const session = readJsonFile<ChatSession>(sessionPath(sessionId))
+  return session ? { ...session, title: cleanSessionTitle(session.title) } : null
 }
 
 export function getActiveChatSession(): ChatSession | null {
@@ -160,7 +168,7 @@ export function createChatSession(input: { title?: string; workingDirectory?: st
   const timestamp = nowIso()
   const session: ChatSession = {
     id: newId("session"),
-    title: input.title?.trim() || "New session",
+    title: cleanSessionTitle(input.title),
     createdAt: timestamp,
     updatedAt: timestamp,
     workingDirectory: input.workingDirectory,
@@ -203,7 +211,7 @@ export function appendChatMessage(
   let session = index.activeSessionId ? getChatSession(index.activeSessionId) : null
   if (!session) {
     session = createChatSession({
-      title: options.titleHint?.slice(0, 80),
+      title: options.titleHint,
       workingDirectory: options.workingDirectory,
     })
   }
@@ -223,7 +231,7 @@ export function appendChatMessage(
   }
   const nextTitle =
     session.messages.length === 0 && options.titleHint?.trim()
-      ? options.titleHint.trim().slice(0, 80)
+      ? cleanSessionTitle(options.titleHint)
       : session.title
   const next: ChatSession = {
     ...session,
@@ -252,7 +260,7 @@ export function appendChatMessage(
 }
 
 export function updateChatSessionTitle(sessionId: string, title: string): ChatSession | null {
-  const cleanTitle = title.trim().slice(0, 120)
+  const cleanTitle = cleanSessionTitle(title)
   const session = getChatSession(sessionId)
   if (!session || !cleanTitle || session.title === cleanTitle) return session
 

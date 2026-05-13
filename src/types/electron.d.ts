@@ -103,6 +103,7 @@ export interface ElectronAPI {
   moveWindowUp: () => Promise<void>
   moveWindowDown: () => Promise<void>
   clearChatHistory: () => Promise<{ success: boolean }>
+  clearChatSessions: () => Promise<{ success: boolean }>
   chat: (message: string) => Promise<string>
   quitApp: () => Promise<void>
   closeCurrentWindow: () => Promise<void>
@@ -133,6 +134,7 @@ export interface ElectronAPI {
   getChatSession: (sessionId: string) => Promise<ChatSession | null>
   getActiveChatSession: () => Promise<ChatSession | null>
   activateChatSession: (sessionId: string) => Promise<ChatSession | null>
+  deleteChatSession: (sessionId: string) => Promise<{ success: boolean }>
   newChatSession: () => Promise<ChatSession>
   onHistoryChanged: (callback: (history: HistoryIndexItem[]) => void) => () => void
   onCodexReadyStatusChanged: (callback: (status: CodexReadyStatus) => void) => () => void
