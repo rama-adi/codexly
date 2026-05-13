@@ -3,8 +3,11 @@ import { Link, Outlet, useLocation } from "react-router-dom"
 import {
   History as HistoryIcon,
   Home as HomeIcon,
+  Minus,
   SlidersHorizontal,
   Settings as SettingsIcon,
+  Square,
+  X,
   Sparkles
 } from "lucide-react"
 
@@ -58,6 +61,38 @@ const InactiveMacTrafficLights: React.FC = () => (
   </div>
 )
 
+const WindowControls: React.FC = () => (
+  <div className="interactive -mr-2 flex h-12 shrink-0 items-center">
+    <button
+      type="button"
+      aria-label="Minimize window"
+      title="Minimize"
+      onClick={() => window.electronAPI.minimizeCurrentWindow()}
+      className="flex h-12 w-11 items-center justify-center text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+    >
+      <Minus className="size-4" />
+    </button>
+    <button
+      type="button"
+      aria-label="Maximize or restore window"
+      title="Maximize or restore"
+      onClick={() => window.electronAPI.toggleCurrentWindowMaximize()}
+      className="flex h-12 w-11 items-center justify-center text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+    >
+      <Square className="size-3.5" />
+    </button>
+    <button
+      type="button"
+      aria-label="Close window"
+      title="Close"
+      onClick={() => window.electronAPI.closeCurrentWindow()}
+      className="flex h-12 w-11 items-center justify-center text-muted-foreground transition-colors hover:bg-destructive hover:text-destructive-foreground"
+    >
+      <X className="size-4" />
+    </button>
+  </div>
+)
+
 const renderNavItem = (item: NavItem, activePath: string) => {
   const Icon = item.icon
   const active = activePath === item.to
@@ -75,6 +110,7 @@ const renderNavItem = (item: NavItem, activePath: string) => {
 
 const MainActivityLayout: React.FC = () => {
   const isMac = window.electronAPI.platform === "darwin"
+  const showCustomWindowControls = !isMac
   const [isWindowFocused, setIsWindowFocused] = React.useState(
     document.hasFocus()
   )
@@ -151,11 +187,10 @@ const MainActivityLayout: React.FC = () => {
               <h1 className="truncate text-sm font-semibold tracking-normal">
                 {title}
               </h1>
-              {actions && (
-                <div className="flex shrink-0 items-center gap-2">
-                  {actions}
-                </div>
-              )}
+              <div className="flex shrink-0 items-center gap-2">
+                {actions}
+                {showCustomWindowControls && <WindowControls />}
+              </div>
             </header>
             <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
               <PageActionsProvider setActions={setActions}>

@@ -96,6 +96,8 @@ interface ElectronAPI {
   clearChatHistory: () => Promise<{ success: boolean }>
   chat: (message: string) => Promise<string>
   quitApp: () => Promise<void>
+  closeCurrentWindow: () => Promise<void>
+  minimizeCurrentWindow: () => Promise<void>
   openSettingsWindow: () => Promise<void>
   closeSettingsWindow: () => Promise<void>
   minimizeSettingsWindow: () => Promise<void>
@@ -176,6 +178,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   clearChatHistory: () => ipcRenderer.invoke("clear-chat-history"),
   chat: message => ipcRenderer.invoke("chat", message),
   quitApp: () => ipcRenderer.invoke("quit-app"),
+  closeCurrentWindow: () => ipcRenderer.invoke("close-current-window"),
+  minimizeCurrentWindow: () => ipcRenderer.invoke("minimize-current-window"),
   openSettingsWindow: () => ipcRenderer.invoke("open-settings-window"),
   closeSettingsWindow: () => ipcRenderer.invoke("close-settings-window"),
   minimizeSettingsWindow: () => ipcRenderer.invoke("minimize-settings-window"),

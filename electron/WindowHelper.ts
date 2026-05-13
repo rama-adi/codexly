@@ -225,9 +225,11 @@ export class WindowHelper {
       show: false,
       resizable: true,
       maximizable: true,
+      minimizable: true,
       fullscreenable: false,
       focusable: true,
       skipTaskbar: false,
+      frame: process.platform === "darwin" ? undefined : false,
       backgroundColor: "#101010",
       webPreferences: {
         nodeIntegration: true,

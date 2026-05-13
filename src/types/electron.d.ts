@@ -105,6 +105,8 @@ export interface ElectronAPI {
   clearChatHistory: () => Promise<{ success: boolean }>
   chat: (message: string) => Promise<string>
   quitApp: () => Promise<void>
+  closeCurrentWindow: () => Promise<void>
+  minimizeCurrentWindow: () => Promise<void>
   openSettingsWindow: () => Promise<void>
   prepareCodex: () => Promise<CodexReadyStatus>
   getCodexReadyStatus: () => Promise<CodexReadyStatus>

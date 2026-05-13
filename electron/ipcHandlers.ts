@@ -181,6 +181,29 @@ export function initializeIpcHandlers(appState: AppState): void {
     appState.quitApp()
   })
 
+  ipcMain.handle("close-current-window", (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (!window || window.isDestroyed()) {
+      return
+    }
+
+    if (window === appState.getMainWindow()) {
+      appState.quitApp()
+      return
+    }
+
+    window.close()
+  })
+
+  ipcMain.handle("minimize-current-window", (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (!window || window.isDestroyed() || !window.isMinimizable()) {
+      return
+    }
+
+    window.minimize()
+  })
+
   ipcMain.handle("set-ignore-mouse-events", (event, ignore: boolean) => {
     const win = appState.getMainWindow()
     if (!win || win.isDestroyed()) return

@@ -1,6 +1,6 @@
 import React from "react"
 import { IoLogOutOutline } from "react-icons/io5"
-import { RotateCcw, Settings, Trash2 } from "lucide-react"
+import { RotateCcw, Settings, Trash2, X } from "lucide-react"
 
 interface QueueCommandsProps {
   onTooltipVisibilityChange?: (visible: boolean, height: number) => void
@@ -97,6 +97,16 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
         onClick={() => window.electronAPI.hideMainWindow()}
       >
         <IoLogOutOutline className="w-4 h-4" />
+      </button>
+
+      <button
+        className="text-red-400/70 hover:text-red-400 transition-colors"
+        title="Close app"
+        aria-label="Close app"
+        onClick={() => window.electronAPI.closeCurrentWindow()}
+        type="button"
+      >
+        <X className="h-4 w-4" />
       </button>
     </div>
   )
