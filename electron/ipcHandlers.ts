@@ -89,13 +89,13 @@ export function initializeIpcHandlers(appState: AppState): void {
 
   ipcMain.handle("toggle-window", async () => {
     if (!appState.isVisible()) {
-      await appState.processingHelper.prepareForLaunch()
+      await appState.processingHelper.prepareForActiveSession()
     }
     appState.toggleMainWindow()
   })
 
   ipcMain.handle("show-main-window", async () => {
-    await appState.processingHelper.prepareForLaunch()
+    await appState.processingHelper.prepareForActiveSession()
     appState.showMainWindow()
   })
 
@@ -238,7 +238,7 @@ export function initializeIpcHandlers(appState: AppState): void {
   })
 
   ipcMain.handle("center-and-show-window", async () => {
-    await appState.processingHelper.prepareForLaunch()
+    await appState.processingHelper.prepareForActiveSession()
     appState.centerAndShowWindow()
   })
 

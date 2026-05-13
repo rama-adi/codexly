@@ -25,18 +25,19 @@ export class ShortcutsHelper {
     // These are always global because they are how the user summons/hides the toolbar.
     globalShortcut.register("CommandOrControl+Shift+Space", async () => {
       console.log("Show/Center window shortcut pressed...")
-      await this.appState.processingHelper.prepareForLaunch()
+      await this.appState.processingHelper.prepareForActiveSession()
       this.appState.centerAndShowWindow()
     })
 
     globalShortcut.register("CommandOrControl+B", async () => {
       if (!this.appState.isVisible()) {
-        await this.appState.processingHelper.prepareForLaunch()
+        await this.appState.processingHelper.prepareForActiveSession()
       }
+      const wasVisible = this.appState.isVisible()
       this.appState.toggleMainWindow()
       // If window exists and we're showing it, bring it to front
       const mainWindow = this.appState.getMainWindow()
-      if (mainWindow && !this.appState.isVisible()) {
+      if (mainWindow && !wasVisible && this.appState.isVisible()) {
         // Force the window to the front on macOS
         if (process.platform === "darwin") {
           mainWindow.setAlwaysOnTop(true, "normal")

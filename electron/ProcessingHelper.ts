@@ -4,7 +4,7 @@ import { AppState } from "./main"
 import { LLMHelper } from "./LLMHelper"
 import dotenv from "dotenv"
 import { getAppSettings, getLaunchWorkingDirectory } from "./AppSettings"
-import { listChatSessions, resetActiveSession } from "./HistoryStore"
+import { getActiveChatSession, listChatSessions, resetActiveSession } from "./HistoryStore"
 import { BrowserWindow } from "electron"
 
 dotenv.config()
@@ -186,6 +186,11 @@ export class ProcessingHelper {
       })
 
     return this.preparePromise
+  }
+
+  public async prepareForActiveSession(): Promise<void> {
+    const activeSession = getActiveChatSession()
+    await this.prepareForLaunch(activeSession?.workingDirectory)
   }
 
   public getReadyStatus(): CodexReadyStatus {
