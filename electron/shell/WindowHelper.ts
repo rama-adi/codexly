@@ -8,7 +8,7 @@ const isDev = process.env.NODE_ENV === "development"
 
 const startUrl = isDev
   ? "http://localhost:5180"
-  : `file://${path.join(__dirname, "../dist/index.html")}`
+  : `file://${path.join(__dirname, "../../../dist/index.html")}`
 
 const TITLEBAR_HEIGHT = 52
 const TITLEBAR_COLOR = "#01000000"
@@ -132,7 +132,7 @@ export class WindowHelper {
       webPreferences: {
         nodeIntegration: true,
         contextIsolation: true,
-        preload: path.join(__dirname, "preload.js")
+        preload: path.join(__dirname, "../preload.js")
       },
       show: false, // Start hidden, then show after setup
       alwaysOnTop: true,
@@ -234,7 +234,7 @@ export class WindowHelper {
       webPreferences: {
         nodeIntegration: true,
         contextIsolation: true,
-        preload: path.join(__dirname, "preload.js")
+        preload: path.join(__dirname, "../preload.js")
       },
       ...getWindowTitleBarOptions()
     }

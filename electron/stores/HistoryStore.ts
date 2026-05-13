@@ -279,6 +279,18 @@ export function updateChatSessionTitle(sessionId: string, title: string): ChatSe
   return next
 }
 
+export function updateChatSessionCodexThreadId(
+  sessionId: string,
+  codexThreadId: string | undefined
+): ChatSession | null {
+  const session = getChatSession(sessionId)
+  if (!session) return null
+
+  const next = { ...session, codexThreadId, updatedAt: nowIso() }
+  writeSession(next)
+  return next
+}
+
 export function embedMessageScreenshots(sessionId: string, messageId: string): ChatSession | null {
   const session = getChatSession(sessionId)
   if (!session) return null

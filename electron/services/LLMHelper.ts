@@ -6,6 +6,7 @@ import {
   embedMessageScreenshots,
   getActiveSessionId,
   getChatSession,
+  updateChatSessionCodexThreadId,
   updateChatSessionTitle,
 } from "../stores/HistoryStore"
 import { getPersonalizationConfig } from "../stores/PersonalizationStore"
@@ -60,7 +61,7 @@ export class LLMHelper {
     const settings = getAppSettings()
     const configuredCwd = input.workingDirectory || getLaunchWorkingDirectory(settings)
     const client = await this.getClient(configuredCwd)
-    const threadId = await this.ensureThread(client, configuredCwd)
+    let threadId = await this.ensureThread(client, configuredCwd)
     const prompt = this.buildPrompt(input.message, input.imagePaths ?? [])
     const userInput = [
       { type: "text", text: prompt },
@@ -142,8 +143,8 @@ export class LLMHelper {
         cleanups.push(() => input.signal?.removeEventListener("abort", onAbort))
       }
 
-      try {
-        await client.request("turn/start", {
+      const startTurn = () =>
+        client.request("turn/start", {
           threadId,
           input: userInput,
           ...(configuredCwd ? { cwd: configuredCwd } : {}),
@@ -152,6 +153,9 @@ export class LLMHelper {
           effort: settings.reasoningEffort,
           summary: "none",
         })
+
+      try {
+        await startTurn()
         if (userMessageId && input.imagePaths?.length) {
           setImmediate(() => {
             embedMessageScreenshots(userSession.id, userMessageId)
@@ -159,6 +163,20 @@ export class LLMHelper {
           })
         }
       } catch (error: any) {
+        if (this.isThreadNotFoundError(error)) {
+          try {
+            this.codexThreadId = null
+            updateChatSessionCodexThreadId(userSession.id, undefined)
+            threadId = await this.startThread(client, configuredCwd)
+            updateChatSessionCodexThreadId(userSession.id, threadId)
+            await startTurn()
+            callbacks.onHistoryChanged?.()
+            return
+          } catch (retryError: any) {
+            finish(new Error(retryError?.message ?? String(retryError)))
+            return
+          }
+        }
         finish(new Error(error?.message ?? String(error)))
       }
     })
@@ -270,6 +288,11 @@ export class LLMHelper {
       return this.codexThreadId
     }
 
+    return this.startThread(client, cwd)
+  }
+
+  private async startThread(client: CodexAppServerClient, cwd: string | undefined): Promise<string> {
+    const activeSessionId = getActiveSessionId()
     const response = await client.request("thread/start", {
       ...(cwd ? { cwd } : {}),
       model: this.modelName,
@@ -282,6 +305,10 @@ export class LLMHelper {
     this.codexThreadId = response?.thread?.id ?? response?.threadId ?? response?.id
     if (!this.codexThreadId) throw new Error("Codex app-server did not return a thread id")
     return this.codexThreadId
+  }
+
+  private isThreadNotFoundError(error: unknown): boolean {
+    return /thread not found/i.test(error instanceof Error ? error.message : String(error))
   }
 
   private normalizeModelOption(model: any): ModelOption | null {
