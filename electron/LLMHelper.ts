@@ -254,6 +254,13 @@ export class LLMHelper {
 
   private async ensureThread(client: CodexAppServerClient, cwd: string | undefined): Promise<string> {
     if (this.codexThreadId) return this.codexThreadId
+    const activeSessionId = getActiveSessionId()
+    const activeSession = activeSessionId ? getChatSession(activeSessionId) : null
+    if (activeSession?.codexThreadId) {
+      this.codexThreadId = activeSession.codexThreadId
+      return this.codexThreadId
+    }
+
     const response = await client.request("thread/start", {
       ...(cwd ? { cwd } : {}),
       model: this.modelName,
@@ -261,7 +268,7 @@ export class LLMHelper {
       sandbox: "read-only",
       approvalPolicy: "never",
       serviceName: "codexly",
-      sessionStartSource: getActiveSessionId() ? "startup" : "clear",
+      sessionStartSource: activeSessionId ? "startup" : "clear",
     })
     this.codexThreadId = response?.thread?.id ?? response?.threadId ?? response?.id
     if (!this.codexThreadId) throw new Error("Codex app-server did not return a thread id")

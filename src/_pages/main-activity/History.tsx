@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react"
-import { MessageSquareText, Plus, RotateCcw } from "lucide-react"
+import { Loader2, MessageSquareText, Plus, RotateCcw, Send } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import MarkdownMessage from "@/components/MarkdownMessage"
@@ -20,6 +20,8 @@ const History: React.FC = () => {
     null
   )
   const [loading, setLoading] = useState(true)
+  const [chatInput, setChatInput] = useState("")
+  const [chatLoading, setChatLoading] = useState(false)
   const [error, setError] = useState("")
 
   const selectedIndexItem = useMemo(
@@ -70,6 +72,34 @@ const History: React.FC = () => {
   const newSession = async () => {
     await window.electronAPI.newChatSession()
     await load()
+  }
+
+  const reloadSelectedSession = async (sessionId: string) => {
+    const session = await window.electronAPI.getChatSession(sessionId)
+    setSelectedSession(session)
+    return session
+  }
+
+  const sendMessage = async () => {
+    const message = chatInput.trim()
+    if (!message || !selectedSession || chatLoading) return
+
+    const sessionId = selectedSession.id
+    setChatLoading(true)
+    setChatInput("")
+    setError("")
+    try {
+      const activated = await window.electronAPI.activateChatSession(sessionId)
+      if (!activated) throw new Error("Selected session could not be loaded.")
+      setSelectedSession(activated)
+      await window.electronAPI.chat(message)
+      await reloadSelectedSession(sessionId)
+      await load()
+    } catch (error) {
+      setError(String(error))
+    } finally {
+      setChatLoading(false)
+    }
   }
 
   const headerActions = useMemo(
@@ -146,69 +176,106 @@ const History: React.FC = () => {
           )}
         </div>
 
-        <div className="min-h-0 overflow-y-auto bg-background">
+        <div className="flex min-h-0 flex-col bg-background">
           {selectedSession ? (
-            <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-6 py-5">
-              <div className="border-b border-border pb-3">
-                <h3 className="line-clamp-2 text-sm font-semibold">
-                  {selectedSession.title}
-                </h3>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {dateFormatter.format(new Date(selectedSession.createdAt))}
-                  {selectedSession.workingDirectory
-                    ? ` · ${selectedSession.workingDirectory}`
-                    : ""}
-                </p>
-              </div>
-
-              <div className="flex flex-col gap-3">
-                {selectedSession.messages.map(message => {
-                  const screenshots =
-                    message.screenshots ??
-                    message.screenshotDataUrls?.map((dataUrl, index) => ({
-                      path: message.screenshotPaths?.[index] ?? `${message.id}-${index}`,
-                      dataUrl,
-                    })) ??
-                    []
-
-                  return (
-                    <div
-                      key={message.id}
-                      className={`flex ${
-                        message.role === "user"
-                          ? "justify-end"
-                          : "justify-start"
-                      }`}
-                    >
-                    <div
-                      className={`max-w-[86%] rounded-md px-3 py-2 text-sm leading-relaxed ${
-                        message.role === "user"
-                          ? "bg-primary text-primary-foreground"
-                          : "border border-border bg-card text-card-foreground"
-                      }`}
-                    >
-                      <div className="mb-1 text-[10px] font-medium uppercase tracking-wide opacity-60">
-                        {message.role}
-                      </div>
-                      {screenshots.length > 0 && (
-                        <div className="mb-2 grid grid-cols-2 gap-2">
-                          {screenshots.map(screenshot => (
-                            <img
-                              key={screenshot.path}
-                              src={screenshot.dataUrl}
-                              alt="Screenshot"
-                              className="max-h-44 rounded border border-current/10 object-cover"
-                            />
-                          ))}
-                        </div>
-                      )}
-                      <MarkdownMessage markdown={message.content} className="text-sm leading-relaxed" />
-                    </div>
+            <>
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-6 py-5">
+                  <div className="border-b border-border pb-3">
+                    <h3 className="line-clamp-2 text-sm font-semibold">
+                      {selectedSession.title}
+                    </h3>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {dateFormatter.format(new Date(selectedSession.createdAt))}
+                      {selectedSession.workingDirectory
+                        ? ` · ${selectedSession.workingDirectory}`
+                        : ""}
+                    </p>
                   </div>
-                  )
-                })}
+
+                  <div className="flex flex-col gap-3">
+                    {selectedSession.messages.map(message => {
+                      const screenshots =
+                        message.screenshots ??
+                        message.screenshotDataUrls?.map((dataUrl, index) => ({
+                          path: message.screenshotPaths?.[index] ?? `${message.id}-${index}`,
+                          dataUrl,
+                        })) ??
+                        []
+
+                      return (
+                        <div
+                          key={message.id}
+                          className={`flex ${
+                            message.role === "user"
+                              ? "justify-end"
+                              : "justify-start"
+                          }`}
+                        >
+                          <div
+                            className={`max-w-[86%] rounded-md px-3 py-2 text-sm leading-relaxed ${
+                              message.role === "user"
+                                ? "bg-primary text-primary-foreground"
+                                : "border border-border bg-card text-card-foreground"
+                            }`}
+                          >
+                            <div className="mb-1 text-[10px] font-medium uppercase tracking-wide opacity-60">
+                              {message.role}
+                            </div>
+                            {screenshots.length > 0 && (
+                              <div className="mb-2 grid grid-cols-2 gap-2">
+                                {screenshots.map(screenshot => (
+                                  <img
+                                    key={screenshot.path}
+                                    src={screenshot.dataUrl}
+                                    alt="Screenshot"
+                                    className="max-h-44 rounded border border-current/10 object-cover"
+                                  />
+                                ))}
+                              </div>
+                            )}
+                            <MarkdownMessage markdown={message.content} className="text-sm leading-relaxed" />
+                          </div>
+                        </div>
+                      )
+                    })}
+                    {chatLoading && (
+                      <div className="flex justify-start">
+                        <div className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm text-muted-foreground">
+                          <Loader2 className="size-3.5 animate-spin" />
+                          Replying...
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
-            </div>
+              <form
+                className="border-t border-border bg-background px-6 py-3"
+                onSubmit={event => {
+                  event.preventDefault()
+                  sendMessage()
+                }}
+              >
+                <div className="mx-auto flex w-full max-w-3xl items-center gap-2">
+                  <input
+                    className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-ring"
+                    value={chatInput}
+                    onChange={event => setChatInput(event.target.value)}
+                    placeholder="Continue this session..."
+                    disabled={chatLoading}
+                  />
+                  <Button type="submit" size="sm" disabled={chatLoading || !chatInput.trim()}>
+                    {chatLoading ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Send data-icon="inline-start" />
+                    )}
+                    Send
+                  </Button>
+                </div>
+              </form>
+            </>
           ) : (
             <div className="flex h-full min-h-56 items-center justify-center p-6 text-sm text-muted-foreground">
               Select a session to view it.

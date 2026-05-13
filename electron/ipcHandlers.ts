@@ -6,6 +6,7 @@ import { AppState } from "./main"
 import { getAppSettings, getLaunchWorkingDirectory, updateAppSettings } from "./AppSettings"
 import { getPersonalizationConfig, updatePersonalizationConfig } from "./PersonalizationStore"
 import {
+  activateChatSession,
   getActiveChatSession,
   getChatSession,
   listChatSessions,
@@ -154,8 +155,13 @@ export function initializeIpcHandlers(appState: AppState): void {
 
   ipcMain.handle("chat", async (event, message: string) => {
     try {
+      const activeSession = getActiveChatSession()
       const response = await appState.processingHelper.getLLMHelper().streamAnswer(
-        { message, workingDirectory: getLaunchWorkingDirectory(getAppSettings()) },
+        {
+          message,
+          workingDirectory:
+            activeSession?.workingDirectory ?? getLaunchWorkingDirectory(getAppSettings())
+        },
         { onHistoryChanged: broadcastHistoryChanged }
       )
       broadcastHistoryChanged()
@@ -317,6 +323,19 @@ export function initializeIpcHandlers(appState: AppState): void {
 
   ipcMain.handle("get-active-chat-session", async () => {
     return getActiveChatSession()
+  })
+
+  ipcMain.handle("activate-chat-session", async (_event, id: string) => {
+    const session = activateChatSession(id)
+    if (session) {
+      appState.processingHelper.getLLMHelper().clearChatHistory()
+      appState.processingHelper.invalidateReadyStatus()
+      appState.processingHelper.prepareForLaunch(session.workingDirectory).catch(error => {
+        console.warn("Codex prelaunch failed after activating session:", error)
+      })
+      broadcastHistoryChanged()
+    }
+    return session
   })
 
   ipcMain.handle("new-chat-session", async () => {

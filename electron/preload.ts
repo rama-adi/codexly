@@ -124,6 +124,7 @@ interface ElectronAPI {
   getChatHistoryIndex: () => Promise<HistoryIndexItem[]>
   getChatSession: (sessionId: string) => Promise<ChatSession | null>
   getActiveChatSession: () => Promise<ChatSession | null>
+  activateChatSession: (sessionId: string) => Promise<ChatSession | null>
   newChatSession: () => Promise<ChatSession>
   showAnswerPreview: () => Promise<void>
   getCurrentLlmConfig: () => Promise<{ provider: string; model: string }>
@@ -206,6 +207,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getChatHistoryIndex: () => ipcRenderer.invoke("get-chat-history-index"),
   getChatSession: sessionId => ipcRenderer.invoke("get-chat-session", sessionId),
   getActiveChatSession: () => ipcRenderer.invoke("get-active-chat-session"),
+  activateChatSession: sessionId => ipcRenderer.invoke("activate-chat-session", sessionId),
   newChatSession: () => ipcRenderer.invoke("new-chat-session"),
   showAnswerPreview: () => ipcRenderer.invoke("show-answer-preview"),
   getCurrentLlmConfig: () => ipcRenderer.invoke("get-current-llm-config"),

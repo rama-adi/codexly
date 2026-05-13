@@ -117,6 +117,15 @@ export function getActiveChatSession(): ChatSession | null {
   return activeSessionId ? getChatSession(activeSessionId) : null
 }
 
+export function activateChatSession(sessionId: string): ChatSession | null {
+  const session = getChatSession(sessionId)
+  if (!session) return null
+
+  const index = readIndex()
+  writeIndex({ ...index, activeSessionId: session.id })
+  return session
+}
+
 export function deleteChatSession(sessionId: string): boolean {
   const index = readIndex()
   const sessions = index.sessions.filter(item => item.id !== sessionId)

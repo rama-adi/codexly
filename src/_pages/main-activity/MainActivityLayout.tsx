@@ -85,7 +85,7 @@ const WindowControls: React.FC = () => (
       type="button"
       aria-label="Close window"
       title="Close"
-      onClick={() => window.electronAPI.closeCurrentWindow()}
+      onClick={() => window.electronAPI.quitApp()}
       className="flex h-12 w-11 items-center justify-center text-muted-foreground transition-colors hover:bg-destructive hover:text-destructive-foreground"
     >
       <X className="size-4" />

@@ -149,9 +149,9 @@ export class ProcessingHelper {
     this.invalidateReadyStatus()
   }
 
-  public async prepareForLaunch(): Promise<void> {
+  public async prepareForLaunch(workingDirectory?: string): Promise<void> {
     const settings = getAppSettings()
-    const cwd = getLaunchWorkingDirectory(settings)
+    const cwd = workingDirectory ?? getLaunchWorkingDirectory(settings)
     const key = cwd || "__direct__"
     if (this.readyStatus.state === "ready" && this.readyStatus.key === key) return
     if (this.readyStatus.state === "warming" && this.readyStatus.key === key && this.preparePromise) {

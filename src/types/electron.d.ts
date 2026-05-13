@@ -132,6 +132,7 @@ export interface ElectronAPI {
   getChatHistoryIndex: () => Promise<HistoryIndexItem[]>
   getChatSession: (sessionId: string) => Promise<ChatSession | null>
   getActiveChatSession: () => Promise<ChatSession | null>
+  activateChatSession: (sessionId: string) => Promise<ChatSession | null>
   newChatSession: () => Promise<ChatSession>
   onHistoryChanged: (callback: (history: HistoryIndexItem[]) => void) => () => void
   onCodexReadyStatusChanged: (callback: (status: CodexReadyStatus) => void) => () => void
