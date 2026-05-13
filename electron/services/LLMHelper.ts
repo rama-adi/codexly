@@ -1,5 +1,5 @@
 import os from "os"
-import { getAppSettings, getLaunchWorkingDirectory, updateAppSettings } from "./AppSettings"
+import { getAppSettings, getLaunchWorkingDirectory, updateAppSettings } from "../stores/AppSettings"
 import { CodexAppServerClient } from "./CodexAppServerClient"
 import {
   appendChatMessage,
@@ -7,8 +7,8 @@ import {
   getActiveSessionId,
   getChatSession,
   updateChatSessionTitle,
-} from "./HistoryStore"
-import { getPersonalizationConfig } from "./PersonalizationStore"
+} from "../stores/HistoryStore"
+import { getPersonalizationConfig } from "../stores/PersonalizationStore"
 import { canReplaceThreadTitle, generateThreadTitle, sanitizeThreadTitle } from "./ThreadTitleHelper"
 
 type ReasoningEffortOption = {

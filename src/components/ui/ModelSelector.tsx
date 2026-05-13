@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { llmService } from "@/services/desktop"
 
 type ConnectionStatus = 'idle' | 'testing' | 'success' | 'error'
 
@@ -34,7 +35,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onChatOpen }) => {
   useEffect(() => {
     ;(async () => {
       try {
-        setConfig(await window.electronAPI.getCurrentLlmConfig())
+        setConfig(await llmService.getCurrentConfig())
       } catch (err) {
         console.error('Error loading LLM config:', err)
       } finally {
@@ -47,7 +48,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onChatOpen }) => {
     setStatus('testing')
     setErrorMessage('')
     try {
-      const result = await window.electronAPI.testLlmConnection()
+      const result = await llmService.testConnection()
       if (result.success) {
         setStatus('success')
         onChatOpen?.()

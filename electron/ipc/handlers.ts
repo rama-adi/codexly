@@ -2,9 +2,9 @@
 
 import { BrowserWindow, ipcMain, app, dialog, shell } from "electron"
 import crypto from "crypto"
-import { AppState } from "./main"
-import { getAppSettings, getLaunchWorkingDirectory, updateAppSettings } from "./AppSettings"
-import { getPersonalizationConfig, updatePersonalizationConfig } from "./PersonalizationStore"
+import { AppState } from "../main"
+import { getAppSettings, getLaunchWorkingDirectory, updateAppSettings } from "../stores/AppSettings"
+import { getPersonalizationConfig, updatePersonalizationConfig } from "../stores/PersonalizationStore"
 import {
   activateChatSession,
   clearChatSessions,
@@ -14,7 +14,7 @@ import {
   getChatSession,
   listChatSessions,
   resetActiveSession
-} from "./HistoryStore"
+} from "../stores/HistoryStore"
 
 export function initializeIpcHandlers(appState: AppState): void {
   const broadcastHistoryChanged = () => {

@@ -1,11 +1,11 @@
 import { app, BrowserWindow, Tray, Menu, nativeImage, systemPreferences, dialog, shell, desktopCapturer } from "electron"
-import { initializeIpcHandlers } from "./ipcHandlers"
-import { WindowHelper } from "./WindowHelper"
-import { ScreenshotCaptureMode, ScreenshotHelper } from "./ScreenshotHelper"
-import { ShortcutsHelper } from "./shortcuts"
-import { CodexReadyStatus, ProcessingHelper } from "./ProcessingHelper"
-import { getAppSettings, updateAppSettings } from "./AppSettings"
-import { listChatSessions } from "./HistoryStore"
+import { initializeIpcHandlers } from "./ipc/handlers"
+import { WindowHelper } from "./shell/WindowHelper"
+import { ScreenshotCaptureMode, ScreenshotHelper } from "./shell/ScreenshotHelper"
+import { ShortcutsHelper } from "./shell/shortcuts"
+import { CodexReadyStatus, ProcessingHelper } from "./services/ProcessingHelper"
+import { getAppSettings, updateAppSettings } from "./stores/AppSettings"
+import { listChatSessions } from "./stores/HistoryStore"
 
 export class AppState {
   private static instance: AppState | null = null

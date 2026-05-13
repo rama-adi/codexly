@@ -1,5 +1,6 @@
 import React from "react"
 import { RotateCcw, Trash2, X } from "lucide-react"
+import { shellService } from "@/services/desktop"
 
 interface QueueCommandsProps {
   onTooltipVisibilityChange?: (visible: boolean, height: number) => void
@@ -27,7 +28,7 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
 }) => {
   const handleCloseOverlay = async () => {
     await onSettingsOpen()
-    await window.electronAPI.hideMainWindow()
+    await shellService.hideMainWindow()
   }
 
   return (

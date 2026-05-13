@@ -1,5 +1,6 @@
 import React from "react"
 import { Link, Outlet, useLocation } from "react-router-dom"
+import { shellService } from "@/services/desktop"
 import {
   History as HistoryIcon,
   Home as HomeIcon,
@@ -67,7 +68,7 @@ const WindowControls: React.FC = () => (
       type="button"
       aria-label="Minimize window"
       title="Minimize"
-      onClick={() => window.electronAPI.minimizeCurrentWindow()}
+      onClick={() => shellService.minimizeCurrentWindow()}
       className="flex h-12 w-11 items-center justify-center text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
     >
       <Minus className="size-4" />
@@ -76,7 +77,7 @@ const WindowControls: React.FC = () => (
       type="button"
       aria-label="Maximize or restore window"
       title="Maximize or restore"
-      onClick={() => window.electronAPI.toggleCurrentWindowMaximize()}
+      onClick={() => shellService.toggleCurrentWindowMaximize()}
       className="flex h-12 w-11 items-center justify-center text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
     >
       <Square className="size-3.5" />
@@ -85,7 +86,7 @@ const WindowControls: React.FC = () => (
       type="button"
       aria-label="Close window"
       title="Close"
-      onClick={() => window.electronAPI.quitApp()}
+      onClick={() => shellService.quitApp()}
       className="flex h-12 w-11 items-center justify-center text-muted-foreground transition-colors hover:bg-destructive hover:text-destructive-foreground"
     >
       <X className="size-4" />
@@ -128,7 +129,7 @@ const renderNavItem = (item: NavItem, activePath: string) => {
 }
 
 const MainActivityLayout: React.FC = () => {
-  const isMac = window.electronAPI.platform === "darwin"
+  const isMac = shellService.platform === "darwin"
   const showCustomWindowControls = !isMac
   const [isWindowFocused, setIsWindowFocused] = React.useState(
     document.hasFocus()
@@ -138,7 +139,7 @@ const MainActivityLayout: React.FC = () => {
   const title = titleByPath[location.pathname] ?? "Home"
   const isHistory = location.pathname === "/history"
   const toggleWindowMaximize = () => {
-    window.electronAPI.toggleCurrentWindowMaximize?.()
+    shellService.toggleCurrentWindowMaximize()
   }
 
   React.useEffect(() => {

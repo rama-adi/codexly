@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react"
 import { Loader2, Save } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { personalizationService } from "@/services/desktop"
 import {
   Card,
   CardDescription,
@@ -31,8 +32,8 @@ const Personalization: React.FC = () => {
 
   useEffect(() => {
     let mounted = true
-    window.electronAPI
-      .getPersonalization()
+    personalizationService
+      .get()
       .then(next => {
         if (!mounted) return
         setConfig(next)
@@ -45,7 +46,7 @@ const Personalization: React.FC = () => {
         if (mounted) setLoading(false)
       })
 
-    const unsubscribe = window.electronAPI.onPersonalizationChanged(next => {
+    const unsubscribe = personalizationService.onChanged(next => {
       setConfig(next)
       setDraft(next)
     })
@@ -69,7 +70,7 @@ const Personalization: React.FC = () => {
     setSaving(true)
     setError("")
     try {
-      const next = await window.electronAPI.updatePersonalization(draft)
+      const next = await personalizationService.update(draft)
       setConfig(next)
       setDraft(next)
     } catch (error) {

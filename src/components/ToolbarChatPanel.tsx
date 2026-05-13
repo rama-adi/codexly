@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react"
 import { Trash2, X } from "lucide-react"
 
 import MarkdownMessage from "@/components/MarkdownMessage"
+import { historyService, llmService, processingService } from "@/services/desktop"
 import type { ChatSession } from "@/types/electron"
 
 const ToolbarChatPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
@@ -15,11 +16,11 @@ const ToolbarChatPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const chatInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    window.electronAPI.getCurrentLlmConfig().then(setCurrentModel).catch(() => undefined)
-    const cleanupModel = window.electronAPI.onLlmConfigChanged(setCurrentModel)
-    window.electronAPI.getActiveChatSession().then(setActiveSession).catch(() => undefined)
-    const cleanupHistory = window.electronAPI.onHistoryChanged(() => {
-      window.electronAPI.getActiveChatSession().then(setActiveSession).catch(() => undefined)
+    llmService.getCurrentConfig().then(setCurrentModel).catch(() => undefined)
+    const cleanupModel = llmService.onConfigChanged(setCurrentModel)
+    historyService.getActiveSession().then(setActiveSession).catch(() => undefined)
+    const cleanupHistory = historyService.onChanged(() => {
+      historyService.getActiveSession().then(setActiveSession).catch(() => undefined)
     })
     requestAnimationFrame(() => chatInputRef.current?.focus())
     return () => {
@@ -36,8 +37,8 @@ const ToolbarChatPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     setChatLoading(true)
     setChatInput("")
     try {
-      await window.electronAPI.chat(message)
-      setActiveSession(await window.electronAPI.getActiveChatSession())
+      await processingService.chat(message)
+      setActiveSession(await historyService.getActiveSession())
     } catch (err) {
       setActiveSession(current =>
         current
@@ -62,8 +63,8 @@ const ToolbarChatPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   }
 
   const clearChat = async () => {
-    await window.electronAPI.clearChatHistory()
-    setActiveSession(await window.electronAPI.getActiveChatSession())
+    await processingService.clearChatHistory()
+    setActiveSession(await historyService.getActiveSession())
   }
 
   return (

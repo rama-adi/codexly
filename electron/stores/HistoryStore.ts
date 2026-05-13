@@ -2,7 +2,7 @@ import crypto from "crypto"
 import fs from "fs"
 import path from "path"
 import { readJsonFile, statePath, writeJsonFile } from "./jsonStorage"
-import { sanitizeThreadTitle } from "./ThreadTitleHelper"
+import { sanitizeThreadTitle } from "../services/ThreadTitleHelper"
 
 export type ScreenshotRecord = {
   path: string

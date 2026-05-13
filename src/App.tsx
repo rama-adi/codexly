@@ -8,6 +8,7 @@ import Settings from "./_pages/main-activity/Settings"
 import Personalization from "./_pages/main-activity/Personalization"
 import History from "./_pages/main-activity/History"
 import MainActivityLayout from "./_pages/main-activity/MainActivityLayout"
+import { layoutService, processingService, screenshotService } from "./services/desktop"
 import { QueryClient, QueryClientProvider } from "react-query"
 import {
   Navigate,
@@ -93,7 +94,7 @@ const App: React.FC = () => {
     const apply = (ignore: boolean) => {
       if (ignore === ignoring) return
       ignoring = ignore
-      window.electronAPI.setIgnoreMouseEvents?.(ignore)
+      layoutService.setIgnoreMouseEvents(ignore)
     }
     apply(true)
     const onMove = (e: MouseEvent) => {
@@ -104,7 +105,7 @@ const App: React.FC = () => {
     window.addEventListener("mousemove", onMove)
     return () => {
       window.removeEventListener("mousemove", onMove)
-      window.electronAPI.setIgnoreMouseEvents?.(false)
+      layoutService.setIgnoreMouseEvents(false)
     }
   }, [isSettingsWindow])
 
@@ -116,13 +117,13 @@ const App: React.FC = () => {
 
   // Effect for height monitoring
   useEffect(() => {
-    const cleanup = window.electronAPI.onResetView(() => {
+    const cleanup = processingService.onResetView(() => {
       console.log("Received 'reset-view' message from main process.")
       queryClient.invalidateQueries(["screenshots"])
       queryClient.invalidateQueries(["problem_statement"])
       queryClient.invalidateQueries(["solution"])
       queryClient.invalidateQueries(["new_solution"])
-      window.electronAPI.clearChatHistory()
+      processingService.clearChatHistory()
       navigate(viewToPath.queue)
     })
 
@@ -139,7 +140,7 @@ const App: React.FC = () => {
       if (!containerRef.current) return
       const height = containerRef.current.scrollHeight
       const width = containerRef.current.scrollWidth
-      window.electronAPI?.updateContentDimensions({ width, height })
+      layoutService.updateContentDimensions({ width, height })
     }
 
     const resizeObserver = new ResizeObserver(() => {
@@ -172,21 +173,21 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const cleanupFunctions = [
-      window.electronAPI.onSolutionStreamStart(() => {
+      processingService.onSolutionStreamStart(() => {
         navigate(viewToPath.solutions)
         console.log("starting processing")
       }),
 
-      window.electronAPI.onUnauthorized(() => {
+      processingService.onUnauthorized(() => {
         queryClient.removeQueries(["screenshots"])
         queryClient.removeQueries(["solution"])
         queryClient.removeQueries(["problem_statement"])
-        window.electronAPI.clearChatHistory()
+        processingService.clearChatHistory()
         navigate(viewToPath.queue)
         console.log("Unauthorized")
       }),
       // Update this reset handler
-      window.electronAPI.onResetView(() => {
+      processingService.onResetView(() => {
         console.log("Received 'reset-view' message from main process")
 
         queryClient.removeQueries(["screenshots"])
@@ -195,10 +196,10 @@ const App: React.FC = () => {
         navigate(viewToPath.queue)
         console.log("View reset to 'queue' via Command+R shortcut")
       }),
-      window.electronAPI.onShowAnswerPreview(() => {
+      processingService.onShowAnswerPreview(() => {
         navigate(viewToPath.solutions)
       }),
-      window.electronAPI.onBufferCleared(() => {
+      screenshotService.onBufferCleared(() => {
         queryClient.removeQueries(["screenshots"])
         navigate(viewToPath.queue)
       })

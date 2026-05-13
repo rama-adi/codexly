@@ -1,8 +1,8 @@
 
 import { app, BrowserWindow, nativeTheme, screen } from "electron"
-import { AppState } from "main"
+import { AppState } from "../main"
 import path from "node:path"
-import { getAppSettings } from "./AppSettings"
+import { getAppSettings } from "../stores/AppSettings"
 
 const isDev = process.env.NODE_ENV === "development"
 

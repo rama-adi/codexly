@@ -11,6 +11,7 @@ import {
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { processingService, settingsService, shellService } from "@/services/desktop"
 import {
   Card,
   CardActions,
@@ -28,9 +29,9 @@ const Home: React.FC = () => {
   const [titleDraft, setTitleDraft] = React.useState("")
 
   React.useEffect(() => {
-    window.electronAPI.getAppSettings().then(setSettings)
-    window.electronAPI.getCodexReadyStatus().then(setReadyStatus)
-    window.electronAPI.prepareCodex().then(setReadyStatus).catch(error => {
+    settingsService.getAppSettings().then(setSettings)
+    processingService.getCodexReadyStatus().then(setReadyStatus)
+    processingService.prepareCodex().then(setReadyStatus).catch(error => {
       setReadyStatus({
         state: "error",
         key: "__direct__",
@@ -39,8 +40,8 @@ const Home: React.FC = () => {
         error: error?.message ?? String(error),
       })
     })
-    const cleanupSettings = window.electronAPI.onAppSettingsChanged(setSettings)
-    const cleanupReady = window.electronAPI.onCodexReadyStatusChanged(setReadyStatus)
+    const cleanupSettings = settingsService.onAppSettingsChanged(setSettings)
+    const cleanupReady = processingService.onReadyStatusChanged(setReadyStatus)
     return () => {
       cleanupSettings()
       cleanupReady()
@@ -48,7 +49,7 @@ const Home: React.FC = () => {
   }, [])
 
   const updateSettings = async (patch: Partial<AppSettings>) => {
-    const next = await window.electronAPI.updateAppSettings(patch)
+    const next = await settingsService.updateAppSettings(patch)
     setSettings(next)
     return next
   }
@@ -57,7 +58,7 @@ const Home: React.FC = () => {
     setLaunchingKey("__direct__")
     try {
       await updateSettings({ launchMode: "direct", selectedDirectoryId: null })
-      setReadyStatus(await window.electronAPI.startToolbarSession())
+      setReadyStatus(await processingService.startToolbarSession())
     } finally {
       setLaunchingKey(null)
     }
@@ -67,7 +68,7 @@ const Home: React.FC = () => {
     const selectedProfile = settings?.directoryProfiles.find(
       profile => profile.id === settings.selectedDirectoryId
     )
-    await window.electronAPI.pickWorkingDirectory({
+    await shellService.pickWorkingDirectory({
       initialPath: selectedProfile?.path
     })
   }
@@ -80,14 +81,14 @@ const Home: React.FC = () => {
         selectedDirectoryId: profile.id,
         workingDirectory: profile.path
       })
-      setReadyStatus(await window.electronAPI.startToolbarSession())
+      setReadyStatus(await processingService.startToolbarSession())
     } finally {
       setLaunchingKey(null)
     }
   }
 
   const openDirectory = async (profile: DirectoryProfile) => {
-    await window.electronAPI.openDirectory(profile.path)
+    await shellService.openDirectory(profile.path)
   }
 
   const startEditing = (profile: DirectoryProfile) => {

@@ -10,6 +10,12 @@ import {
 } from "@/components/ui/toast"
 import QueueCommands from "@/components/Queue/QueueCommands"
 import ToolbarChatPanel from "@/components/ToolbarChatPanel"
+import {
+  layoutService,
+  processingService,
+  screenshotService,
+  shellService,
+} from "@/services/desktop"
 
 interface QueueProps {
   setView: React.Dispatch<
@@ -35,7 +41,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     ["screenshots"],
     async () => {
       try {
-        const existing = await window.electronAPI.getScreenshots()
+        const existing = await screenshotService.list()
         return existing
       } catch (error) {
         console.error("Error loading screenshots:", error)
@@ -64,7 +70,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     const screenshotToDelete = screenshots[index]
 
     try {
-      const response = await window.electronAPI.deleteScreenshot(
+      const response = await screenshotService.delete(
         screenshotToDelete.path
       )
 
@@ -84,7 +90,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
       if (contentRef.current) {
         const contentHeight = contentRef.current.scrollHeight
         const contentWidth = contentRef.current.scrollWidth
-        window.electronAPI.updateContentDimensions({
+        layoutService.updateContentDimensions({
           width: contentWidth,
           height: contentHeight
         })
@@ -98,16 +104,16 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
     updateDimensions()
 
     const cleanupFunctions = [
-      window.electronAPI.onScreenshotTaken(() => refetch()),
-      window.electronAPI.onScreenshotsCleared(() => refetch()),
-      window.electronAPI.onBufferCleared(() => {
+      screenshotService.onTaken(() => refetch()),
+      screenshotService.onCleared(() => refetch()),
+      screenshotService.onBufferCleared(() => {
         setIsChatOpen(false)
         refetch()
       }),
-      window.electronAPI.onResetView(() => {
+      processingService.onResetView(() => {
         refetch()
       }),
-      window.electronAPI.onSolutionStreamError((error: string) => {
+      processingService.onSolutionStreamError((error: string) => {
         showToast(
           "Processing Failed",
           "There was an error processing your screenshots.",
@@ -116,7 +122,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
         setView("queue")
         console.error("Processing error:", error)
       }),
-      window.electronAPI.onProcessingNoScreenshots(() => {
+      processingService.onNoScreenshots(() => {
         showToast(
           "No Screenshots",
           "There are no screenshots to process.",
@@ -137,12 +143,12 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
 
   const clearBuffer = async () => {
     setIsChatOpen(false)
-    await window.electronAPI.clearScreenshots()
+    await screenshotService.clear()
     await refetch()
   }
 
   const resetSession = async () => {
-    await window.electronAPI.resetQueues()
+    await screenshotService.resetQueues()
     setIsChatOpen(false)
     await refetch()
   }
@@ -173,7 +179,7 @@ const Queue: React.FC<QueueProps> = ({ setView }) => {
           onChatToggle={handleChatToggle}
           onClearBuffer={clearBuffer}
           onResetSession={resetSession}
-          onSettingsOpen={() => window.electronAPI.openSettingsWindow()}
+          onSettingsOpen={() => shellService.openSettingsWindow()}
         />
 
         {!isChatOpen && screenshots.length > 0 && (

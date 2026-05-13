@@ -6,6 +6,13 @@ import ScreenshotQueue from "@/components/Queue/ScreenshotQueue"
 import MarkdownMessage from "@/components/MarkdownMessage"
 import ToolbarChatPanel from "@/components/ToolbarChatPanel"
 import {
+  layoutService,
+  processingService,
+  screenshotService,
+  settingsService,
+  shellService,
+} from "@/services/desktop"
+import {
   Toast,
   ToastDescription,
   ToastMessage,
@@ -85,53 +92,53 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
   }
 
   useEffect(() => {
-    window.electronAPI.getAppSettings().then(settings => {
+    settingsService.getAppSettings().then(settings => {
       setAnswerHeight(settings.answerHeight)
     })
-    window.electronAPI.getScreenshots().then(setScreenshots).catch(() => undefined)
+    screenshotService.list().then(setScreenshots).catch(() => undefined)
 
     const cleanup = [
-      window.electronAPI.onAppSettingsChanged(settings => {
+      settingsService.onAppSettingsChanged(settings => {
         setAnswerHeight(settings.answerHeight)
       }),
-      window.electronAPI.onScreenshotTaken(() => {
-        window.electronAPI.getScreenshots().then(setScreenshots).catch(() => undefined)
+      screenshotService.onTaken(() => {
+        screenshotService.list().then(setScreenshots).catch(() => undefined)
       }),
-      window.electronAPI.onShowAnswerPreview(() => {
+      processingService.onShowAnswerPreview(() => {
         setIsPreview(true)
         setStreaming(false)
         setAnswer(
           "This is a preview of the streamed markdown answer panel.\n\n```ts\nconst ready = true\n```\n\nAdjust the answer height in Settings."
         )
       }),
-      window.electronAPI.onSolutionStreamStart(() => {
+      processingService.onSolutionStreamStart(() => {
         setIsPreview(false)
         setIsChatOpen(false)
         setStreaming(true)
         setAnswer("")
       }),
-      window.electronAPI.onSolutionStreamDelta(delta => {
+      processingService.onSolutionStreamDelta(delta => {
         setAnswer(current => current + delta)
       }),
-      window.electronAPI.onSolutionStreamComplete(data => {
+      processingService.onSolutionStreamComplete(data => {
         setStreaming(false)
         setAnswer(current => current || data.answer)
       }),
-      window.electronAPI.onSolutionStreamError(error => {
+      processingService.onSolutionStreamError(error => {
         setStreaming(false)
         showToast("Processing Failed", error, "error")
       }),
-      window.electronAPI.onProcessingNoScreenshots(() => {
+      processingService.onNoScreenshots(() => {
         showToast("No Screenshots", "There are no screenshots to process.", "neutral")
       }),
-      window.electronAPI.onBufferCleared(() => {
+      screenshotService.onBufferCleared(() => {
         setIsPreview(false)
         setIsChatOpen(false)
         setScreenshots([])
         setAnswer("")
         setStreaming(false)
       }),
-      window.electronAPI.onResetView(() => {
+      processingService.onResetView(() => {
         setIsPreview(false)
         setIsChatOpen(false)
         setScreenshots([])
@@ -145,7 +152,7 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
 
   useEffect(() => {
     if (!contentRef.current) return
-    window.electronAPI.updateContentDimensions({
+    layoutService.updateContentDimensions({
       width: contentRef.current.scrollWidth,
       height: contentRef.current.scrollHeight
     })
@@ -156,7 +163,7 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
     setStreaming(false)
     setIsPreview(false)
     setScreenshots([])
-    await window.electronAPI.clearScreenshots()
+    await screenshotService.clear()
     setView("queue")
   }
 
@@ -166,7 +173,7 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
     setAnswer("")
     setStreaming(false)
     setScreenshots([])
-    await window.electronAPI.clearScreenshots()
+    await screenshotService.clear()
     setView("queue")
   }
 
@@ -176,7 +183,7 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
     setAnswer("")
     setStreaming(false)
     setScreenshots([])
-    await window.electronAPI.resetQueues()
+    await screenshotService.resetQueues()
     setView("queue")
   }
 
@@ -199,7 +206,7 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
         onClearBuffer={clearBuffer}
         onResetSession={resetSession}
         onTooltipVisibilityChange={() => undefined}
-        onSettingsOpen={() => window.electronAPI.openSettingsWindow()}
+        onSettingsOpen={() => shellService.openSettingsWindow()}
       />
 
       {isChatOpen ? (
@@ -212,7 +219,7 @@ const Solutions: React.FC<SolutionsProps> = ({ setView }) => {
             onDeleteScreenshot={async index => {
               const target = screenshots[index]
               if (!target) return
-              await window.electronAPI.deleteScreenshot(target.path)
+              await screenshotService.delete(target.path)
               setScreenshots(current => current.filter((_, itemIndex) => itemIndex !== index))
             }}
           />

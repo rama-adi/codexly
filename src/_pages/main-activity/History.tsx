@@ -3,6 +3,7 @@ import { Loader2, MessageSquareText, Send, Trash2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import MarkdownMessage from "@/components/MarkdownMessage"
+import { historyService, processingService } from "@/services/desktop"
 import { usePageActions } from "@/components/ui/page-header"
 import type { ChatSession, HistoryIndexItem } from "@/types/electron"
 
@@ -33,7 +34,7 @@ const History: React.FC = () => {
   const load = async () => {
     setError("")
     try {
-      const history = await window.electronAPI.getChatHistoryIndex()
+      const history = await historyService.getIndex()
       setItems(history)
       setSelectedId(current =>
         current && history.some(item => item.id === current)
@@ -49,7 +50,7 @@ const History: React.FC = () => {
 
   useEffect(() => {
     load()
-    return window.electronAPI.onHistoryChanged(history => {
+    return historyService.onChanged(history => {
       setItems(history)
       setSelectedId(current =>
         current && history.some(item => item.id === current)
@@ -64,14 +65,14 @@ const History: React.FC = () => {
       setSelectedSession(null)
       return
     }
-    window.electronAPI
-      .getChatSession(selectedIndexItem.id)
+    historyService
+      .getSession(selectedIndexItem.id)
       .then(setSelectedSession)
       .catch(error => setError(String(error)))
   }, [selectedIndexItem])
 
   const reloadSelectedSession = async (sessionId: string) => {
-    const session = await window.electronAPI.getChatSession(sessionId)
+    const session = await historyService.getSession(sessionId)
     setSelectedSession(session)
     return session
   }
@@ -86,7 +87,7 @@ const History: React.FC = () => {
     setError("")
     try {
       const deletedId = selectedSession.id
-      const result = await window.electronAPI.deleteChatSession(deletedId)
+      const result = await historyService.deleteSession(deletedId)
       if (!result.success) throw new Error("Selected session could not be deleted.")
       setSelectedSession(null)
       setSelectedId(current => (current === deletedId ? null : current))
@@ -105,7 +106,7 @@ const History: React.FC = () => {
 
     setError("")
     try {
-      const result = await window.electronAPI.clearChatSessions()
+      const result = await processingService.clearChatSessions()
       if (!result.success) throw new Error("Sessions could not be cleared.")
       setItems([])
       setSelectedId(null)
@@ -120,7 +121,7 @@ const History: React.FC = () => {
 
     setError("")
     try {
-      const activated = await window.electronAPI.activateChatSession(selectedSession.id)
+      const activated = await historyService.activateSession(selectedSession.id)
       if (!activated) throw new Error("Selected session could not be loaded.")
       setSelectedSession(activated)
       requestAnimationFrame(() => chatInputRef.current?.focus())
@@ -138,10 +139,10 @@ const History: React.FC = () => {
     setChatInput("")
     setError("")
     try {
-      const activated = await window.electronAPI.activateChatSession(sessionId)
+      const activated = await historyService.activateSession(sessionId)
       if (!activated) throw new Error("Selected session could not be loaded.")
       setSelectedSession(activated)
-      await window.electronAPI.chat(message)
+      await processingService.chat(message)
       await reloadSelectedSession(sessionId)
       await load()
     } catch (error) {

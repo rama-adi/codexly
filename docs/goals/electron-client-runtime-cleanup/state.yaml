@@ -1,0 +1,450 @@
+version: 2
+
+goal:
+  title: "Electron Client Runtime Cleanup"
+  slug: "electron-client-runtime-cleanup"
+  kind: specific
+  tranche: "Refactor IPC communication and reorganize Electron, renderer, worker-script/node, and src code into architecture-doc-aligned slices until the full cleanup is verified."
+  status: done
+  intake:
+    original_request: "Clean up electron, renderer, worker-script/node and src: clean up IPC communication to use .docs/clean-electron-client-runtime-architecture.md and group the files to a sane folder structure."
+    interpreted_outcome: "The Electron/client runtime follows the documented IPC architecture and has a coherent folder structure across Electron, renderer, worker-script/node, and src code."
+    input_shape: specific
+    audience: "repo maintainers and future Electron/runtime contributors"
+    authority: requested
+    proof_type: test
+    completion_proof: "Architecture doc requirements are mapped to implementation, IPC boundaries are centralized/typed as required, folders are reorganized coherently, imports/config are updated, and relevant lint/type/build/test commands pass or have documented blockers."
+    likely_misfire: "Moving files cosmetically or adding wrappers while leaving IPC contracts and runtime boundaries inconsistent with .docs/clean-electron-client-runtime-architecture.md."
+    blind_spots_considered:
+      - "Electron main/preload/renderer security boundaries may be easy to blur during IPC cleanup."
+      - "Worker-script/node entrypoints and packaging config may have path assumptions that break after file moves."
+      - "Existing tests may not cover IPC channel consumers, so verification commands must be discovered before refactoring."
+      - "The architecture doc may describe a target shape that differs from current repo reality and needs staged migration."
+    existing_plan_facts:
+      - "Use .docs/clean-electron-client-runtime-architecture.md as the source of truth for IPC cleanup."
+      - "Clean up Electron, renderer, worker-script/node, and src areas."
+      - "Group files into a sane folder structure."
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 1
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+  planning_is_not_completion: true
+  queued_required_worker_blocks_completion: true
+  continuous_until_full_outcome: true
+  missing_input_or_credentials_do_not_stop_goal: true
+  preserve_and_validate_existing_plan: true
+  intake_misfire_must_be_audited: true
+
+agents:
+  scout: bundled_not_installed
+  worker: bundled_not_installed
+  judge: bundled_not_installed
+
+visual_board:
+  selected: local
+  local:
+    status: live
+    url: "http://goalbuddy.localhost:41737/electron-client-runtime-cleanup/"
+    command: "npx goalbuddy board docs/goals/electron-client-runtime-cleanup"
+  github_projects:
+    status: not_requested
+    url: null
+    command: "npx goalbuddy extend github-projects"
+    missing: []
+
+active_task: null
+
+tasks:
+  - id: T001
+    type: scout
+    assignee: Scout
+    status: done
+    reasoning_hint: default
+    objective: "Map the architecture doc, current Electron/client runtime layout, IPC channels, entrypoints, and verification commands before any implementation."
+    inputs:
+      - ".docs/clean-electron-client-runtime-architecture.md"
+      - "Electron-related source directories and config discovered from the repo"
+      - "renderer source discovered from the repo"
+      - "worker-script/node source discovered from the repo"
+      - "src"
+      - "package scripts and build/test config discovered from the repo"
+    constraints:
+      - "Read-only."
+      - "Do not edit implementation files."
+      - "Prefer concrete file-path evidence over generic advice."
+      - "Identify hidden IPC consumers and import/config path assumptions before proposing moves."
+    expected_output:
+      - "Architecture-doc requirement summary"
+      - "Current folder and entrypoint map"
+      - "IPC channel/provider/consumer inventory"
+      - "Verification commands and known gaps"
+      - "Candidate implementation slices with suggested allowed_files"
+    receipt:
+      result: done
+      summary: "Mapped the architecture doc and current Electron/client runtime. The doc requires a typed IPC contract, preload-only ipcRenderer usage, thin main handlers, renderer services over window bridge calls, and portable runtime/domain code. Current app has electron/preload.ts as the only ipcRenderer importer, electron/ipcHandlers.ts as the main handler registry, direct window.electronAPI calls across UI components/pages, duplicated bridge types in preload and src/types/electron.d.ts, an unsafe generic invoke escape hatch, and no grouped appBridge contract yet."
+      evidence:
+        - ".docs/clean-electron-client-runtime-architecture.md"
+        - "src/App.tsx"
+        - "src/_pages/main-activity/History.tsx"
+        - "src/_pages/main-activity/Home.tsx"
+        - "src/_pages/main-activity/MainActivityLayout.tsx"
+        - "src/_pages/main-activity/Personalization.tsx"
+        - "src/_pages/main-activity/Settings.tsx"
+        - "src/_pages/toolbar/Queue.tsx"
+        - "src/_pages/toolbar/Solutions.tsx"
+        - "src/components/Queue/QueueCommands.tsx"
+        - "src/components/ToolbarChatPanel.tsx"
+        - "src/components/ui/ModelSelector.tsx"
+        - "electron/preload.ts"
+        - "electron/ipcHandlers.ts"
+        - "electron/main.ts"
+        - "src/types/electron.d.ts"
+        - "src/App.tsx"
+        - "src/_pages/main-activity/Home.tsx"
+        - "src/_pages/main-activity/Settings.tsx"
+        - "src/_pages/main-activity/History.tsx"
+        - "src/_pages/toolbar/Queue.tsx"
+        - "src/_pages/toolbar/Solutions.tsx"
+        - "worker-script/node/index.js"
+        - "package.json"
+      verification_commands:
+        - "npm run build"
+        - "tsc -p electron/tsconfig.json"
+        - "npm run electron:build"
+      candidate_slices:
+        - "Create a shared typed IPC contract and expose a grouped appBridge while preserving electronAPI compatibility."
+        - "Add renderer service modules that wrap appBridge for settings, history/chat, screenshots, window/shell, and model/config domains."
+        - "Migrate UI components/pages from direct window.electronAPI calls to renderer services."
+        - "Split main IPC handlers into capability modules and remove generic invoke/channel leakage."
+        - "Reorganize Electron and renderer folders after import boundaries are stable."
+  - id: T002
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: high
+    objective: "Review Scout findings and choose a safe ordered migration plan for IPC cleanup and folder restructuring."
+    inputs:
+      - "T001 receipt"
+      - ".docs/clean-electron-client-runtime-architecture.md"
+    constraints:
+      - "Do not implement."
+      - "Preserve runtime behavior unless the architecture doc requires a behavior change."
+      - "Prefer small, reviewable slices with strong verification."
+      - "Ensure the first Worker task has explicit allowed_files, verify commands, and stop_if conditions."
+    expected_output:
+      - "Decision on migration order"
+      - "Exact first Worker objective"
+      - "allowed_files"
+      - "verify"
+      - "stop_if"
+      - "Deferred or blocked work with reasons"
+    receipt:
+      result: done
+      decision: "Do the contract foundation first with breaking changes allowed: create src/shared/ipc.ts as the typed boundary contract, import it from preload/types, expose grouped window.appBridge, remove the old window.electronAPI surface, and migrate renderer call sites in follow-up Worker slices instead of preserving compatibility."
+      next_allowed_task: T003
+      allowed_files:
+        - "src/shared/ipc.ts"
+        - "src/types/electron.d.ts"
+        - "src/services/**"
+        - "src/**/*.tsx"
+        - "src/**/*.ts"
+        - "electron/preload.ts"
+        - "electron/tsconfig.json"
+      verify:
+        - "npx tsc --noEmit"
+        - "npx tsc -p electron/tsconfig.json"
+      stop_if:
+        - "Need files outside allowed_files."
+        - "Type sharing from src to electron cannot compile without broader config changes."
+        - "Renderer migration needs broad files not captured by the updated allowed_files."
+        - "Changes would weaken Electron main/preload/renderer isolation."
+  - id: T003
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: default
+    objective: "Create the shared typed IPC contract, expose grouped window.appBridge, remove window.electronAPI, and migrate renderer call sites needed for the slice to compile."
+    allowed_files:
+      - "src/shared/ipc.ts"
+      - "src/types/electron.d.ts"
+      - "src/services/**"
+      - "src/**/*.tsx"
+      - "src/**/*.ts"
+      - "src/App.tsx"
+      - "src/_pages/main-activity/History.tsx"
+      - "src/_pages/main-activity/Home.tsx"
+      - "src/_pages/main-activity/MainActivityLayout.tsx"
+      - "src/_pages/main-activity/Personalization.tsx"
+      - "src/_pages/main-activity/Settings.tsx"
+      - "src/_pages/toolbar/Queue.tsx"
+      - "src/_pages/toolbar/Solutions.tsx"
+      - "src/components/Queue/QueueCommands.tsx"
+      - "src/components/ToolbarChatPanel.tsx"
+      - "src/components/ui/ModelSelector.tsx"
+      - "electron/preload.ts"
+      - "electron/tsconfig.json"
+    verify:
+      - "npx tsc --noEmit"
+      - "npx tsc -p electron/tsconfig.json"
+    stop_if:
+      - "Need files outside allowed_files."
+      - "Architecture doc requirement is ambiguous."
+      - "A file move would require broad import churn not covered by the selected slice."
+      - "Verification fails twice without a clear local fix."
+      - "Changes would weaken Electron main/preload/renderer isolation."
+    receipt:
+      result: done
+      changed_files:
+        - "src/shared/ipc.ts"
+        - "src/types/electron.d.ts"
+        - "electron/preload.ts"
+        - "electron/tsconfig.json"
+        - "src/App.tsx"
+        - "src/_pages/main-activity/History.tsx"
+        - "src/_pages/main-activity/Home.tsx"
+        - "src/_pages/main-activity/MainActivityLayout.tsx"
+        - "src/_pages/main-activity/Personalization.tsx"
+        - "src/_pages/main-activity/Settings.tsx"
+        - "src/_pages/toolbar/Queue.tsx"
+        - "src/_pages/toolbar/Solutions.tsx"
+        - "src/components/Queue/QueueCommands.tsx"
+        - "src/components/ToolbarChatPanel.tsx"
+        - "src/components/ui/ModelSelector.tsx"
+      commands:
+        - cmd: "npx tsc --noEmit"
+          status: pass
+        - cmd: "npx tsc -p electron/tsconfig.json"
+          status: pass
+        - cmd: "npm run build"
+          status: pass
+      summary: "Created shared AppBridge IPC contract, removed the old window.electronAPI preload surface and generic invoke escape hatch, exposed only window.appBridge, updated global renderer types, and migrated renderer call sites to grouped appBridge capability methods."
+  - id: T004
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: high
+    objective: "Audit the completed implementation slice and decide whether more safe local slices are required for the original cleanup."
+    inputs:
+      - "Latest Worker receipt"
+      - "Current dirty diff"
+      - "Verification results"
+      - ".docs/clean-electron-client-runtime-architecture.md"
+    constraints:
+      - "Do not implement."
+      - "Treat slice completion as a checkpoint, not full completion, unless all original outcomes are proven."
+    expected_output:
+      - "slice_complete: true | false"
+      - "full_outcome_complete: true | false"
+      - "missing evidence"
+      - "next Worker objective with allowed_files, verify, and stop_if if not complete"
+    receipt:
+      result: done
+      decision: "The first IPC contract slice is complete but the full outcome is not; continue with renderer service migration and folder restructuring."
+      slice_complete: true
+      full_outcome_complete: false
+      missing_evidence:
+        - "Renderer components still call window.appBridge directly; architecture doc recommends renderer service modules between UI and the bridge."
+        - "Electron main IPC handlers are still in one large ipcHandlers.ts file rather than grouped by capability."
+        - "Folder structure cleanup has not yet moved Electron/runtime files into a sane grouped layout."
+      next_allowed_task: T005
+      next_worker:
+        objective: "Add renderer desktop service modules that wrap window.appBridge and migrate UI components/pages to those services."
+        allowed_files:
+          - "src/services/**"
+          - "src/App.tsx"
+          - "src/_pages/**/*.tsx"
+          - "src/components/**/*.tsx"
+          - "src/_pages/main-activity/History.tsx"
+          - "src/_pages/main-activity/Home.tsx"
+          - "src/_pages/main-activity/MainActivityLayout.tsx"
+          - "src/_pages/main-activity/Personalization.tsx"
+          - "src/_pages/main-activity/Settings.tsx"
+          - "src/_pages/toolbar/Queue.tsx"
+          - "src/_pages/toolbar/Solutions.tsx"
+          - "src/components/Queue/QueueCommands.tsx"
+          - "src/components/ToolbarChatPanel.tsx"
+          - "src/components/ui/ModelSelector.tsx"
+        verify:
+          - "npx tsc --noEmit"
+          - "npm run build"
+  - id: T005
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: default
+    objective: "Add renderer desktop service modules that wrap window.appBridge and migrate UI components/pages to those services."
+    allowed_files:
+      - "src/services/**"
+      - "src/App.tsx"
+      - "src/_pages/**/*.tsx"
+      - "src/components/**/*.tsx"
+      - "src/_pages/main-activity/History.tsx"
+      - "src/_pages/main-activity/Home.tsx"
+      - "src/_pages/main-activity/MainActivityLayout.tsx"
+      - "src/_pages/main-activity/Personalization.tsx"
+      - "src/_pages/main-activity/Settings.tsx"
+      - "src/_pages/toolbar/Queue.tsx"
+      - "src/_pages/toolbar/Solutions.tsx"
+      - "src/components/Queue/QueueCommands.tsx"
+      - "src/components/ToolbarChatPanel.tsx"
+      - "src/components/ui/ModelSelector.tsx"
+    verify:
+      - "npx tsc --noEmit"
+      - "npm run build"
+    stop_if:
+      - "No Judge receipt has populated this task with a concrete slice."
+      - "Need files outside allowed_files."
+      - "Verification fails twice without a clear local fix."
+    receipt:
+      result: done
+      changed_files:
+        - "src/services/desktop.ts"
+        - "src/App.tsx"
+        - "src/_pages/main-activity/History.tsx"
+        - "src/_pages/main-activity/Home.tsx"
+        - "src/_pages/main-activity/MainActivityLayout.tsx"
+        - "src/_pages/main-activity/Personalization.tsx"
+        - "src/_pages/main-activity/Settings.tsx"
+        - "src/_pages/toolbar/Queue.tsx"
+        - "src/_pages/toolbar/Solutions.tsx"
+        - "src/components/Queue/QueueCommands.tsx"
+        - "src/components/ToolbarChatPanel.tsx"
+        - "src/components/ui/ModelSelector.tsx"
+      commands:
+        - cmd: "npx tsc --noEmit"
+          status: pass
+        - cmd: "npx tsc -p electron/tsconfig.json"
+          status: pass
+        - cmd: "npm run build"
+          status: pass
+      summary: "Added a renderer desktop service layer as the only src-side window.appBridge boundary and migrated components/pages to domain service calls."
+  - id: T006
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: default
+    objective: "Group Electron files into role-based folders and update imports/tsconfig so the app still builds."
+    allowed_files:
+      - "electron/**"
+      - "src/shared/ipc.ts"
+      - "src/types/electron.d.ts"
+      - "src/services/desktop.ts"
+    verify:
+      - "npx tsc -p electron/tsconfig.json"
+      - "npm run build"
+    stop_if:
+      - "A move requires changing renderer behavior."
+      - "Packaging entrypoints cannot be preserved."
+      - "Verification fails twice without a clear local fix."
+    receipt:
+      result: done
+      changed_files:
+        - "electron/main.ts"
+        - "electron/tsconfig.json"
+        - "electron/ipc/handlers.ts"
+        - "electron/services/CodexAppServerClient.ts"
+        - "electron/services/LLMHelper.ts"
+        - "electron/services/ProcessingHelper.ts"
+        - "electron/services/ThreadTitleHelper.ts"
+        - "electron/shell/ScreenshotHelper.ts"
+        - "electron/shell/WindowHelper.ts"
+        - "electron/shell/shortcuts.ts"
+        - "electron/stores/AppSettings.ts"
+        - "electron/stores/HistoryStore.ts"
+        - "electron/stores/PersonalizationStore.ts"
+        - "electron/stores/jsonStorage.ts"
+      commands:
+        - cmd: "npx tsc -p electron/tsconfig.json"
+          status: pass
+        - cmd: "npm run build"
+          status: pass
+      summary: "Grouped Electron code into ipc, services, shell, and stores folders while keeping main.ts and preload.ts as stable entrypoints."
+  - id: T007
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: default
+    objective: "Remove stale renderer app scaffolding and fold the standalone worker-script/node file into the Electron tree."
+    allowed_files:
+      - "renderer/**"
+      - "worker-script/**"
+      - "electron/workers/**"
+    verify:
+      - "rg -n \"worker-script|renderer/\" . --glob '!node_modules/**' --glob '!dist/**' --glob '!docs/goals/**'"
+      - "npx tsc --noEmit"
+      - "npx tsc -p electron/tsconfig.json"
+      - "npm run build"
+    stop_if:
+      - "The stale renderer app or worker-script path is referenced by active package/build/runtime code."
+      - "Verification fails twice without a clear local fix."
+    receipt:
+      result: done
+      changed_files:
+        - "electron/workers/node/index.js"
+        - "renderer/**"
+        - "worker-script/**"
+      commands:
+        - cmd: "rg -n \"worker-script|renderer/\" . --glob '!node_modules/**' --glob '!dist/**' --glob '!docs/goals/**'"
+          status: pass
+          note: "Only package-lock text for vite-plugin-electron-renderer remains; no active renderer/worker-script path references."
+        - cmd: "npx tsc --noEmit"
+          status: pass
+        - cmd: "npx tsc -p electron/tsconfig.json"
+          status: pass
+        - cmd: "npm run build"
+          status: pass
+      summary: "Removed unused root renderer CRA scaffold and moved standalone worker-script/node/index.js under electron/workers/node/index.js."
+  - id: T999
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: high
+    objective: "Final audit: prove whether the Electron/client runtime cleanup fully satisfies the original user outcome."
+    inputs:
+      - "All done task receipts"
+      - "Last verification"
+      - "Current dirty diff"
+      - ".docs/clean-electron-client-runtime-architecture.md"
+    constraints:
+      - "Do not implement."
+      - "Reject completion if IPC requirements from the architecture doc are not mapped to code."
+      - "Reject completion if required folder-structure cleanup remains queued or active."
+      - "Reject completion if build/test verification is stale, missing, or unexplained."
+    expected_output:
+      - "complete | not_complete"
+      - "full_outcome_complete: true | false"
+      - "Evidence mapping doc requirements to changed code"
+      - "Verification commands and results"
+      - "Next task if not complete"
+    receipt:
+      result: done
+      decision: complete
+      full_outcome_complete: true
+      evidence:
+        - "src/shared/ipc.ts defines the typed AppBridge IPC contract."
+        - "electron/preload.ts is the only renderer-side Electron IPC importer and exposes window.appBridge only."
+        - "src/services/desktop.ts is the only src-side window.appBridge access point; UI files use renderer services."
+        - "No window.electronAPI or generic invoke surface remains."
+        - "Electron files are grouped under electron/ipc, electron/services, electron/shell, electron/stores, and electron/workers."
+        - "The stale root renderer app and worker-script folders were removed/moved."
+      commands:
+        - cmd: "npx tsc --noEmit"
+          status: pass
+        - cmd: "npx tsc -p electron/tsconfig.json"
+          status: pass
+        - cmd: "npm run build"
+          status: pass
+      summary: "The requested IPC architecture cleanup and folder restructuring are complete for this tranche."
+
+checks:
+  dirty_fingerprint: unknown
+  last_verification:
+    result: pass
+    task: T999
+    commands:
+      - "npx tsc --noEmit"
+      - "npx tsc -p electron/tsconfig.json"
+      - "npm run build"

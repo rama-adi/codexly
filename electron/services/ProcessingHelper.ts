@@ -1,10 +1,10 @@
 // ProcessingHelper.ts
 
-import { AppState } from "./main"
+import { AppState } from "../main"
 import { LLMHelper } from "./LLMHelper"
 import dotenv from "dotenv"
-import { getAppSettings, getLaunchWorkingDirectory } from "./AppSettings"
-import { getActiveChatSession, listChatSessions, resetActiveSession } from "./HistoryStore"
+import { getAppSettings, getLaunchWorkingDirectory } from "../stores/AppSettings"
+import { getActiveChatSession, listChatSessions, resetActiveSession } from "../stores/HistoryStore"
 import { BrowserWindow } from "electron"
 
 dotenv.config()

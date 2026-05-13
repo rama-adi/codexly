@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react"
 import { CheckCircle2, Loader2, XCircle } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { llmService, processingService, settingsService } from "@/services/desktop"
 import {
   Card,
   CardDescription,
@@ -70,14 +71,14 @@ const Settings: React.FC = () => {
     ;(async () => {
       try {
         const [currentConfig, settings] = await Promise.all([
-          window.electronAPI.getCurrentLlmConfig(),
-          window.electronAPI.getAppSettings()
+          llmService.getCurrentConfig(),
+          settingsService.getAppSettings()
         ])
         setConfig(currentConfig)
-        window.electronAPI.prepareCodex().catch(error => {
+        processingService.prepareCodex().catch(error => {
           console.warn("Codex prelaunch failed while loading settings:", error)
         })
-        const availableModels = await window.electronAPI.getAvailableLlmModels()
+        const availableModels = await llmService.getAvailableModels()
         setModels(availableModels)
         setStealthEnabled(settings.stealthEnabled)
         setReasoningEffort(settings.reasoningEffort)
@@ -97,7 +98,7 @@ const Settings: React.FC = () => {
     setErrorMessage("")
 
     try {
-      const nextConfig = await window.electronAPI.setCurrentLlmModel(model)
+      const nextConfig = await llmService.setCurrentModel(model)
       setConfig(nextConfig)
     } catch (error) {
       setErrorMessage(String(error))
@@ -112,7 +113,7 @@ const Settings: React.FC = () => {
     setErrorMessage("")
 
     try {
-      const result = await window.electronAPI.testLlmConnection()
+      const result = await llmService.testConnection()
       if (result.success) {
         setStatus("success")
       } else {
@@ -130,7 +131,7 @@ const Settings: React.FC = () => {
     const previous = reasoningEffort
     setReasoningEffort(nextEffort)
     try {
-      const settings = await window.electronAPI.updateAppSettings({
+      const settings = await settingsService.updateAppSettings({
         reasoningEffort: nextEffort
       })
       setReasoningEffort(settings.reasoningEffort)
@@ -156,7 +157,7 @@ const Settings: React.FC = () => {
     setStealthEnabled(enabled)
     setSavingStealth(true)
     try {
-      const result = await window.electronAPI.setStealthEnabled(enabled)
+      const result = await settingsService.setStealthEnabled(enabled)
       setStealthEnabled(result.stealthEnabled)
     } catch (error) {
       setStealthEnabled(previous)
