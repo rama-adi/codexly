@@ -1,12 +1,11 @@
 import React from "react"
-import { IoLogOutOutline } from "react-icons/io5"
-import { RotateCcw, Settings, Trash2, X } from "lucide-react"
+import { RotateCcw, Trash2, X } from "lucide-react"
 
 interface QueueCommandsProps {
   onTooltipVisibilityChange?: (visible: boolean, height: number) => void
   screenshots: Array<{ path: string; preview: string }>
   onChatToggle?: () => void
-  onSettingsOpen: () => void
+  onSettingsOpen: () => void | Promise<void>
   onClearBuffer?: () => void
   onResetSession?: () => void
   chatControl?: React.ReactNode
@@ -26,6 +25,11 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
   onResetSession,
   chatControl
 }) => {
+  const handleCloseOverlay = async () => {
+    await onSettingsOpen()
+    await window.electronAPI.hideMainWindow()
+  }
+
   return (
     <div className="draggable-area inline-flex items-center gap-3 px-3 h-8 rounded-lg bg-black/60 border border-white/10 text-white/90 text-xs">
       <div className="flex items-center gap-1.5">
@@ -80,33 +84,12 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
 
       <button
         className="w-6 h-6 rounded hover:bg-white/10 transition-colors text-white/80 inline-flex items-center justify-center"
-        onClick={onSettingsOpen}
+        onClick={handleCloseOverlay}
         type="button"
-        title="Settings"
-        aria-label="Settings"
+        title="Close overlay"
+        aria-label="Close overlay"
       >
-        <Settings className="w-4 h-4" />
-      </button>
-
-      <div className="h-4 w-px bg-white/15" />
-
-      <button
-        className="text-red-400/70 hover:text-red-400 transition-colors"
-        title="Hide overlay"
-        aria-label="Hide overlay"
-        onClick={() => window.electronAPI.hideMainWindow()}
-      >
-        <IoLogOutOutline className="w-4 h-4" />
-      </button>
-
-      <button
-        className="text-red-400/70 hover:text-red-400 transition-colors"
-        title="Close app"
-        aria-label="Close app"
-        onClick={() => window.electronAPI.closeCurrentWindow()}
-        type="button"
-      >
-        <X className="h-4 w-4" />
+        <X className="w-4 h-4" />
       </button>
     </div>
   )

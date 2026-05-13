@@ -263,6 +263,10 @@ export class WindowHelper {
       this.settingsWindow.focus()
     })
 
+    this.settingsWindow.on("close", () => {
+      setImmediate(() => this.appState.quitApp())
+    })
+
     this.settingsWindow.on("closed", () => {
       this.settingsWindow = null
       app.dock?.hide()

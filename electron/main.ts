@@ -3,8 +3,9 @@ import { initializeIpcHandlers } from "./ipcHandlers"
 import { WindowHelper } from "./WindowHelper"
 import { ScreenshotCaptureMode, ScreenshotHelper } from "./ScreenshotHelper"
 import { ShortcutsHelper } from "./shortcuts"
-import { ProcessingHelper } from "./ProcessingHelper"
+import { CodexReadyStatus, ProcessingHelper } from "./ProcessingHelper"
 import { getAppSettings, updateAppSettings } from "./AppSettings"
+import { listChatSessions } from "./HistoryStore"
 
 export class AppState {
   private static instance: AppState | null = null
@@ -232,6 +233,20 @@ export class AppState {
     this.shortcutsHelper.setToolbarShortcutsEnabled(true)
   }
 
+  public async startToolbarSession(): Promise<CodexReadyStatus> {
+    this.getScreenshotHelper().clearQueues()
+    this.setView("queue")
+    this.processingHelper.resetSession()
+    await this.processingHelper.prepareForLaunch()
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send("screenshots-cleared")
+      window.webContents.send("history-changed", listChatSessions())
+      window.webContents.send("reset-view")
+    }
+    this.showMainWindow()
+    return this.processingHelper.getReadyStatus()
+  }
+
   public createTray(): void {
     // Create a simple tray icon
     const image = nativeImage.createEmpty()
@@ -250,15 +265,14 @@ export class AppState {
     
     const contextMenu = Menu.buildFromTemplate([
       {
-        label: 'Show Interview Coder',
-        click: () => {
-          this.centerAndShowWindow()
-        }
-      },
-      {
-        label: 'Toggle Window',
-        click: () => {
-          this.toggleMainWindow()
+        label: 'Launch Codexly',
+        accelerator: 'CommandOrControl+Shift+Space',
+        click: async () => {
+          try {
+            await this.startToolbarSession()
+          } catch (error) {
+            console.error("Error launching toolbar from tray:", error)
+          }
         }
       },
       {
@@ -300,17 +314,21 @@ export class AppState {
       }
     ])
     
-    this.tray.setToolTip('Interview Coder - Press Cmd+Shift+Space to show')
+    this.tray.setToolTip('Codexly - Press Cmd+Shift+Space to launch')
     this.tray.setContextMenu(contextMenu)
     
     // Set a title for macOS (will appear in menu bar)
     if (process.platform === 'darwin') {
-      this.tray.setTitle('IC')
+      this.tray.setTitle('Codexly')
     }
     
     // Double-click to show window
-    this.tray.on('double-click', () => {
-      this.centerAndShowWindow()
+    this.tray.on('double-click', async () => {
+      try {
+        await this.startToolbarSession()
+      } catch (error) {
+        console.error("Error launching toolbar from tray:", error)
+      }
     })
   }
 
@@ -342,7 +360,7 @@ async function ensureScreenCaptureAccess() {
     defaultId: 0,
     cancelId: 1,
     title: "Screen Recording permission required",
-    message: "Wingman needs Screen Recording access to capture screenshots.",
+    message: "Codexly needs Screen Recording access to capture screenshots.",
     detail: "Enable it under Privacy & Security → Screen Recording, then quit and relaunch the app.",
   })
   if (response === 0) {
