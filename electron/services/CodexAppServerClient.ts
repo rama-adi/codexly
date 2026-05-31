@@ -10,6 +10,8 @@ type PendingRequest = {
 type NotificationHandler = (params: any) => void
 type RequestHandler = (params: any) => any
 
+let daemonUnavailable = false
+
 export class CodexAppServerClient {
   private child: ChildProcessWithoutNullStreams | null = null
   private nextId = 1
@@ -63,6 +65,9 @@ export class CodexAppServerClient {
   private async startInternal(): Promise<void> {
     const command = resolveCodexBinary()
     const webSearchMode = this.webSearchEnabled ? "live" : "disabled"
+    const configArgs = ["-c", `web_search="${webSearchMode}"`]
+    const appServerArgs = await this.resolveAppServerArgs(command, configArgs)
+
     await new Promise<void>((resolve, reject) => {
       let settled = false
       const fail = (error: Error) => {
@@ -72,7 +77,7 @@ export class CodexAppServerClient {
         reject(error)
       }
 
-      this.child = spawn(command, ["app-server", "-c", `web_search="${webSearchMode}"`], {
+      this.child = spawn(command, appServerArgs, {
         cwd: this.cwd,
         env: codexSpawnEnv(),
         shell: process.platform === "win32",
@@ -94,8 +99,18 @@ export class CodexAppServerClient {
 
     if (!this.child) throw new Error("Codex app-server failed to start")
 
+    let stderr = ""
     this.child.once("exit", (code, signal) => {
-      const error = new Error(`Codex app-server exited (${code ?? signal ?? "unknown"})`)
+      const detail = stderr.trim()
+      const suffix = detail ? `: ${detail}` : ""
+      if (!this.initialized && code !== 0 && signal !== "SIGTERM") {
+        console.warn("[codex app-server] startup failed", {
+          command,
+          args: appServerArgs,
+          cwd: this.cwd,
+        })
+      }
+      const error = new Error(`Codex app-server exited (${code ?? signal ?? "unknown"})${suffix}`)
       for (const pending of this.pending.values()) pending.reject(error)
       this.pending.clear()
       this.child = null
@@ -105,6 +120,7 @@ export class CodexAppServerClient {
 
     this.child.stderr.on("data", chunk => {
       const message = String(chunk).trim()
+      stderr += String(chunk)
       if (message) console.warn("[codex app-server]", message)
     })
 
@@ -125,6 +141,63 @@ export class CodexAppServerClient {
     })
     this.notify("initialized", {})
     this.initialized = true
+  }
+
+  private async resolveAppServerArgs(command: string, configArgs: string[]): Promise<string[]> {
+    if (daemonUnavailable) return ["app-server", ...configArgs]
+
+    try {
+      await this.startDaemon(command, configArgs)
+      return ["app-server", "proxy", ...configArgs]
+    } catch (error: any) {
+      if (this.isStandaloneDaemonUnavailable(error)) {
+        daemonUnavailable = true
+        return ["app-server", ...configArgs]
+      }
+      throw error
+    }
+  }
+
+  private async startDaemon(command: string, configArgs: string[]): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(command, ["app-server", "daemon", ...configArgs, "start"], {
+        cwd: this.cwd,
+        env: codexSpawnEnv(),
+        shell: process.platform === "win32",
+      })
+      let stderr = ""
+      let stdout = ""
+
+      child.stdout.on("data", chunk => {
+        stdout += String(chunk)
+      })
+      child.stderr.on("data", chunk => {
+        stderr += String(chunk)
+      })
+      child.once("error", error => {
+        const errno = error as NodeJS.ErrnoException
+        const message = errno.code === "ENOENT"
+          ? codexNotFoundMessage(command, this.cwd)
+          : error.message
+        reject(new Error(message))
+      })
+      child.once("exit", (code, signal) => {
+        if (code === 0) {
+          resolve()
+          return
+        }
+        const detail = stderr.trim() || stdout.trim() || signal || "unknown"
+        reject(new Error(`Codex app-server daemon failed to start (${detail})`))
+      })
+    })
+  }
+
+  private isStandaloneDaemonUnavailable(error: any): boolean {
+    const message = String(error?.message ?? error)
+    return message.includes("managed standalone Codex install not found")
+      || message.includes("failed to connect to socket")
+      || message.includes("unrecognized subcommand 'daemon'")
+      || message.includes("unrecognized subcommand \"daemon\"")
   }
 
   public async request(method: string, params?: unknown): Promise<any> {

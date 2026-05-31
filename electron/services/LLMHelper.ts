@@ -75,6 +75,7 @@ export class LLMHelper {
   private client: CodexAppServerClient | null = null
   private codexThreadId: string | null = null
   private clientKey: string | null = null
+  private clientReplacePromise: Promise<CodexAppServerClient> | null = null
   private directWorkingDirectory: string | null = null
   private directThreadHasUserMessage = false
   private historyIndexCache: HistoryIndexItem[] = []
@@ -308,8 +309,12 @@ export class LLMHelper {
   }
 
   public clearChatHistory(): void {
-    this.cleanupUnusedDirectThread()
     this.codexThreadId = null
+    if (this.clientReplacePromise) return
+    this.client?.stop()
+    this.client = null
+    this.clientKey = null
+    this.cleanupUnusedDirectThread()
   }
 
   public cleanupUnusedDirectSession(): void {
@@ -326,6 +331,7 @@ export class LLMHelper {
 
   public refreshChatSessionsInBackground(): void {
     this.refreshChatSessions().catch(error => {
+      if (this.shouldIgnoreBackgroundError(error)) return
       console.warn("Failed to refresh Codex history:", error)
     })
   }
@@ -377,6 +383,7 @@ export class LLMHelper {
 
   public refreshChatSessionInBackground(threadId: string): void {
     this.refreshChatSession(threadId).catch(error => {
+      if (this.shouldIgnoreBackgroundError(error)) return
       console.warn("Failed to refresh Codex session:", error)
     })
   }
@@ -525,15 +532,38 @@ export class LLMHelper {
     const settings = getAppSettings()
     const spawnCwd = cwd || this.resolveWorkingDirectory(undefined)
     const key = this.getClientKey(cwd, settings.webSearchEnabled)
-    if (!this.client || this.clientKey !== key) {
-      this.cleanupUnusedDirectThread(spawnCwd)
-      this.client?.stop()
-      this.client = new CodexAppServerClient(spawnCwd, settings.webSearchEnabled)
-      this.clientKey = key
-      this.codexThreadId = null
-      await this.client.start()
+    if (this.client && this.clientKey === key) return this.client
+    if (!this.clientReplacePromise) {
+      this.clientReplacePromise = this.replaceClient(spawnCwd, key, settings.webSearchEnabled)
+        .finally(() => {
+          this.clientReplacePromise = null
+        })
     }
-    return this.client
+    return this.clientReplacePromise
+  }
+
+  private async replaceClient(cwd: string, key: string, webSearchEnabled: boolean): Promise<CodexAppServerClient> {
+    this.cleanupUnusedDirectThread(cwd)
+    this.client?.stop()
+    this.client = null
+    this.clientKey = null
+    this.codexThreadId = null
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const client = new CodexAppServerClient(cwd, webSearchEnabled)
+      try {
+        await client.start()
+        this.client = client
+        this.clientKey = key
+        return client
+      } catch (error) {
+        client.stop()
+        if (attempt === 0 && this.isBenignCodexExitError(error)) continue
+        throw error
+      }
+    }
+
+    throw new Error("Codex app-server failed to start")
   }
 
   private getClientKey(cwd: string | undefined, webSearchEnabled = getAppSettings().webSearchEnabled): string {
@@ -619,6 +649,7 @@ export class LLMHelper {
   }
 
   private cleanupUnusedDirectThread(preserveDirectory?: string): void {
+    if (this.clientReplacePromise) return
     if (!this.directWorkingDirectory || this.directThreadHasUserMessage) return
     if (
       preserveDirectory &&
@@ -692,6 +723,14 @@ export class LLMHelper {
 
   private isThreadNotMaterializedError(error: unknown): boolean {
     return /not materialized yet|includeTurns is unavailable/i.test(error instanceof Error ? error.message : String(error))
+  }
+
+  public shouldIgnoreBackgroundError(error: unknown): boolean {
+    return this.isBenignCodexExitError(error)
+  }
+
+  private isBenignCodexExitError(error: unknown): boolean {
+    return /Codex app-server exited \((0|SIGTERM)\)/i.test(error instanceof Error ? error.message : String(error))
   }
 
   private normalizeModelOption(model: any): ModelOption | null {

@@ -45,7 +45,9 @@ export class ProcessingHelper {
     send(this.llmHelper.getCachedChatSessions())
     this.llmHelper.listChatSessions()
       .then(send)
-      .catch(error => console.warn("Failed to broadcast Codex history:", error))
+      .catch(error => {
+        if (!this.llmHelper.shouldIgnoreBackgroundError(error)) console.warn("Failed to broadcast Codex history:", error)
+      })
   }
 
   public async processScreenshots(): Promise<void> {

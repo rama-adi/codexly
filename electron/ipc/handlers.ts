@@ -23,7 +23,9 @@ export function initializeIpcHandlers(appState: AppState): void {
     send(llmHelper.getCachedChatSessions())
     llmHelper.listChatSessions()
       .then(send)
-      .catch(error => console.warn("Failed to broadcast Codex history:", error))
+      .catch(error => {
+        if (!llmHelper.shouldIgnoreBackgroundError(error)) console.warn("Failed to broadcast Codex history:", error)
+      })
   }
 
   ipcMain.handle(
