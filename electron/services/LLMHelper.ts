@@ -1,5 +1,8 @@
 import fs from "fs"
-import { getAppSettings, getDirectWorkingDirectory, getLaunchWorkingDirectory, updateAppSettings } from "../stores/AppSettings"
+import os from "os"
+import path from "path"
+import crypto from "crypto"
+import { getAppSettings, getDirectThreadsDirectory, getLaunchWorkingDirectory, updateAppSettings } from "../stores/AppSettings"
 import { CodexAppServerClient } from "./CodexAppServerClient"
 import {
   getActiveSessionId,
@@ -65,12 +68,18 @@ type HistoryIndexItem = {
 }
 
 const DEFAULT_MODEL = "gpt-5.4"
+const CODEX_THREAD_ID_PATTERN = /^(?:urn:uuid:)?[0-9a-fA-F-]{32,36}$/
 
 export class LLMHelper {
   private modelName = DEFAULT_MODEL
   private client: CodexAppServerClient | null = null
   private codexThreadId: string | null = null
   private clientKey: string | null = null
+  private directWorkingDirectory: string | null = null
+  private directThreadHasUserMessage = false
+  private historyIndexCache: HistoryIndexItem[] = []
+  private sessionCache = new Map<string, ChatSession>()
+  private historyRefreshPromise: Promise<HistoryIndexItem[]> | null = null
 
   constructor() {
     this.modelName = this.loadSavedModel()
@@ -92,14 +101,14 @@ export class LLMHelper {
       { type: "text", text: userMessage, text_elements: [] as never[] },
       ...(input.imagePaths ?? []).map(path => ({ type: "localImage", path })),
     ]
-    if (threadId) setActiveSessionId(threadId)
-
     callbacks.onStart?.()
 
     let answer = ""
     let transcript = ""
     let turnId: string | null = null
     let settled = false
+    const itemPhases = new Map<string, string>()
+    const itemStreamedLengths = new Map<string, number>()
     const cleanups: Array<() => void> = []
 
     return new Promise<string>(async (resolve, reject) => {
@@ -115,6 +124,8 @@ export class LLMHelper {
         const content = transcript.trim() || answer
         callbacks.onComplete?.(content)
         callbacks.onHistoryChanged?.()
+        this.refreshChatSessionsInBackground()
+        this.refreshChatSessionInBackground(threadId)
         resolve(content)
       }
 
@@ -124,52 +135,103 @@ export class LLMHelper {
         callbacks.onStreamEvent?.(delta)
       }
 
+      const markItemStreamed = (params: any, delta: string) => {
+        const itemId = this.eventItemId(params)
+        if (!itemId || !delta) return
+        itemStreamedLengths.set(itemId, (itemStreamedLengths.get(itemId) ?? 0) + delta.length)
+      }
+
+      const appendCompletedTextIfMissing = (item: any, append: (text: string) => void) => {
+        const itemId = item?.id ? String(item.id) : ""
+        if (!itemId) return
+        const text = this.completedItemText(item)
+        if (!text) return
+        const streamedLength = itemStreamedLengths.get(itemId) ?? 0
+        const missing = streamedLength > 0 ? text.slice(streamedLength) : text
+        if (missing) append(missing)
+        itemStreamedLengths.set(itemId, Math.max(streamedLength, text.length))
+      }
+
       cleanups.push(
         client.on("turn/started", params => {
-          if (params?.threadId === threadId) turnId = params.turnId
+          if (this.eventThreadId(params) === threadId) turnId = this.eventTurnId(params)
         }),
         client.on("item/started", params => {
-          if (params?.threadId !== threadId) return
-          if (turnId && params.turnId !== turnId) return
+          if (this.eventThreadId(params) !== threadId) return
+          if (turnId && this.eventTurnId(params) !== turnId) return
+          this.trackItemPhase(params.item, itemPhases)
           appendStreamEvent(this.formatStartedItem(params.item))
         }),
         client.on("item/completed", params => {
-          if (params?.threadId !== threadId) return
-          if (turnId && params.turnId !== turnId) return
+          if (this.eventThreadId(params) !== threadId) return
+          if (turnId && this.eventTurnId(params) !== turnId) return
+          this.trackItemPhase(params.item, itemPhases)
+          if (params.item?.type === "agentMessage") {
+            const phase = this.agentMessageDeltaPhase(params, itemPhases)
+            appendCompletedTextIfMissing(params.item, text => {
+              if (phase === "commentary") {
+                appendStreamEvent(text)
+                return
+              }
+              answer += text
+              transcript += text
+              callbacks.onDelta?.(text)
+            })
+          } else {
+            appendCompletedTextIfMissing(params.item, appendStreamEvent)
+          }
           appendStreamEvent(this.formatCompletedItem(params.item))
         }),
         client.on("item/agentMessage/delta", params => {
-          if (params?.threadId !== threadId) return
-          if (turnId && params.turnId !== turnId) return
+          if (this.eventThreadId(params) !== threadId) return
+          if (turnId && this.eventTurnId(params) !== turnId) return
           const delta = String(params.delta ?? "")
+          const phase = this.agentMessageDeltaPhase(params, itemPhases)
+          markItemStreamed(params, delta)
+          if (phase === "commentary") {
+            appendStreamEvent(delta)
+            return
+          }
+
           answer += delta
           transcript += delta
           callbacks.onDelta?.(delta)
         }),
         client.on("item/plan/delta", params => {
-          if (params?.threadId !== threadId) return
-          if (turnId && params.turnId !== turnId) return
-          appendStreamEvent(String(params.delta ?? ""))
+          if (this.eventThreadId(params) !== threadId) return
+          if (turnId && this.eventTurnId(params) !== turnId) return
+          const delta = String(params.delta ?? "")
+          markItemStreamed(params, delta)
+          appendStreamEvent(delta)
         }),
         client.on("item/reasoning/summaryTextDelta", params => {
-          if (params?.threadId !== threadId) return
-          if (turnId && params.turnId !== turnId) return
-          appendStreamEvent(String(params.delta ?? ""))
+          if (this.eventThreadId(params) !== threadId) return
+          if (turnId && this.eventTurnId(params) !== turnId) return
+          const delta = String(params.delta ?? "")
+          markItemStreamed(params, delta)
+          appendStreamEvent(delta)
+        }),
+        client.on("item/reasoning/textDelta", params => {
+          if (this.eventThreadId(params) !== threadId) return
+          if (turnId && this.eventTurnId(params) !== turnId) return
+          const delta = String(params.delta ?? "")
+          markItemStreamed(params, delta)
+          appendStreamEvent(delta)
         }),
         client.on("item/commandExecution/outputDelta", params => {
-          if (params?.threadId !== threadId) return
-          if (turnId && params.turnId !== turnId) return
+          if (this.eventThreadId(params) !== threadId) return
+          if (turnId && this.eventTurnId(params) !== turnId) return
           const text = String(params.delta ?? params.output ?? "")
           if (text) appendStreamEvent(`\n\n\`\`\`text\n${text}\n\`\`\``)
         }),
         client.on("item/fileChange/outputDelta", params => {
-          if (params?.threadId !== threadId) return
-          if (turnId && params.turnId !== turnId) return
+          if (this.eventThreadId(params) !== threadId) return
+          if (turnId && this.eventTurnId(params) !== turnId) return
           appendStreamEvent(String(params.delta ?? params.output ?? ""))
         }),
         client.on("turn/completed", params => {
-          if (params?.threadId !== threadId) return
-          if (turnId && params.turnId !== turnId) return
+          if (this.eventThreadId(params) !== threadId) return
+          if (turnId && this.eventTurnId(params) !== turnId) return
           finish()
         }),
         client.on("error", params => {
@@ -196,14 +258,17 @@ export class LLMHelper {
 
       try {
         await startTurn()
+        this.markDirectThreadUsed(threadId, configuredCwd)
+        setActiveSessionId(threadId)
       } catch (error: any) {
         if (this.isThreadNotFoundError(error)) {
           try {
             this.codexThreadId = null
             setActiveSessionId(null)
             threadId = await this.startThread(client, configuredCwd)
-            setActiveSessionId(threadId)
             await startTurn()
+            this.markDirectThreadUsed(threadId, configuredCwd)
+            setActiveSessionId(threadId)
             callbacks.onHistoryChanged?.()
             return
           } catch (retryError: any) {
@@ -219,8 +284,7 @@ export class LLMHelper {
   public async prepareForLaunch(workingDirectory?: string): Promise<void> {
     const settings = getAppSettings()
     const configuredCwd = this.resolveWorkingDirectory(workingDirectory || getLaunchWorkingDirectory(settings))
-    const client = await this.getClient(configuredCwd)
-    await this.ensureThread(client, configuredCwd)
+    await this.getClient(configuredCwd)
   }
 
   public async getReadyState(workingDirectory?: string): Promise<{
@@ -232,7 +296,7 @@ export class LLMHelper {
     const settings = getAppSettings()
     const configuredCwd = this.resolveWorkingDirectory(workingDirectory || getLaunchWorkingDirectory(settings))
     return {
-      ready: Boolean(this.client && this.codexThreadId && this.clientKey === this.getClientKey(configuredCwd)),
+      ready: Boolean(this.client && this.clientKey === this.getClientKey(configuredCwd)),
       threadId: this.codexThreadId,
       cwd: configuredCwd,
       model: this.modelName,
@@ -244,34 +308,116 @@ export class LLMHelper {
   }
 
   public clearChatHistory(): void {
+    this.cleanupUnusedDirectThread()
     this.codexThreadId = null
   }
 
+  public cleanupUnusedDirectSession(): void {
+    this.cleanupUnusedDirectThread()
+  }
+
   public async listChatSessions(): Promise<HistoryIndexItem[]> {
+    return this.refreshChatSessions()
+  }
+
+  public getCachedChatSessions(): HistoryIndexItem[] {
+    return this.historyIndexCache
+  }
+
+  public refreshChatSessionsInBackground(): void {
+    this.refreshChatSessions().catch(error => {
+      console.warn("Failed to refresh Codex history:", error)
+    })
+  }
+
+  private async refreshChatSessions(): Promise<HistoryIndexItem[]> {
+    if (this.historyRefreshPromise) return this.historyRefreshPromise
+    this.historyRefreshPromise = this.loadChatSessions().finally(() => {
+      this.historyRefreshPromise = null
+    })
+    return this.historyRefreshPromise
+  }
+
+  private async loadChatSessions(): Promise<HistoryIndexItem[]> {
     const client = await this.getClient(this.resolveWorkingDirectory(getLaunchWorkingDirectory(getAppSettings())))
     const response = await client.request("thread/list", {
       limit: 100,
       archived: false,
-      sourceKinds: ["appServer"],
       sortKey: "updated_at",
       sortDirection: "desc",
     })
     const threads = Array.isArray(response?.data) ? response.data : []
-    return threads
-      .filter((thread: any) => String(thread?.preview ?? thread?.name ?? "").trim())
+    const items: HistoryIndexItem[] = threads
+      .filter((thread: any) => this.isThreadInScopedWorkspace(thread))
       .map((thread: any) => this.threadToIndexItem(thread))
+    const activeThreadId = getActiveSessionId()
+    if (activeThreadId && !items.some(item => item.id === activeThreadId)) {
+      const activeSession = await this.getChatSession(activeThreadId)
+      if (activeSession && this.isCwdInScopedWorkspace(activeSession.workingDirectory)) {
+        items.unshift(this.chatSessionToIndexItem(activeSession))
+      }
+    }
+    this.historyIndexCache = items
+    return items
   }
 
   public async getChatSession(threadId: string): Promise<ChatSession | null> {
     if (!threadId) return null
+    const cached = this.sessionCache.get(threadId)
+    if (cached) {
+      this.refreshChatSessionInBackground(threadId)
+      return cached
+    }
+    return this.refreshChatSession(threadId)
+  }
+
+  public getCachedChatSession(threadId: string): ChatSession | null {
+    return this.sessionCache.get(threadId) ?? null
+  }
+
+  public refreshChatSessionInBackground(threadId: string): void {
+    this.refreshChatSession(threadId).catch(error => {
+      console.warn("Failed to refresh Codex session:", error)
+    })
+  }
+
+  private async refreshChatSession(threadId: string): Promise<ChatSession | null> {
     const client = await this.getClient(this.resolveWorkingDirectory(getLaunchWorkingDirectory(getAppSettings())))
     try {
       const response = await client.request("thread/read", { threadId, includeTurns: true })
-      return this.threadToChatSession(response?.thread)
+      const session = this.threadToChatSession(response?.thread)
+      if (session) this.sessionCache.set(session.id, session)
+      return session
     } catch (error) {
       if (this.isThreadNotFoundError(error)) return null
+      if (this.isThreadNotMaterializedError(error)) return this.getUnmaterializedChatSession(client, threadId)
       throw error
     }
+  }
+
+  private async getUnmaterializedChatSession(client: CodexAppServerClient, threadId: string): Promise<ChatSession> {
+    try {
+      const response = await client.request("thread/read", { threadId, includeTurns: false })
+      const session = this.threadToChatSession(response?.thread)
+      if (session) {
+        this.sessionCache.set(session.id, session)
+        return session
+      }
+    } catch {
+      // Fall through to an empty shell; the thread exists in memory but has no persisted turns yet.
+    }
+
+    const timestamp = new Date().toISOString()
+    const session: ChatSession = {
+      id: threadId,
+      title: "New session",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      codexThreadId: threadId,
+      messages: [],
+    }
+    this.sessionCache.set(threadId, session)
+    return session
   }
 
   public async getActiveChatSession(): Promise<ChatSession | null> {
@@ -292,6 +438,8 @@ export class LLMHelper {
     const client = await this.getClient(this.resolveWorkingDirectory(getLaunchWorkingDirectory(getAppSettings())))
     try {
       await client.request("thread/archive", { threadId })
+      this.sessionCache.delete(threadId)
+      this.historyIndexCache = this.historyIndexCache.filter(item => item.id !== threadId)
       if (getActiveSessionId() === threadId) {
         setActiveSessionId(null)
         this.codexThreadId = null
@@ -304,6 +452,7 @@ export class LLMHelper {
   }
 
   public async newChatSession(): Promise<ChatSession> {
+    this.cleanupUnusedDirectThread()
     setActiveSessionId(null)
     this.codexThreadId = null
     return {
@@ -320,6 +469,8 @@ export class LLMHelper {
     await Promise.allSettled(sessions.map(session => this.deleteChatSession(session.id)))
     setActiveSessionId(null)
     this.codexThreadId = null
+    this.sessionCache.clear()
+    this.historyIndexCache = []
   }
 
   public getCurrentProvider(): "codex" {
@@ -342,11 +493,6 @@ export class LLMHelper {
     try {
       const cwd = this.resolveWorkingDirectory(getLaunchWorkingDirectory(getAppSettings()))
       const client = await this.getClient(cwd)
-      try {
-        await this.ensureThread(client, cwd)
-      } catch (error) {
-        console.warn("Codex thread warmup failed before model discovery:", error)
-      }
       const result = await client.request("model/list", {
         limit: 20,
         includeHidden: false,
@@ -380,6 +526,7 @@ export class LLMHelper {
     const spawnCwd = cwd || this.resolveWorkingDirectory(undefined)
     const key = this.getClientKey(cwd, settings.webSearchEnabled)
     if (!this.client || this.clientKey !== key) {
+      this.cleanupUnusedDirectThread(spawnCwd)
       this.client?.stop()
       this.client = new CodexAppServerClient(spawnCwd, settings.webSearchEnabled)
       this.clientKey = key
@@ -396,13 +543,15 @@ export class LLMHelper {
   private async ensureThread(client: CodexAppServerClient, cwd: string | undefined): Promise<string> {
     if (this.codexThreadId) return this.codexThreadId
     const activeSessionId = getActiveSessionId()
-    if (activeSessionId) {
+    if (activeSessionId && CODEX_THREAD_ID_PATTERN.test(activeSessionId)) {
       try {
         return await this.resumeThread(client, activeSessionId, cwd)
       } catch (error) {
-        if (!this.isThreadNotFoundError(error)) throw error
+        if (!this.isStaleThreadError(error)) throw error
         setActiveSessionId(null)
       }
+    } else if (activeSessionId) {
+      setActiveSessionId(null)
     }
 
     return this.startThread(client, cwd)
@@ -415,6 +564,10 @@ export class LLMHelper {
       personality: "pragmatic",
     })
     this.codexThreadId = response?.thread?.id ?? response?.threadId ?? response?.id ?? threadId
+    if (this.isDirectWorkingDirectory(cwd)) {
+      this.directWorkingDirectory = cwd ?? this.directWorkingDirectory
+      this.directThreadHasUserMessage = true
+    }
     return this.codexThreadId
   }
 
@@ -433,18 +586,112 @@ export class LLMHelper {
     })
     this.codexThreadId = response?.thread?.id ?? response?.threadId ?? response?.id
     if (!this.codexThreadId) throw new Error("Codex app-server did not return a thread id")
-    setActiveSessionId(this.codexThreadId)
+    if (this.isDirectWorkingDirectory(cwd)) {
+      this.directWorkingDirectory = cwd ?? this.directWorkingDirectory
+      this.directThreadHasUserMessage = false
+    }
     return this.codexThreadId
   }
 
   private resolveWorkingDirectory(cwd: string | undefined): string {
-    const resolved = cwd?.trim() || getDirectWorkingDirectory()
+    const resolved = cwd?.trim() || this.getOrCreateDirectWorkingDirectory()
     fs.mkdirSync(resolved, { recursive: true })
     return resolved
   }
 
+  private getOrCreateDirectWorkingDirectory(): string {
+    if (this.directWorkingDirectory) {
+      fs.mkdirSync(this.directWorkingDirectory, { recursive: true })
+      return this.directWorkingDirectory
+    }
+    const parent = getDirectThreadsDirectory()
+    fs.mkdirSync(parent, { recursive: true })
+    const suffix = crypto.randomUUID().replace(/-/g, "").slice(0, 8)
+    this.directWorkingDirectory = path.join(parent, `direct_${Date.now().toString(36)}_${suffix}`)
+    fs.mkdirSync(this.directWorkingDirectory, { recursive: true })
+    return this.directWorkingDirectory
+  }
+
+  private markDirectThreadUsed(_threadId: string, cwd: string | undefined): void {
+    if (!this.isDirectWorkingDirectory(cwd)) return
+    this.directWorkingDirectory = cwd ?? this.directWorkingDirectory
+    this.directThreadHasUserMessage = true
+  }
+
+  private cleanupUnusedDirectThread(preserveDirectory?: string): void {
+    if (!this.directWorkingDirectory || this.directThreadHasUserMessage) return
+    if (
+      preserveDirectory &&
+      this.normalizeDirectoryPath(this.directWorkingDirectory) === this.normalizeDirectoryPath(preserveDirectory)
+    ) {
+      return
+    }
+    const directory = this.directWorkingDirectory
+    this.directWorkingDirectory = null
+    this.directThreadHasUserMessage = false
+    this.removeDirectWorkingDirectory(directory)
+  }
+
+  private removeDirectWorkingDirectory(directory: string): void {
+    const normalizedDirectory = this.normalizeDirectoryPath(directory)
+    const parent = this.normalizeDirectoryPath(getDirectThreadsDirectory())
+    if (!normalizedDirectory || !parent) return
+    if (!normalizedDirectory.startsWith(`${parent}${path.sep}`)) return
+    if (!path.basename(normalizedDirectory).startsWith("direct_")) return
+    try {
+      fs.rmSync(normalizedDirectory, { recursive: true, force: true })
+    } catch (error) {
+      console.warn("Failed to remove unused direct workspace:", error)
+    }
+  }
+
+  private scopedHistoryDirectories(): string[] {
+    const settings = getAppSettings()
+    return [
+      getDirectThreadsDirectory(),
+      ...settings.directoryProfiles.map(profile => profile.path),
+      settings.workingDirectory,
+    ]
+      .map(value => this.normalizeDirectoryPath(value))
+      .filter((value): value is string => Boolean(value))
+  }
+
+  private isThreadInScopedWorkspace(thread: any): boolean {
+    return this.isCwdInScopedWorkspace(typeof thread?.cwd === "string" ? thread.cwd : undefined)
+  }
+
+  private isCwdInScopedWorkspace(cwd: string | undefined): boolean {
+    const normalizedCwd = this.normalizeDirectoryPath(cwd)
+    if (!normalizedCwd) return false
+    return this.scopedHistoryDirectories().some(directory =>
+      normalizedCwd === directory || normalizedCwd.startsWith(`${directory}${path.sep}`)
+    )
+  }
+
+  private normalizeDirectoryPath(value: string | undefined): string | null {
+    const trimmed = value?.trim()
+    if (!trimmed) return null
+    return path.resolve(trimmed)
+  }
+
+  private isDirectWorkingDirectory(cwd: string | undefined): boolean {
+    const normalizedCwd = this.normalizeDirectoryPath(cwd)
+    const parent = this.normalizeDirectoryPath(getDirectThreadsDirectory())
+    if (!normalizedCwd || !parent) return false
+    return normalizedCwd.startsWith(`${parent}${path.sep}`)
+  }
+
   private isThreadNotFoundError(error: unknown): boolean {
     return /thread not found/i.test(error instanceof Error ? error.message : String(error))
+  }
+
+  private isStaleThreadError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error)
+    return /thread not found|no rollout found/i.test(message)
+  }
+
+  private isThreadNotMaterializedError(error: unknown): boolean {
+    return /not materialized yet|includeTurns is unavailable/i.test(error instanceof Error ? error.message : String(error))
   }
 
   private normalizeModelOption(model: any): ModelOption | null {
@@ -493,6 +740,14 @@ export class LLMHelper {
         return `\n\n_Using ${this.truncateInline(String(item.server ?? "app"))}: ${this.truncateInline(String(item.tool ?? "tool"))}..._\n\n`
       case "dynamicToolCall":
         return `\n\n_Using tool: ${this.truncateInline(String(item.tool ?? "tool"))}..._\n\n`
+      case "collabToolCall":
+        return `\n\n_Starting collaboration tool: ${this.truncateInline(String(item.tool ?? "tool"))}..._\n\n`
+      case "imageView":
+        return `\n\n_Viewing image: \`${this.truncateInline(String(item.path ?? "image"))}\`_\n\n`
+      case "enteredReviewMode":
+        return `\n\n_Starting review${item.review ? `: ${this.truncateInline(String(item.review))}` : ""}..._\n\n`
+      case "contextCompaction":
+        return "\n\n_Compacting conversation context..._\n\n"
       default:
         return ""
     }
@@ -511,6 +766,18 @@ export class LLMHelper {
       case "dynamicToolCall":
         if (item.error) return `_Tool failed: ${this.truncateInline(String(item.error))}_\n\n`
         return "_Tool call complete._\n\n"
+      case "collabToolCall":
+        return `_Collaboration tool ${this.truncateInline(String(item.status ?? "completed"))}._\n\n`
+      case "imageView":
+        return "_Image viewed._\n\n"
+      case "enteredReviewMode":
+        return "_Review started._\n\n"
+      case "exitedReviewMode": {
+        const review = String(item.review ?? "").trim()
+        return review ? `${review}\n\n` : "_Review finished._\n\n"
+      }
+      case "contextCompaction":
+        return "_Conversation context compacted._\n\n"
       default:
         return ""
     }
@@ -532,6 +799,46 @@ export class LLMHelper {
     return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}...` : normalized
   }
 
+  private eventThreadId(params: any): string | undefined {
+    return params?.threadId ?? params?.turn?.threadId ?? params?.thread?.id
+  }
+
+  private eventTurnId(params: any): string | undefined {
+    return params?.turnId ?? params?.turn?.id
+  }
+
+  private eventItemId(params: any): string | undefined {
+    return params?.itemId ?? params?.item?.id
+  }
+
+  private trackItemPhase(item: any, itemPhases: Map<string, string>): void {
+    if (item?.type !== "agentMessage" || !item?.id || typeof item?.phase !== "string") return
+    itemPhases.set(String(item.id), item.phase)
+  }
+
+  private agentMessageDeltaPhase(params: any, itemPhases: Map<string, string>): string {
+    if (typeof params?.phase === "string") return params.phase
+    if (typeof params?.item?.phase === "string") return params.item.phase
+    const itemId = this.eventItemId(params)
+    return itemId ? itemPhases.get(itemId) ?? "final_answer" : "final_answer"
+  }
+
+  private completedItemText(item: any): string {
+    switch (item?.type) {
+      case "agentMessage":
+        return String(item.text ?? "")
+      case "plan":
+        return String(item.text ?? "")
+      case "reasoning": {
+        const summary = Array.isArray(item.summary) ? item.summary.join("\n\n") : ""
+        const content = Array.isArray(item.content) ? item.content.join("\n\n") : ""
+        return [summary, content].filter(Boolean).join("\n\n")
+      }
+      default:
+        return ""
+    }
+  }
+
   private threadToIndexItem(thread: any): HistoryIndexItem {
     const messages = this.threadToMessages(thread)
     return {
@@ -543,15 +850,26 @@ export class LLMHelper {
     }
   }
 
+  private chatSessionToIndexItem(session: ChatSession): HistoryIndexItem {
+    return {
+      id: session.id,
+      title: session.title,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      messageCount: session.messages.length,
+    }
+  }
+
   private threadToChatSession(thread: any): ChatSession | null {
     if (!thread?.id) return null
     const messages = this.threadToMessages(thread)
-    return {
+    const session = {
       ...this.threadToIndexItem(thread),
       workingDirectory: typeof thread.cwd === "string" ? thread.cwd : undefined,
       codexThreadId: thread.id,
       messages,
     }
+    return this.mergeRolloutEventHistory(session)
   }
 
   private threadTitle(thread: any): string {
@@ -572,63 +890,310 @@ export class LLMHelper {
   private turnToMessages(turn: any): ChatMessage[] {
     if (!Array.isArray(turn?.items)) return []
     const createdAt = this.isoFromUnixSeconds(turn?.startedAt ?? turn?.completedAt)
-    return turn.items
-      .map((item: any, index: number) => this.threadItemToMessage(item, createdAt, index))
-      .filter((message: ChatMessage | null): message is ChatMessage => Boolean(message))
+    const messages: ChatMessage[] = []
+    let assistantParts: string[] = []
+    let assistantId = String(turn?.id ?? turn?.turnId ?? `turn-${createdAt}`)
+
+    const flushAssistant = () => {
+      const message = this.assistantMessageFromParts(`assistant-${assistantId}`, createdAt, assistantParts)
+      if (message) messages.push(message)
+      assistantParts = []
+    }
+
+    turn.items.forEach((item: any, index: number) => {
+      const userMessage = this.threadItemToUserMessage(item, createdAt, index)
+      if (userMessage) {
+        flushAssistant()
+        messages.push(userMessage)
+        assistantId = String(turn?.id ?? turn?.turnId ?? item?.id ?? `turn-${createdAt}-${index}`)
+        return
+      }
+
+      const parts = this.threadItemToAssistantParts(item)
+      if (parts.length) assistantParts.push(...parts)
+    })
+
+    flushAssistant()
+    return messages
   }
 
-  private threadItemToMessage(item: any, createdAt: string, index: number): ChatMessage | null {
+  private threadItemToUserMessage(item: any, createdAt: string, index: number): ChatMessage | null {
     const id = String(item?.id ?? `item-${index}`)
+    if (item?.type !== "userMessage") return null
+
+    const textParts = Array.isArray(item.content)
+      ? item.content.filter((part: any) => part?.type === "text").map((part: any) => String(part.text ?? ""))
+      : []
+    const imagePaths = Array.isArray(item.content)
+      ? item.content.filter((part: any) => part?.type === "localImage").map((part: any) => String(part.path ?? "")).filter(Boolean)
+      : []
+    return {
+      id,
+      role: "user",
+      content: textParts.join("\n\n").trim() || "Solve the attached screenshot.",
+      screenshotPaths: imagePaths.length ? imagePaths : undefined,
+      screenshots: this.screenshotRecords(imagePaths),
+      createdAt,
+    }
+  }
+
+  private threadItemToAssistantParts(item: any): string[] {
     switch (item?.type) {
-      case "userMessage": {
-        const textParts = Array.isArray(item.content)
-          ? item.content.filter((part: any) => part?.type === "text").map((part: any) => String(part.text ?? ""))
-          : []
-        const imagePaths = Array.isArray(item.content)
-          ? item.content.filter((part: any) => part?.type === "localImage").map((part: any) => String(part.path ?? "")).filter(Boolean)
-          : []
-        return {
-          id,
-          role: "user",
-          content: textParts.join("\n\n").trim() || "Solve the attached screenshot.",
-          screenshotPaths: imagePaths.length ? imagePaths : undefined,
-          screenshots: this.screenshotRecords(imagePaths),
-          createdAt,
-        }
-      }
       case "agentMessage":
-        if (!String(item.text ?? "").trim()) return null
-        return { id, role: "assistant", content: String(item.text), createdAt }
+        return this.agentMessageParts(item)
       case "plan":
-        return { id, role: "assistant", content: String(item.text ?? ""), createdAt }
+        return [String(item.text ?? "")]
       case "reasoning": {
         const summary = Array.isArray(item.summary) ? item.summary.join("\n\n") : ""
         const content = Array.isArray(item.content) ? item.content.join("\n\n") : ""
         const text = [summary, content].filter(Boolean).join("\n\n")
-        return text ? { id, role: "assistant", content: text, createdAt } : null
+        return text ? [text] : []
       }
       case "webSearch":
-        return { id, role: "assistant", content: `_Searched the web${this.describeWebSearch(item)}._`, createdAt }
+        return [
+          this.formatStartedItem(item),
+          this.formatCompletedItem(item) || `_Finished web search${this.describeWebSearch(item)}._\n\n`,
+        ]
       case "commandExecution": {
         const command = String(item.command ?? "command")
         const output = String(item.aggregatedOutput ?? "").trim()
         const status = item.exitCode === null || item.exitCode === undefined ? String(item.status ?? "completed") : `exit ${item.exitCode}`
-        return {
-          id,
-          role: "assistant",
-          content: [`_Ran command: \`${this.truncateInline(command)}\` (${status})._`, output ? `\n\`\`\`text\n${output}\n\`\`\`` : ""].join(""),
-          createdAt,
-        }
+        return [
+          this.formatStartedItem(item),
+          output ? `\`\`\`text\n${output}\n\`\`\`\n\n` : "",
+          this.formatCompletedItem(item) || `_Command ${status}: \`${this.truncateInline(command)}\`._\n\n`,
+        ]
       }
       case "fileChange":
-        return { id, role: "assistant", content: "_Applied file changes._", createdAt }
+        return [
+          this.formatStartedItem(item),
+          this.formatFileChanges(item),
+          this.formatCompletedItem(item) || "_File changes complete._\n\n",
+        ]
       case "mcpToolCall":
-        return { id, role: "assistant", content: `_Used ${this.truncateInline(String(item.server ?? "app"))}: ${this.truncateInline(String(item.tool ?? "tool"))}._`, createdAt }
+        return [
+          this.formatStartedItem(item),
+          this.formatToolResult(item),
+          this.formatCompletedItem(item) || "_Tool call complete._\n\n",
+        ]
       case "dynamicToolCall":
-        return { id, role: "assistant", content: `_Used tool: ${this.truncateInline(String(item.tool ?? "tool"))}._`, createdAt }
+        return [
+          this.formatStartedItem(item),
+          this.formatToolResult(item),
+          this.formatCompletedItem(item) || "_Tool call complete._\n\n",
+        ]
+      case "collabToolCall":
+        return [
+          this.formatStartedItem(item),
+          this.formatCollabToolCall(item),
+          this.formatCompletedItem(item) || `_Collaboration tool ${this.truncateInline(String(item.status ?? "completed"))}._\n\n`,
+        ]
+      case "imageView":
+      case "enteredReviewMode":
+      case "contextCompaction":
+        return [
+          this.formatStartedItem(item),
+          this.formatCompletedItem(item),
+        ]
+      case "exitedReviewMode": {
+        const review = String(item.review ?? "").trim()
+        return review ? [`${review}\n\n`] : ["_Review finished._\n\n"]
+      }
+      case "event_msg":
+        return this.eventMessageParts(item)
       default:
-        return null
+        return []
     }
+  }
+
+  private assistantMessageFromParts(id: string, createdAt: string, parts: string[]): ChatMessage | null {
+    const content = parts
+      .map(part => String(part ?? ""))
+      .join("")
+      .trim()
+    return content ? { id, role: "assistant", content, createdAt } : null
+  }
+
+  private agentMessageParts(item: any): string[] {
+    const phase = typeof item?.phase === "string" ? item.phase : "final_answer"
+    const preamble = [
+      item?.preamble,
+      item?.preambleText,
+      item?.prefix,
+      item?.leadIn,
+      item?.description,
+    ]
+      .map(value => (typeof value === "string" ? value.trim() : ""))
+      .filter(Boolean)
+
+    const text = String(item?.text ?? "").trim()
+    if (phase !== "commentary" && phase !== "final_answer" && !text && preamble.length === 0) return []
+    return [...preamble.map(value => `${value}\n\n`), text]
+  }
+
+  private eventMessageParts(item: any): string[] {
+    const payload = item?.payload ?? {}
+    const type = String(payload?.type ?? item?.payloadType ?? "")
+    if (type !== "agent_message") return []
+
+    const phase = typeof payload?.phase === "string" ? payload.phase : "final_answer"
+    const message = typeof payload?.message === "string" ? payload.message.trim() : ""
+    if (phase !== "commentary" && phase !== "final_answer") return []
+    if (!message) return []
+
+    return [`${message}\n\n`]
+  }
+
+  private formatFileChanges(item: any): string {
+    if (!Array.isArray(item?.changes) || item.changes.length === 0) return ""
+    return item.changes
+      .map((change: any) => {
+        const path = this.truncateInline(String(change?.path ?? "file"), 160)
+        const kind = this.truncateInline(String(change?.kind ?? "changed"), 40)
+        const diff = typeof change?.diff === "string" && change.diff.trim()
+          ? `\n\n\`\`\`diff\n${change.diff.trim()}\n\`\`\`\n`
+          : ""
+        return `- ${kind}: \`${path}\`${diff}`
+      })
+      .join("\n")
+      .concat("\n\n")
+  }
+
+  private formatToolResult(item: any): string {
+    const result = item?.result ?? item?.contentItems
+    if (result === undefined || result === null) return ""
+    const text = typeof result === "string" ? result : JSON.stringify(result, null, 2)
+    if (!text.trim()) return ""
+    return `\`\`\`json\n${text.trim()}\n\`\`\`\n\n`
+  }
+
+  private formatCollabToolCall(item: any): string {
+    const parts = [
+      item?.senderThreadId ? `sender: \`${this.truncateInline(String(item.senderThreadId))}\`` : "",
+      item?.receiverThreadId ? `receiver: \`${this.truncateInline(String(item.receiverThreadId))}\`` : "",
+      item?.newThreadId ? `new thread: \`${this.truncateInline(String(item.newThreadId))}\`` : "",
+      item?.agentStatus ? `status: ${this.truncateInline(String(item.agentStatus))}` : "",
+      item?.prompt ? `prompt: ${this.truncateInline(String(item.prompt), 180)}` : "",
+    ].filter(Boolean)
+    return parts.length ? `${parts.join("\n")}\n\n` : ""
+  }
+
+  private mergeRolloutEventHistory(session: ChatSession): ChatSession {
+    const rolloutMessages = this.readRolloutEventMessages(session.id)
+    if (!rolloutMessages.length) return session
+
+    const sessionHasCommentary = session.messages.some(message =>
+      message.role === "assistant" && this.looksLikeCommentaryTranscript(message.content)
+    )
+    const rolloutHasCommentary = rolloutMessages.some(message =>
+      message.role === "assistant" && this.looksLikeCommentaryTranscript(message.content)
+    )
+
+    if (!rolloutHasCommentary || sessionHasCommentary) return session
+
+    return {
+      ...session,
+      messages: rolloutMessages,
+    }
+  }
+
+  private looksLikeCommentaryTranscript(content: string): boolean {
+    return /\b(I('|’)ll|I('|’)m|I am|I will|I found|I’m|I’ll)\b/.test(content)
+  }
+
+  private readRolloutEventMessages(threadId: string): ChatMessage[] {
+    const rolloutPath = this.findRolloutPath(threadId)
+    if (!rolloutPath) return []
+
+    try {
+      const lines = fs.readFileSync(rolloutPath, "utf8").split(/\r?\n/)
+      const messages: ChatMessage[] = []
+      let assistantParts: string[] = []
+      let assistantCreatedAt = ""
+      let assistantIndex = 0
+
+      const flushAssistant = () => {
+        const createdAt = assistantCreatedAt || new Date().toISOString()
+        const message = this.assistantMessageFromParts(`rollout-assistant-${assistantIndex++}`, createdAt, assistantParts)
+        if (message) messages.push(message)
+        assistantParts = []
+        assistantCreatedAt = ""
+      }
+
+      for (const line of lines) {
+        if (!line.trim()) continue
+        const entry = JSON.parse(line)
+        const timestamp = typeof entry?.timestamp === "string" ? entry.timestamp : new Date().toISOString()
+        const payload = entry?.payload ?? {}
+        if (entry?.type !== "event_msg") continue
+
+        if (payload?.type === "user_message") {
+          flushAssistant()
+          const message = String(payload?.message ?? "").trim()
+          const imagePaths = [
+            ...(Array.isArray(payload?.images) ? payload.images : []),
+            ...(Array.isArray(payload?.local_images) ? payload.local_images : []),
+          ].map(value => String(value ?? "")).filter(Boolean)
+          messages.push({
+            id: `rollout-user-${messages.length}`,
+            role: "user",
+            content: message || "Solve the attached screenshot.",
+            screenshotPaths: imagePaths.length ? imagePaths : undefined,
+            screenshots: this.screenshotRecords(imagePaths),
+            createdAt: timestamp,
+          })
+          continue
+        }
+
+        if (payload?.type === "agent_message") {
+          const phase = typeof payload?.phase === "string" ? payload.phase : "final_answer"
+          if (phase !== "commentary" && phase !== "final_answer") continue
+          const message = String(payload?.message ?? "").trim()
+          if (!message) continue
+          if (!assistantCreatedAt) assistantCreatedAt = timestamp
+          assistantParts.push(`${message}\n\n`)
+          continue
+        }
+
+        if (payload?.type === "task_complete") {
+          flushAssistant()
+        }
+      }
+
+      flushAssistant()
+      return messages
+    } catch (error) {
+      console.warn("Failed to read Codex rollout event history:", error)
+      return []
+    }
+  }
+
+  private findRolloutPath(threadId: string): string | null {
+    const root = path.join(os.homedir(), ".codex", "sessions")
+    if (!fs.existsSync(root)) return null
+
+    const stack = [root]
+    while (stack.length) {
+      const current = stack.pop()
+      if (!current) continue
+      let entries: fs.Dirent[]
+      try {
+        entries = fs.readdirSync(current, { withFileTypes: true })
+      } catch {
+        continue
+      }
+
+      for (const entry of entries) {
+        const entryPath = path.join(current, entry.name)
+        if (entry.isDirectory()) {
+          stack.push(entryPath)
+        } else if (entry.isFile() && entry.name.endsWith(".jsonl") && entry.name.includes(threadId)) {
+          return entryPath
+        }
+      }
+    }
+
+    return null
   }
 
   private screenshotRecords(paths: string[]): Array<{ path: string; dataUrl: string }> | undefined {

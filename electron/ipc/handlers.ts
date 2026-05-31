@@ -14,15 +14,16 @@ import {
 
 export function initializeIpcHandlers(appState: AppState): void {
   const broadcastHistoryChanged = () => {
-    appState.processingHelper.getLLMHelper().listChatSessions()
-      .then(history => {
-        for (const window of BrowserWindow.getAllWindows()) {
-          window.webContents.send("history-changed", history)
-        }
-      })
-      .catch(error => {
-        console.warn("Failed to broadcast Codex history:", error)
-      })
+    const llmHelper = appState.processingHelper.getLLMHelper()
+    const send = (history: Array<{ id: string; title: string; createdAt: string; updatedAt: string; messageCount: number }>) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        window.webContents.send("history-changed", history)
+      }
+    }
+    send(llmHelper.getCachedChatSessions())
+    llmHelper.listChatSessions()
+      .then(send)
+      .catch(error => console.warn("Failed to broadcast Codex history:", error))
   }
 
   ipcMain.handle(
@@ -149,6 +150,9 @@ export function initializeIpcHandlers(appState: AppState): void {
 
   ipcMain.handle("chat", async (event, message: string) => {
     try {
+      for (const window of BrowserWindow.getAllWindows()) {
+        window.webContents.send("chat-stream-start")
+      }
       const activeSession = await appState.processingHelper.getLLMHelper().getActiveChatSession()
       const response = await appState.processingHelper.getLLMHelper().streamAnswer(
         {
@@ -157,11 +161,6 @@ export function initializeIpcHandlers(appState: AppState): void {
             activeSession?.workingDirectory ?? getLaunchWorkingDirectory(getAppSettings())
         },
         {
-          onStart: () => {
-            for (const window of BrowserWindow.getAllWindows()) {
-              window.webContents.send("chat-stream-start")
-            }
-          },
           onDelta: delta => {
             for (const window of BrowserWindow.getAllWindows()) {
               window.webContents.send("chat-stream-delta", delta)
@@ -353,15 +352,31 @@ export function initializeIpcHandlers(appState: AppState): void {
   })
 
   ipcMain.handle("get-chat-history-index", async () => {
-    return appState.processingHelper.getLLMHelper().listChatSessions()
+    const llmHelper = appState.processingHelper.getLLMHelper()
+    const cached = llmHelper.getCachedChatSessions()
+    llmHelper.refreshChatSessionsInBackground()
+    return cached.length ? cached : llmHelper.listChatSessions()
   })
 
   ipcMain.handle("get-chat-session", async (_event, id: string) => {
-    return appState.processingHelper.getLLMHelper().getChatSession(id)
+    const llmHelper = appState.processingHelper.getLLMHelper()
+    const cached = llmHelper.getCachedChatSession(id)
+    if (cached) {
+      llmHelper.refreshChatSessionInBackground(id)
+      return cached
+    }
+    return llmHelper.getChatSession(id)
   })
 
   ipcMain.handle("get-active-chat-session", async () => {
-    return appState.processingHelper.getLLMHelper().getActiveChatSession()
+    const llmHelper = appState.processingHelper.getLLMHelper()
+    const activeSessionId = getActiveSessionId()
+    const cached = activeSessionId ? llmHelper.getCachedChatSession(activeSessionId) : null
+    if (cached) {
+      llmHelper.refreshChatSessionInBackground(activeSessionId!)
+      return cached
+    }
+    return llmHelper.getActiveChatSession()
   })
 
   ipcMain.handle("activate-chat-session", async (_event, id: string) => {

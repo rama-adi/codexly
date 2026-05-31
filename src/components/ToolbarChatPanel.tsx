@@ -1,9 +1,12 @@
-import React, { useEffect, useRef, useState } from "react"
+import React, { useEffect, useMemo, useRef, useState } from "react"
 import { Trash2, X } from "lucide-react"
 
+import AssistantTranscript from "@/components/AssistantTranscript"
 import MarkdownMessage from "@/components/MarkdownMessage"
 import { historyService, llmService, processingService } from "@/services/desktop"
-import type { ChatSession } from "@/types/electron"
+import type { ChatSession } from "@/shared/ipc"
+
+type ChatMessage = ChatSession["messages"][number]
 
 const ToolbarChatPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [chatInput, setChatInput] = useState("")
@@ -16,12 +19,14 @@ const ToolbarChatPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     model: "gpt-5.4",
   })
   const chatInputRef = useRef<HTMLInputElement>(null)
+  const messagesRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     llmService.getCurrentConfig().then(setCurrentModel).catch(() => undefined)
     const cleanupModel = llmService.onConfigChanged(setCurrentModel)
     historyService.getActiveSession().then(setActiveSession).catch(() => undefined)
     const cleanupHistory = historyService.onChanged(() => {
+      if (chatLoadingRef.current) return
       historyService.getActiveSession().then(setActiveSession).catch(() => undefined)
     })
     const cleanupStream = [
@@ -50,14 +55,54 @@ const ToolbarChatPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     chatLoadingRef.current = chatLoading
   }, [chatLoading])
 
+  useEffect(() => {
+    messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight })
+  }, [activeSession?.messages, streamingAnswer, chatLoading])
+
   const chatMessages = activeSession?.messages ?? []
+  const displayedMessages = useMemo(() => {
+    if (!chatLoading || !streamingAnswer) return chatMessages
+    return [
+      ...chatMessages,
+      {
+        id: "streaming-assistant",
+        role: "assistant" as const,
+        content: streamingAnswer,
+        createdAt: new Date().toISOString(),
+      },
+    ]
+  }, [chatLoading, chatMessages, streamingAnswer])
 
   const handleChatSend = async () => {
-    if (!chatInput.trim()) return
-    const message = chatInput
+    const message = chatInput.trim()
+    if (!message) return
+    const timestamp = new Date().toISOString()
+    const optimisticMessage: ChatMessage = {
+      id: `pending-user-${Date.now()}`,
+      role: "user",
+      content: message,
+      createdAt: timestamp,
+    }
     setChatLoading(true)
     setStreamingAnswer("")
     setChatInput("")
+    setActiveSession(current =>
+      current
+        ? {
+            ...current,
+            messageCount: current.messageCount + 1,
+            updatedAt: timestamp,
+            messages: [...current.messages, optimisticMessage],
+          }
+        : {
+            id: "pending-active-session",
+            title: message,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            messageCount: 1,
+            messages: [optimisticMessage],
+          }
+    )
     try {
       await processingService.chat(message)
       setActiveSession(await historyService.getActiveSession())
@@ -93,8 +138,11 @@ const ToolbarChatPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   return (
     <div className="w-96 rounded-lg bg-black/60 border border-white/10 p-3 flex flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
-        <div className="truncate text-xs font-medium text-white/70">
-          {currentModel.model}
+        <div className="min-w-0">
+          <div className="truncate text-xs font-medium text-white/75">
+            {activeSession?.title ?? "New session"}
+          </div>
+          <div className="truncate text-[11px] text-white/40">{currentModel.model}</div>
         </div>
         <div className="flex items-center gap-1">
           <button
@@ -118,8 +166,11 @@ const ToolbarChatPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           </button>
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto max-h-64 min-h-[120px] rounded bg-black/30 border border-white/5 p-2 space-y-2">
-        {chatMessages.length === 0 ? (
+      <div
+        ref={messagesRef}
+        className="flex-1 overflow-y-auto max-h-64 min-h-[120px] rounded bg-black/30 border border-white/5 p-2 space-y-2"
+      >
+        {displayedMessages.length === 0 ? (
           <div className="text-xs text-white/50 text-center py-6">
             Chat with <span className="font-mono text-white/70">{currentModel.model}</span>
             <div className="mt-1 text-[11px] text-white/35">
@@ -127,7 +178,7 @@ const ToolbarChatPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             </div>
           </div>
         ) : (
-          chatMessages.map(msg => {
+          displayedMessages.map(msg => {
             const screenshots =
               msg.screenshots ??
               msg.screenshotDataUrls?.map((dataUrl, index) => ({
@@ -161,20 +212,20 @@ const ToolbarChatPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                       ))}
                     </div>
                   )}
-                  <MarkdownMessage markdown={msg.content} className="space-y-2" />
+                  {msg.role === "assistant" ? (
+                    <AssistantTranscript markdown={msg.content} compact />
+                  ) : (
+                    <MarkdownMessage markdown={msg.content} className="space-y-2" />
+                  )}
                 </div>
               </div>
             )
           })
         )}
-        {chatLoading && (
+        {chatLoading && !streamingAnswer && (
           <div className="flex justify-start">
             <div className="max-w-[85%] bg-white/5 border border-white/10 px-2.5 py-1.5 rounded text-xs text-white/85">
-              {streamingAnswer ? (
-                <MarkdownMessage markdown={streamingAnswer} streaming className="space-y-2" />
-              ) : (
-                <span className="animate-pulse text-white/60">{currentModel.model} is replying...</span>
-              )}
+              <span className="animate-pulse text-white/60">{currentModel.model} is replying...</span>
             </div>
           </div>
         )}

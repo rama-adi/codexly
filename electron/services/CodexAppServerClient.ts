@@ -1,5 +1,6 @@
 import { ChildProcessWithoutNullStreams, spawn } from "child_process"
 import readline from "readline"
+import { codexNotFoundMessage, codexSpawnEnv, resolveCodexBinary } from "./CodexBinary"
 
 type PendingRequest = {
   resolve: (value: any) => void
@@ -34,6 +35,12 @@ export class CodexAppServerClient {
       permissions: { mode: "read-only" },
       scope: "turn",
     }))
+    this.requestHandlers.set("item/commandExecution/requestApproval", () => ({
+      decision: "decline",
+    }))
+    this.requestHandlers.set("item/fileChange/requestApproval", () => ({
+      decision: "decline",
+    }))
   }
 
   public on(method: string, handler: NotificationHandler): () => void {
@@ -54,13 +61,38 @@ export class CodexAppServerClient {
   }
 
   private async startInternal(): Promise<void> {
-    const command = process.env.CODEX_BIN?.trim() || "codex"
+    const command = resolveCodexBinary()
     const webSearchMode = this.webSearchEnabled ? "live" : "disabled"
-    this.child = spawn(command, ["app-server", "-c", `web_search="${webSearchMode}"`], {
-      cwd: this.cwd,
-      env: { ...process.env },
-      shell: process.platform === "win32",
+    await new Promise<void>((resolve, reject) => {
+      let settled = false
+      const fail = (error: Error) => {
+        if (settled) return
+        settled = true
+        this.child = null
+        reject(error)
+      }
+
+      this.child = spawn(command, ["app-server", "-c", `web_search="${webSearchMode}"`], {
+        cwd: this.cwd,
+        env: codexSpawnEnv(),
+        shell: process.platform === "win32",
+      })
+
+      this.child.once("error", error => {
+        const errno = error as NodeJS.ErrnoException
+        const message = errno.code === "ENOENT"
+          ? codexNotFoundMessage(command, this.cwd)
+          : error.message
+        fail(new Error(message))
+      })
+
+      this.child.once("spawn", () => {
+        settled = true
+        resolve()
+      })
     })
+
+    if (!this.child) throw new Error("Codex app-server failed to start")
 
     this.child.once("exit", (code, signal) => {
       const error = new Error(`Codex app-server exited (${code ?? signal ?? "unknown"})`)
@@ -91,7 +123,7 @@ export class CodexAppServerClient {
         optOutNotificationMethods: null,
       },
     })
-    this.notify("initialized", undefined)
+    this.notify("initialized", {})
     this.initialized = true
   }
 

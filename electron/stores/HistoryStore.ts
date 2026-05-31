@@ -5,11 +5,20 @@ type HistoryState = {
 }
 
 const INDEX_PATH = statePath("history-index.json")
+const THREAD_ID_PATTERN = /^(?:urn:uuid:)?[0-9a-fA-F-]{32,36}$/
+
+function isValidThreadId(value: unknown): value is string {
+  return typeof value === "string" && THREAD_ID_PATTERN.test(value)
+}
 
 function readState(): HistoryState {
   const value = readJsonFile<Partial<HistoryState>>(INDEX_PATH)
+  if (value?.activeSessionId && !isValidThreadId(value.activeSessionId)) {
+    writeState({ activeSessionId: null })
+    return { activeSessionId: null }
+  }
   return {
-    activeSessionId: typeof value?.activeSessionId === "string" ? value.activeSessionId : null,
+    activeSessionId: isValidThreadId(value?.activeSessionId) ? value.activeSessionId : null,
   }
 }
 
@@ -22,7 +31,7 @@ export function getActiveSessionId(): string | null {
 }
 
 export function setActiveSessionId(sessionId: string | null): void {
-  writeState({ activeSessionId: sessionId })
+  writeState({ activeSessionId: isValidThreadId(sessionId) ? sessionId : null })
 }
 
 export function resetActiveSession(): void {

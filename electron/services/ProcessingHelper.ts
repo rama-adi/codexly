@@ -37,15 +37,15 @@ export class ProcessingHelper {
   }
 
   private broadcastHistoryChanged(): void {
+    const send = (history: Array<{ id: string; title: string; createdAt: string; updatedAt: string; messageCount: number }>) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        window.webContents.send("history-changed", history)
+      }
+    }
+    send(this.llmHelper.getCachedChatSessions())
     this.llmHelper.listChatSessions()
-      .then(history => {
-        for (const window of BrowserWindow.getAllWindows()) {
-          window.webContents.send("history-changed", history)
-        }
-      })
-      .catch(error => {
-        console.warn("Failed to broadcast Codex history:", error)
-      })
+      .then(send)
+      .catch(error => console.warn("Failed to broadcast Codex history:", error))
   }
 
   public async processScreenshots(): Promise<void> {
@@ -193,6 +193,7 @@ export class ProcessingHelper {
       .finally(() => {
         this.preparePromise = null
       })
+    this.llmHelper.refreshChatSessionsInBackground()
 
     return this.preparePromise
   }

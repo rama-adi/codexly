@@ -111,6 +111,7 @@ export class AppState {
   public hideMainWindow(): void {
     this.windowHelper.hideMainWindow()
     this.shortcutsHelper.setToolbarShortcutsEnabled(false)
+    this.processingHelper.getLLMHelper().cleanupUnusedDirectSession()
   }
 
   public showMainWindow(): void {
@@ -148,6 +149,7 @@ export class AppState {
   }
 
   public quitApp(): void {
+    this.processingHelper.getLLMHelper().cleanupUnusedDirectSession()
     this.tray?.destroy()
     this.tray = null
 

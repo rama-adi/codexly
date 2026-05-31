@@ -79,6 +79,10 @@ export function getLaunchWorkingDirectory(settings = getAppSettings()): string |
   return getSelectedDirectory(settings)?.path
 }
 
+export function getDirectThreadsDirectory(): string {
+  return statePath("direct_threads")
+}
+
 export function getDirectWorkingDirectory(): string {
-  return statePath("tmp", "direct-cwd")
+  return getDirectThreadsDirectory()
 }

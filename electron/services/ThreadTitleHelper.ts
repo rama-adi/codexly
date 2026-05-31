@@ -2,6 +2,7 @@ import { spawn } from "child_process"
 import fs from "fs"
 import os from "os"
 import path from "path"
+import { codexSpawnEnv, resolveCodexBinary } from "./CodexBinary"
 
 const TITLE_FALLBACK = "New session"
 const TITLE_MAX_LENGTH = 28
@@ -102,7 +103,7 @@ export async function generateThreadTitle(input: {
     )
     fs.writeFileSync(outputPath, "")
 
-    const command = process.env.CODEX_BIN?.trim() || "codex"
+    const command = resolveCodexBinary()
     const imagePaths = (input.imagePaths ?? []).filter(imagePath => {
       try {
         return fs.statSync(imagePath).isFile()
@@ -131,7 +132,7 @@ export async function generateThreadTitle(input: {
     await new Promise<void>((resolve, reject) => {
       const child = spawn(command, args, {
         cwd: input.workingDirectory || process.cwd() || os.homedir(),
-        env: { ...process.env },
+        env: codexSpawnEnv(),
         shell: process.platform === "win32",
       })
       const timer = setTimeout(() => {

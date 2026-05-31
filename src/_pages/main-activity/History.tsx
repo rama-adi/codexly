@@ -2,10 +2,13 @@ import React, { useEffect, useMemo, useState } from "react"
 import { Loader2, MessageSquareText, Send, Trash2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import AssistantTranscript from "@/components/AssistantTranscript"
 import MarkdownMessage from "@/components/MarkdownMessage"
 import { historyService, processingService } from "@/services/desktop"
 import { usePageActions } from "@/components/ui/page-header"
 import type { ChatSession, HistoryIndexItem } from "@/types/electron"
+
+type ChatMessage = ChatSession["messages"][number]
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
   month: "short",
@@ -91,6 +94,7 @@ const History: React.FC = () => {
       setSelectedSession(null)
       return
     }
+    if (chatLoadingRef.current) return
     historyService
       .getSession(selectedIndexItem.id)
       .then(setSelectedSession)
@@ -161,14 +165,29 @@ const History: React.FC = () => {
     if (!message || !selectedSession || chatLoading) return
 
     const sessionId = selectedSession.id
+    const optimisticMessage: ChatMessage = {
+      id: `pending-user-${Date.now()}`,
+      role: "user",
+      content: message,
+      createdAt: new Date().toISOString(),
+    }
     setChatLoading(true)
     setStreamingAnswer("")
     setChatInput("")
     setError("")
+    setSelectedSession(current =>
+      current && current.id === sessionId
+        ? {
+            ...current,
+            messageCount: current.messageCount + 1,
+            updatedAt: optimisticMessage.createdAt,
+            messages: [...current.messages, optimisticMessage],
+          }
+        : current
+    )
     try {
       const activated = await historyService.activateSession(sessionId)
       if (!activated) throw new Error("Selected session could not be loaded.")
-      setSelectedSession(activated)
       await processingService.chat(message)
       await reloadSelectedSession(sessionId)
       await load()
@@ -334,7 +353,11 @@ const History: React.FC = () => {
                                 ))}
                               </div>
                             )}
-                            <MarkdownMessage markdown={message.content} className="text-sm leading-relaxed" />
+                            {message.role === "assistant" ? (
+                              <AssistantTranscript markdown={message.content} className="text-sm leading-relaxed" />
+                            ) : (
+                              <MarkdownMessage markdown={message.content} className="text-sm leading-relaxed" />
+                            )}
                           </div>
                         </div>
                       )
@@ -343,7 +366,7 @@ const History: React.FC = () => {
                       <div className="flex justify-start">
                         <div className="max-w-[86%] rounded-md border border-border bg-card px-3 py-2 text-sm leading-relaxed text-card-foreground">
                           {streamingAnswer ? (
-                            <MarkdownMessage markdown={streamingAnswer} streaming className="text-sm leading-relaxed" />
+                            <AssistantTranscript markdown={streamingAnswer} streaming className="text-sm leading-relaxed" />
                           ) : (
                             <div className="inline-flex items-center gap-2 text-muted-foreground">
                               <Loader2 className="size-3.5 animate-spin" />
