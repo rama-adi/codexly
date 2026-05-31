@@ -78,3 +78,7 @@ export function getSelectedDirectory(settings = getAppSettings()): DirectoryProf
 export function getLaunchWorkingDirectory(settings = getAppSettings()): string | undefined {
   return getSelectedDirectory(settings)?.path
 }
+
+export function getDirectWorkingDirectory(): string {
+  return statePath("tmp", "direct-cwd")
+}

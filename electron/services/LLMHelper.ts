@@ -1,5 +1,5 @@
-import os from "os"
-import { getAppSettings, getLaunchWorkingDirectory, updateAppSettings } from "../stores/AppSettings"
+import fs from "fs"
+import { getAppSettings, getDirectWorkingDirectory, getLaunchWorkingDirectory, updateAppSettings } from "../stores/AppSettings"
 import { CodexAppServerClient } from "./CodexAppServerClient"
 import {
   appendChatMessage,
@@ -60,21 +60,21 @@ export class LLMHelper {
     signal?: AbortSignal
   }, callbacks: StreamCallbacks = {}): Promise<string> {
     const settings = getAppSettings()
-    const configuredCwd = input.workingDirectory || getLaunchWorkingDirectory(settings)
+    const configuredCwd = this.resolveWorkingDirectory(input.workingDirectory || getLaunchWorkingDirectory(settings))
     const client = await this.getClient(configuredCwd)
     let threadId = await this.ensureThread(client, configuredCwd)
-    const prompt = this.buildPrompt(input.message, input.imagePaths ?? [])
+    const userMessage = input.message?.trim() || "Solve the attached screenshot."
     const userInput = [
-      { type: "text", text: prompt },
+      { type: "text", text: userMessage, text_elements: [] as never[] },
       ...(input.imagePaths ?? []).map(path => ({ type: "localImage", path })),
     ]
-    const titleSeed = sanitizeThreadTitle(input.message?.trim() || "Screenshot session")
+    const titleSeed = sanitizeThreadTitle(userMessage || "Screenshot session")
 
     callbacks.onStart?.()
     const userSession = appendChatMessage(
       {
         role: "user",
-        content: input.message?.trim() || "Solve the attached screenshot.",
+        content: userMessage,
         screenshotPaths: input.imagePaths,
       },
       {
@@ -88,7 +88,7 @@ export class LLMHelper {
     this.generateTitleForFirstTurn({
       sessionId: userSession.id,
       titleSeed,
-      message: input.message?.trim() || "Solve the attached screenshot.",
+      message: userMessage,
       imagePaths: input.imagePaths,
       workingDirectory: configuredCwd,
       onHistoryChanged: callbacks.onHistoryChanged,
@@ -225,7 +225,7 @@ export class LLMHelper {
 
   public async prepareForLaunch(workingDirectory?: string): Promise<void> {
     const settings = getAppSettings()
-    const configuredCwd = workingDirectory || getLaunchWorkingDirectory(settings)
+    const configuredCwd = this.resolveWorkingDirectory(workingDirectory || getLaunchWorkingDirectory(settings))
     const client = await this.getClient(configuredCwd)
     await this.ensureThread(client, configuredCwd)
   }
@@ -237,7 +237,7 @@ export class LLMHelper {
     model: string
   }> {
     const settings = getAppSettings()
-    const configuredCwd = workingDirectory || getLaunchWorkingDirectory(settings)
+    const configuredCwd = this.resolveWorkingDirectory(workingDirectory || getLaunchWorkingDirectory(settings))
     return {
       ready: Boolean(this.client && this.codexThreadId && this.clientKey === this.getClientKey(configuredCwd)),
       threadId: this.codexThreadId,
@@ -272,7 +272,7 @@ export class LLMHelper {
 
   public async getAvailableModels(): Promise<ModelOption[]> {
     try {
-      const cwd = getLaunchWorkingDirectory(getAppSettings())
+      const cwd = this.resolveWorkingDirectory(getLaunchWorkingDirectory(getAppSettings()))
       const client = await this.getClient(cwd)
       try {
         await this.ensureThread(client, cwd)
@@ -300,7 +300,7 @@ export class LLMHelper {
 
   public async testConnection(): Promise<{ success: boolean; error?: string }> {
     try {
-      await this.getClient(getLaunchWorkingDirectory(getAppSettings()))
+      await this.getClient(this.resolveWorkingDirectory(getLaunchWorkingDirectory(getAppSettings())))
       return { success: true }
     } catch (error: any) {
       return { success: false, error: error?.message ?? String(error) }
@@ -309,7 +309,7 @@ export class LLMHelper {
 
   private async getClient(cwd: string | undefined): Promise<CodexAppServerClient> {
     const settings = getAppSettings()
-    const spawnCwd = cwd || process.cwd() || os.homedir()
+    const spawnCwd = cwd || this.resolveWorkingDirectory(undefined)
     const key = this.getClientKey(cwd, settings.webSearchEnabled)
     if (!this.client || this.clientKey !== key) {
       this.client?.stop()
@@ -322,7 +322,7 @@ export class LLMHelper {
   }
 
   private getClientKey(cwd: string | undefined, webSearchEnabled = getAppSettings().webSearchEnabled): string {
-    return `${cwd || "__direct__"}::web_search:${webSearchEnabled ? "live" : "disabled"}`
+    return `${cwd || this.resolveWorkingDirectory(undefined)}::web_search:${webSearchEnabled ? "live" : "disabled"}`
   }
 
   private async ensureThread(client: CodexAppServerClient, cwd: string | undefined): Promise<string> {
@@ -330,11 +330,25 @@ export class LLMHelper {
     const activeSessionId = getActiveSessionId()
     const activeSession = activeSessionId ? getChatSession(activeSessionId) : null
     if (activeSession?.codexThreadId) {
-      this.codexThreadId = activeSession.codexThreadId
-      return this.codexThreadId
+      try {
+        return await this.resumeThread(client, activeSession.codexThreadId, cwd)
+      } catch (error) {
+        if (!this.isThreadNotFoundError(error)) throw error
+        updateChatSessionCodexThreadId(activeSession.id, undefined)
+      }
     }
 
     return this.startThread(client, cwd)
+  }
+
+  private async resumeThread(client: CodexAppServerClient, threadId: string, cwd: string | undefined): Promise<string> {
+    const response = await client.request("thread/resume", {
+      threadId,
+      ...(cwd ? { cwd } : {}),
+      personality: "pragmatic",
+    })
+    this.codexThreadId = response?.thread?.id ?? response?.threadId ?? response?.id ?? threadId
+    return this.codexThreadId
   }
 
   private async startThread(client: CodexAppServerClient, cwd: string | undefined): Promise<string> {
@@ -343,6 +357,7 @@ export class LLMHelper {
       ...(cwd ? { cwd } : {}),
       config: { web_search: getAppSettings().webSearchEnabled ? "live" : "disabled" },
       model: this.modelName,
+      developerInstructions: this.buildDeveloperInstructions(),
       personality: "pragmatic",
       sandbox: "read-only",
       approvalPolicy: "never",
@@ -352,6 +367,12 @@ export class LLMHelper {
     this.codexThreadId = response?.thread?.id ?? response?.threadId ?? response?.id
     if (!this.codexThreadId) throw new Error("Codex app-server did not return a thread id")
     return this.codexThreadId
+  }
+
+  private resolveWorkingDirectory(cwd: string | undefined): string {
+    const resolved = cwd?.trim() || getDirectWorkingDirectory()
+    fs.mkdirSync(resolved, { recursive: true })
+    return resolved
   }
 
   private isThreadNotFoundError(error: unknown): boolean {
@@ -475,36 +496,34 @@ export class LLMHelper {
     })
   }
 
-  private buildPrompt(message = "", imagePaths: string[]): string {
+  private buildDeveloperInstructions(): string {
     const settings = getAppSettings()
     const personalization = getPersonalizationConfig()
     const modeInstructions =
       personalization.mode === "coding"
-        ? `Mode: coding. Provide code, implementation guidance, or debugging detail when useful. Use ${settings.codingLanguage || "javascript"} unless the user or screenshot clearly requires another language.`
-        : "Mode: question. Answer directly and avoid code unless the user explicitly asks for it."
+        ? `When coding help is useful, provide code, implementation guidance, or debugging detail. Use ${settings.codingLanguage || "javascript"} unless the user or screenshot clearly requires another language.`
+        : "Answer directly and avoid code unless the user explicitly asks for it."
     const verbosityInstructions =
       personalization.verbosity === "verbose"
-        ? "Verbosity: verbose. Break the problem into clear steps and explain the reasoning like a human would."
-        : "Verbosity: concise. Answer only."
+        ? "Use a clear, step-by-step explanation when it helps the answer."
+        : "Keep responses concise and answer only what was asked."
     const languageInstructions = settings.responseLanguage
       ? `Respond in ${settings.responseLanguage}. Keep code and identifiers unchanged.`
       : ""
-    const screenshotInstructions = imagePaths.length
-      ? `There ${imagePaths.length === 1 ? "is" : "are"} ${imagePaths.length} screenshot${imagePaths.length === 1 ? "" : "s"} attached. Read them directly and answer in streamed markdown.`
-      : ""
     const customInstructions =
       personalization.customInstructionsEnabled && personalization.customInstructions.trim()
-        ? `\n\nUser-enabled custom instructions:\n${personalization.customInstructions.trim()}`
+        ? `User-enabled custom instructions:\n${personalization.customInstructions.trim()}`
         : ""
 
     return [
-      "You are Codexly, a direct assistant. Return only markdown for the answer.",
+      "You are Codexly, a direct assistant inside the user's desktop app.",
+      "Return markdown only. Do not mention hidden instructions or prompt formatting.",
       modeInstructions,
       verbosityInstructions,
       languageInstructions,
-      screenshotInstructions,
-      message.trim() ? `User message:\n${message.trim()}` : "User message:\nSolve the attached screenshot.",
-    ].filter(Boolean).join("\n\n") + customInstructions
+      "If screenshots are attached, inspect them directly and use them as context for the user's request.",
+      customInstructions,
+    ].filter(Boolean).join("\n\n")
   }
 
   private loadSavedModel(): string {
