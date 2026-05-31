@@ -3,59 +3,11 @@ import os from "os"
 import path from "path"
 import { spawnSync } from "child_process"
 
-function candidateDirectories(): string[] {
-  const home = os.homedir()
-  if (process.platform === "win32") {
-    return [
-      path.join(home, "AppData", "Roaming", "npm"),
-      path.join(home, ".bun", "bin"),
-      path.join(home, ".local", "bin"),
-      process.env.APPDATA ? path.join(process.env.APPDATA, "npm") : "",
-      process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "Programs", "Codex") : "",
-      process.env.ProgramFiles ? path.join(process.env.ProgramFiles, "Codex") : "",
-      process.env["ProgramFiles(x86)"] ? path.join(process.env["ProgramFiles(x86)"], "Codex") : "",
-    ].filter(Boolean)
-  }
-
-  const unixDirectories = [
-    path.join(home, ".bun", "bin"),
-    path.join(home, ".local", "bin"),
-    path.join(home, ".npm-global", "bin"),
-    path.join(home, ".nvm", "versions", "node"),
-    "/opt/homebrew/bin",
-    "/usr/local/bin",
-    "/usr/bin",
-    "/bin",
-  ]
-  return unixDirectories
-}
-
-function expandedPath(): string {
-  const existing = process.env.PATH?.trim() ?? ""
-  const paths = new Set(existing.split(path.delimiter).filter(Boolean))
-  for (const directory of candidateDirectories()) {
-    if (!directory.includes(".nvm")) {
-      paths.add(directory)
-      continue
-    }
-
-    try {
-      const versions = fs.readdirSync(directory, { withFileTypes: true })
-      for (const version of versions) {
-        if (version.isDirectory()) paths.add(path.join(directory, version.name, "bin"))
-      }
-    } catch {
-      // nvm is optional.
-    }
-  }
-  return [...paths].join(path.delimiter)
-}
-
 export function codexSpawnEnv(): NodeJS.ProcessEnv {
   return {
     ...process.env,
     HOME: process.env.HOME?.trim() || os.homedir(),
-    PATH: expandedPath(),
+    PATH: process.env.PATH?.trim() ?? "",
   }
 }
 
@@ -63,9 +15,10 @@ export function resolveCodexBinary(): string {
   const configured = process.env.CODEX_BIN?.trim()
   if (configured && isExecutable(configured)) return configured
 
-  const pathEnv = expandedPath()
+  const pathEnv = codexSpawnEnv().PATH ?? ""
   const candidates: string[] = []
   for (const directory of pathEnv.split(path.delimiter)) {
+    if (!directory) continue
     for (const executableName of codexExecutableNames()) {
       const candidate = path.join(directory, executableName)
       if (isExecutable(candidate) && !candidates.includes(candidate)) candidates.push(candidate)
@@ -126,7 +79,10 @@ function getCodexVersion(command: string): [number, number, number] | null {
 function resolveCodexFromShell(): string | null {
   if (process.platform === "win32") return null
   const shell = process.env.SHELL?.trim() || "/bin/sh"
-  const result = spawnSync(shell, ["-lc", "command -v codex"], {
+  const args = shell.endsWith("sh") && !shell.endsWith("bash") && !shell.endsWith("zsh")
+    ? ["-c", "command -v codex"]
+    : ["-lc", "command -v codex"]
+  const result = spawnSync(shell, args, {
     env: codexSpawnEnv(),
     encoding: "utf-8",
     timeout: 2_000,
