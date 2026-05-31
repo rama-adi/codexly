@@ -18,7 +18,10 @@ export class CodexAppServerClient {
   private initialized = false
   private startPromise: Promise<void> | null = null
 
-  constructor(private readonly cwd: string) {
+  constructor(
+    private readonly cwd: string,
+    private readonly webSearchEnabled: boolean
+  ) {
     this.requestHandlers.set("item/tool/requestUserInput", (params) => ({
       answers: Object.fromEntries(
         (params?.questions ?? []).map((question: any) => [
@@ -52,7 +55,8 @@ export class CodexAppServerClient {
 
   private async startInternal(): Promise<void> {
     const command = process.env.CODEX_BIN?.trim() || "codex"
-    this.child = spawn(command, ["app-server"], {
+    const webSearchMode = this.webSearchEnabled ? "live" : "disabled"
+    this.child = spawn(command, ["app-server", "-c", `web_search="${webSearchMode}"`], {
       cwd: this.cwd,
       env: { ...process.env },
       shell: process.platform === "win32",

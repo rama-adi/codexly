@@ -71,6 +71,8 @@ export class ProcessingHelper {
           {
             onDelta: delta =>
               mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.SOLUTION_STREAM_DELTA, delta),
+            onStreamEvent: delta =>
+              mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.SOLUTION_STREAM_DELTA, delta),
             onComplete: answer => {
               mainWindow.webContents.send(
                 this.appState.PROCESSING_EVENTS.SOLUTION_STREAM_COMPLETE,
@@ -113,6 +115,8 @@ export class ProcessingHelper {
         },
         {
           onDelta: delta =>
+            mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.SOLUTION_STREAM_DELTA, delta),
+          onStreamEvent: delta =>
             mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.SOLUTION_STREAM_DELTA, delta),
           onComplete: answer => {
             mainWindow.webContents.send(

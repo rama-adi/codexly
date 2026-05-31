@@ -21,9 +21,11 @@ const History: React.FC = () => {
     null
   )
   const chatInputRef = React.useRef<HTMLInputElement>(null)
+  const chatLoadingRef = React.useRef(false)
   const [loading, setLoading] = useState(true)
   const [chatInput, setChatInput] = useState("")
   const [chatLoading, setChatLoading] = useState(false)
+  const [streamingAnswer, setStreamingAnswer] = useState("")
   const [error, setError] = useState("")
 
   const selectedIndexItem = useMemo(
@@ -50,7 +52,7 @@ const History: React.FC = () => {
 
   useEffect(() => {
     load()
-    return historyService.onChanged(history => {
+    const cleanupHistory = historyService.onChanged(history => {
       setItems(history)
       setSelectedId(current =>
         current && history.some(item => item.id === current)
@@ -58,7 +60,31 @@ const History: React.FC = () => {
           : history[0]?.id ?? null
       )
     })
+
+    const cleanupStream = [
+      processingService.onChatStreamStart(() => {
+        if (chatLoadingRef.current) setStreamingAnswer("")
+      }),
+      processingService.onChatStreamDelta(delta => {
+        if (chatLoadingRef.current) setStreamingAnswer(current => current + delta)
+      }),
+      processingService.onChatStreamComplete(data => {
+        if (chatLoadingRef.current) setStreamingAnswer(current => current || data.answer)
+      }),
+      processingService.onChatStreamError(error => {
+        if (chatLoadingRef.current) setError(error)
+      }),
+    ]
+
+    return () => {
+      cleanupHistory()
+      cleanupStream.forEach(cleanup => cleanup())
+    }
   }, [])
+
+  useEffect(() => {
+    chatLoadingRef.current = chatLoading
+  }, [chatLoading])
 
   useEffect(() => {
     if (!selectedIndexItem) {
@@ -136,6 +162,7 @@ const History: React.FC = () => {
 
     const sessionId = selectedSession.id
     setChatLoading(true)
+    setStreamingAnswer("")
     setChatInput("")
     setError("")
     try {
@@ -149,6 +176,7 @@ const History: React.FC = () => {
       setError(String(error))
     } finally {
       setChatLoading(false)
+      setStreamingAnswer("")
     }
   }
 
@@ -313,9 +341,15 @@ const History: React.FC = () => {
                     })}
                     {chatLoading && (
                       <div className="flex justify-start">
-                        <div className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm text-muted-foreground">
-                          <Loader2 className="size-3.5 animate-spin" />
-                          Replying...
+                        <div className="max-w-[86%] rounded-md border border-border bg-card px-3 py-2 text-sm leading-relaxed text-card-foreground">
+                          {streamingAnswer ? (
+                            <MarkdownMessage markdown={streamingAnswer} streaming className="text-sm leading-relaxed" />
+                          ) : (
+                            <div className="inline-flex items-center gap-2 text-muted-foreground">
+                              <Loader2 className="size-3.5 animate-spin" />
+                              Replying...
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}

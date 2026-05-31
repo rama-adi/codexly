@@ -10,6 +10,7 @@ export interface AppSettings {
   responseLanguage: string
   answerHeight: number
   reasoningEffort: "none" | "minimal" | "low" | "medium" | "high" | "xhigh"
+  webSearchEnabled: boolean
   launchMode: "direct" | "directory"
   selectedDirectoryId: string | null
   directoryProfiles: DirectoryProfile[]
@@ -114,6 +115,10 @@ export interface AppBridge {
     onSolutionStreamDelta: (callback: (delta: string) => void) => () => void
     onSolutionStreamComplete: (callback: (data: { answer: string }) => void) => () => void
     onSolutionStreamError: (callback: (error: string) => void) => () => void
+    onChatStreamStart: (callback: () => void) => () => void
+    onChatStreamDelta: (callback: (delta: string) => void) => () => void
+    onChatStreamComplete: (callback: (data: { answer: string }) => void) => () => void
+    onChatStreamError: (callback: (error: string) => void) => () => void
     onNoScreenshots: (callback: () => void) => () => void
     onUnauthorized: (callback: () => void) => () => void
     onReadyStatusChanged: (callback: (status: CodexReadyStatus) => void) => () => void

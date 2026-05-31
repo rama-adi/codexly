@@ -34,6 +34,7 @@ type ModelOption = {
 type StreamCallbacks = {
   onStart?: () => void
   onDelta?: (delta: string) => void
+  onStreamEvent?: (delta: string) => void
   onComplete?: (text: string) => void
   onError?: (error: Error) => void
   onHistoryChanged?: () => void
@@ -94,6 +95,7 @@ export class LLMHelper {
     })
 
     let answer = ""
+    let transcript = ""
     let turnId: string | null = null
     let settled = false
     const cleanups: Array<() => void> = []
@@ -108,24 +110,63 @@ export class LLMHelper {
           reject(error)
           return
         }
+        const content = transcript.trim() || answer
         appendChatMessage(
-          { role: "assistant", content: answer },
+          { role: "assistant", content },
           { workingDirectory: configuredCwd, codexThreadId: threadId }
         )
-        callbacks.onComplete?.(answer)
-        resolve(answer)
+        callbacks.onComplete?.(content)
+        resolve(content)
+      }
+
+      const appendStreamEvent = (delta: string) => {
+        if (!delta) return
+        transcript += delta
+        callbacks.onStreamEvent?.(delta)
       }
 
       cleanups.push(
         client.on("turn/started", params => {
           if (params?.threadId === threadId) turnId = params.turnId
         }),
+        client.on("item/started", params => {
+          if (params?.threadId !== threadId) return
+          if (turnId && params.turnId !== turnId) return
+          appendStreamEvent(this.formatStartedItem(params.item))
+        }),
+        client.on("item/completed", params => {
+          if (params?.threadId !== threadId) return
+          if (turnId && params.turnId !== turnId) return
+          appendStreamEvent(this.formatCompletedItem(params.item))
+        }),
         client.on("item/agentMessage/delta", params => {
           if (params?.threadId !== threadId) return
           if (turnId && params.turnId !== turnId) return
           const delta = String(params.delta ?? "")
           answer += delta
+          transcript += delta
           callbacks.onDelta?.(delta)
+        }),
+        client.on("item/plan/delta", params => {
+          if (params?.threadId !== threadId) return
+          if (turnId && params.turnId !== turnId) return
+          appendStreamEvent(String(params.delta ?? ""))
+        }),
+        client.on("item/reasoning/summaryTextDelta", params => {
+          if (params?.threadId !== threadId) return
+          if (turnId && params.turnId !== turnId) return
+          appendStreamEvent(String(params.delta ?? ""))
+        }),
+        client.on("item/commandExecution/outputDelta", params => {
+          if (params?.threadId !== threadId) return
+          if (turnId && params.turnId !== turnId) return
+          const text = String(params.delta ?? params.output ?? "")
+          if (text) appendStreamEvent(`\n\n\`\`\`text\n${text}\n\`\`\``)
+        }),
+        client.on("item/fileChange/outputDelta", params => {
+          if (params?.threadId !== threadId) return
+          if (turnId && params.turnId !== turnId) return
+          appendStreamEvent(String(params.delta ?? params.output ?? ""))
         }),
         client.on("turn/completed", params => {
           if (params?.threadId !== threadId) return
@@ -198,7 +239,7 @@ export class LLMHelper {
     const settings = getAppSettings()
     const configuredCwd = workingDirectory || getLaunchWorkingDirectory(settings)
     return {
-      ready: Boolean(this.client && this.codexThreadId && this.clientKey === (configuredCwd || "__direct__")),
+      ready: Boolean(this.client && this.codexThreadId && this.clientKey === this.getClientKey(configuredCwd)),
       threadId: this.codexThreadId,
       cwd: configuredCwd,
       model: this.modelName,
@@ -267,16 +308,21 @@ export class LLMHelper {
   }
 
   private async getClient(cwd: string | undefined): Promise<CodexAppServerClient> {
+    const settings = getAppSettings()
     const spawnCwd = cwd || process.cwd() || os.homedir()
-    const key = cwd || "__direct__"
+    const key = this.getClientKey(cwd, settings.webSearchEnabled)
     if (!this.client || this.clientKey !== key) {
       this.client?.stop()
-      this.client = new CodexAppServerClient(spawnCwd)
+      this.client = new CodexAppServerClient(spawnCwd, settings.webSearchEnabled)
       this.clientKey = key
       this.codexThreadId = null
       await this.client.start()
     }
     return this.client
+  }
+
+  private getClientKey(cwd: string | undefined, webSearchEnabled = getAppSettings().webSearchEnabled): string {
+    return `${cwd || "__direct__"}::web_search:${webSearchEnabled ? "live" : "disabled"}`
   }
 
   private async ensureThread(client: CodexAppServerClient, cwd: string | undefined): Promise<string> {
@@ -295,6 +341,7 @@ export class LLMHelper {
     const activeSessionId = getActiveSessionId()
     const response = await client.request("thread/start", {
       ...(cwd ? { cwd } : {}),
+      config: { web_search: getAppSettings().webSearchEnabled ? "live" : "disabled" },
       model: this.modelName,
       personality: "pragmatic",
       sandbox: "read-only",
@@ -345,6 +392,57 @@ export class LLMHelper {
     }
   }
 
+  private formatStartedItem(item: any): string {
+    switch (item?.type) {
+      case "webSearch":
+        return `\n\n_Searching the web${this.describeWebSearch(item)}..._\n\n`
+      case "commandExecution":
+        return `\n\n_Running command: \`${this.truncateInline(String(item.command ?? "command"))}\`_\n\n`
+      case "fileChange":
+        return "\n\n_Applying file changes..._\n\n"
+      case "mcpToolCall":
+        return `\n\n_Using ${this.truncateInline(String(item.server ?? "app"))}: ${this.truncateInline(String(item.tool ?? "tool"))}..._\n\n`
+      case "dynamicToolCall":
+        return `\n\n_Using tool: ${this.truncateInline(String(item.tool ?? "tool"))}..._\n\n`
+      default:
+        return ""
+    }
+  }
+
+  private formatCompletedItem(item: any): string {
+    switch (item?.type) {
+      case "webSearch":
+        return `_Finished web search${this.describeWebSearch(item)}._\n\n`
+      case "commandExecution":
+        if (item.exitCode === undefined || item.exitCode === null) return ""
+        return `_Command exited with code ${item.exitCode}._\n\n`
+      case "fileChange":
+        return "_File changes complete._\n\n"
+      case "mcpToolCall":
+      case "dynamicToolCall":
+        if (item.error) return `_Tool failed: ${this.truncateInline(String(item.error))}_\n\n`
+        return "_Tool call complete._\n\n"
+      default:
+        return ""
+    }
+  }
+
+  private describeWebSearch(item: any): string {
+    const action = item?.action
+    const query =
+      item?.query ??
+      action?.query ??
+      (Array.isArray(action?.queries) ? action.queries.join(", ") : undefined) ??
+      action?.url ??
+      action?.pattern
+    return query ? ` for "${this.truncateInline(String(query), 120)}"` : ""
+  }
+
+  private truncateInline(value: string, maxLength = 90): string {
+    const normalized = value.replace(/\s+/g, " ").trim()
+    return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}...` : normalized
+  }
+
   private generateTitleForFirstTurn(input: {
     sessionId: string
     titleSeed: string
@@ -380,8 +478,6 @@ export class LLMHelper {
   private buildPrompt(message = "", imagePaths: string[]): string {
     const settings = getAppSettings()
     const personalization = getPersonalizationConfig()
-    const session = getActiveSessionId() ? getChatSession(getActiveSessionId()!) : null
-    const history = session?.messages.slice(-8).map(item => `${item.role}: ${item.content}`).join("\n")
     const modeInstructions =
       personalization.mode === "coding"
         ? `Mode: coding. Provide code, implementation guidance, or debugging detail when useful. Use ${settings.codingLanguage || "javascript"} unless the user or screenshot clearly requires another language.`
@@ -406,7 +502,6 @@ export class LLMHelper {
       modeInstructions,
       verbosityInstructions,
       languageInstructions,
-      history ? `Recent chat history:\n${history}` : "",
       screenshotInstructions,
       message.trim() ? `User message:\n${message.trim()}` : "User message:\nSolve the attached screenshot.",
     ].filter(Boolean).join("\n\n") + customInstructions

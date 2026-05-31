@@ -24,6 +24,7 @@ export const appSettingsSchema = z.object({
   // Max height of the solutions/answer panel in pixels.
   answerHeight: z.number().min(200).max(1400).default(600),
   reasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh"]).default("low"),
+  webSearchEnabled: z.boolean().default(false),
   launchMode: z.enum(["direct", "directory"]).default("direct"),
   selectedDirectoryId: z.string().nullable().default(null),
   directoryProfiles: z.array(directoryProfileSchema).default([]),

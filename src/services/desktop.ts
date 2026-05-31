@@ -42,6 +42,13 @@ export const processingService = {
     bridge().processing.onSolutionStreamComplete(callback),
   onSolutionStreamError: (callback: (error: string) => void) =>
     bridge().processing.onSolutionStreamError(callback),
+  onChatStreamStart: (callback: () => void) => bridge().processing.onChatStreamStart(callback),
+  onChatStreamDelta: (callback: (delta: string) => void) =>
+    bridge().processing.onChatStreamDelta(callback),
+  onChatStreamComplete: (callback: (data: { answer: string }) => void) =>
+    bridge().processing.onChatStreamComplete(callback),
+  onChatStreamError: (callback: (error: string) => void) =>
+    bridge().processing.onChatStreamError(callback),
   onNoScreenshots: (callback: () => void) => bridge().processing.onNoScreenshots(callback),
   onUnauthorized: (callback: () => void) => bridge().processing.onUnauthorized(callback),
   onReadyStatusChanged: (callback: (status: CodexReadyStatus) => void) =>

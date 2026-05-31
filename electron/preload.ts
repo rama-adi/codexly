@@ -63,6 +63,10 @@ const appBridge = {
     onSolutionStreamDelta: callback => on(PROCESSING_EVENTS.SOLUTION_STREAM_DELTA, callback),
     onSolutionStreamComplete: callback => on(PROCESSING_EVENTS.SOLUTION_STREAM_COMPLETE, callback),
     onSolutionStreamError: callback => on(PROCESSING_EVENTS.SOLUTION_STREAM_ERROR, callback),
+    onChatStreamStart: callback => on("chat-stream-start", callback),
+    onChatStreamDelta: callback => on("chat-stream-delta", callback),
+    onChatStreamComplete: callback => on("chat-stream-complete", callback),
+    onChatStreamError: callback => on("chat-stream-error", callback),
     onNoScreenshots: callback => {
       const subscription = () => callback()
       ipcRenderer.on(PROCESSING_EVENTS.NO_SCREENSHOTS, subscription)

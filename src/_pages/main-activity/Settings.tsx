@@ -58,9 +58,11 @@ const Settings: React.FC = () => {
   const [models, setModels] = useState<ModelOption[]>([])
   const [stealthEnabled, setStealthEnabled] = useState(true)
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("low")
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false)
   const [loadingConfig, setLoadingConfig] = useState(true)
   const [savingModel, setSavingModel] = useState(false)
   const [savingStealth, setSavingStealth] = useState(false)
+  const [savingWebSearch, setSavingWebSearch] = useState(false)
   const [status, setStatus] = useState<ConnectionStatus>("idle")
   const [errorMessage, setErrorMessage] = useState("")
   const modelDiscoveryFailed = !loadingConfig && models.length === 0
@@ -82,6 +84,7 @@ const Settings: React.FC = () => {
         setModels(availableModels)
         setStealthEnabled(settings.stealthEnabled)
         setReasoningEffort(settings.reasoningEffort)
+        setWebSearchEnabled(settings.webSearchEnabled)
       } catch (error) {
         console.error("Error loading LLM config:", error)
       } finally {
@@ -165,6 +168,26 @@ const Settings: React.FC = () => {
       setStatus("error")
     } finally {
       setSavingStealth(false)
+    }
+  }
+
+  const changeWebSearch = async (enabled: boolean) => {
+    const previous = webSearchEnabled
+    setWebSearchEnabled(enabled)
+    setSavingWebSearch(true)
+    setStatus("idle")
+    setErrorMessage("")
+    try {
+      const settings = await settingsService.updateAppSettings({
+        webSearchEnabled: enabled
+      })
+      setWebSearchEnabled(settings.webSearchEnabled)
+    } catch (error) {
+      setWebSearchEnabled(previous)
+      setErrorMessage(String(error))
+      setStatus("error")
+    } finally {
+      setSavingWebSearch(false)
     }
   }
 
@@ -297,6 +320,30 @@ const Settings: React.FC = () => {
                     ))}
                   </div>
                 )
+              }
+            />
+          </CardRows>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <div className="min-w-0">
+              <CardTitle>Tools</CardTitle>
+              <CardDescription>
+                Enable optional Codex capabilities for future answers.
+              </CardDescription>
+            </div>
+          </CardHeader>
+          <CardRows>
+            <SettingRow
+              label="Web search"
+              description="Allow Codex to use live web search when current information is needed."
+              control={
+                <Switch
+                  checked={webSearchEnabled}
+                  disabled={loadingConfig || savingWebSearch}
+                  onCheckedChange={changeWebSearch}
+                />
               }
             />
           </CardRows>

@@ -9,6 +9,8 @@ const ToolbarChatPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [chatInput, setChatInput] = useState("")
   const [activeSession, setActiveSession] = useState<ChatSession | null>(null)
   const [chatLoading, setChatLoading] = useState(false)
+  const chatLoadingRef = useRef(false)
+  const [streamingAnswer, setStreamingAnswer] = useState("")
   const [currentModel, setCurrentModel] = useState<{ provider: string; model: string }>({
     provider: "codex",
     model: "gpt-5.4",
@@ -22,12 +24,31 @@ const ToolbarChatPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     const cleanupHistory = historyService.onChanged(() => {
       historyService.getActiveSession().then(setActiveSession).catch(() => undefined)
     })
+    const cleanupStream = [
+      processingService.onChatStreamStart(() => {
+        if (chatLoadingRef.current) setStreamingAnswer("")
+      }),
+      processingService.onChatStreamDelta(delta => {
+        if (chatLoadingRef.current) setStreamingAnswer(current => current + delta)
+      }),
+      processingService.onChatStreamComplete(data => {
+        if (chatLoadingRef.current) setStreamingAnswer(current => current || data.answer)
+      }),
+      processingService.onChatStreamError(error => {
+        if (chatLoadingRef.current) setStreamingAnswer(`Error: ${error}`)
+      }),
+    ]
     requestAnimationFrame(() => chatInputRef.current?.focus())
     return () => {
       cleanupModel()
       cleanupHistory()
+      cleanupStream.forEach(cleanup => cleanup())
     }
   }, [])
+
+  useEffect(() => {
+    chatLoadingRef.current = chatLoading
+  }, [chatLoading])
 
   const chatMessages = activeSession?.messages ?? []
 
@@ -35,6 +56,7 @@ const ToolbarChatPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     if (!chatInput.trim()) return
     const message = chatInput
     setChatLoading(true)
+    setStreamingAnswer("")
     setChatInput("")
     try {
       await processingService.chat(message)
@@ -58,6 +80,7 @@ const ToolbarChatPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       )
     } finally {
       setChatLoading(false)
+      setStreamingAnswer("")
       chatInputRef.current?.focus()
     }
   }
@@ -146,8 +169,12 @@ const ToolbarChatPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         )}
         {chatLoading && (
           <div className="flex justify-start">
-            <div className="bg-white/5 border border-white/10 px-2.5 py-1.5 rounded text-xs text-white/60">
-              <span className="animate-pulse">{currentModel.model} is replying...</span>
+            <div className="max-w-[85%] bg-white/5 border border-white/10 px-2.5 py-1.5 rounded text-xs text-white/85">
+              {streamingAnswer ? (
+                <MarkdownMessage markdown={streamingAnswer} streaming className="space-y-2" />
+              ) : (
+                <span className="animate-pulse text-white/60">{currentModel.model} is replying...</span>
+              )}
             </div>
           </div>
         )}

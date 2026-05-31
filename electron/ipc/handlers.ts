@@ -13,7 +13,8 @@ import {
   getActiveSessionId,
   getChatSession,
   listChatSessions,
-  resetActiveSession
+  resetActiveSession,
+  updateChatSessionCodexThreadId
 } from "../stores/HistoryStore"
 
 export function initializeIpcHandlers(appState: AppState): void {
@@ -155,7 +156,35 @@ export function initializeIpcHandlers(appState: AppState): void {
           workingDirectory:
             activeSession?.workingDirectory ?? getLaunchWorkingDirectory(getAppSettings())
         },
-        { onHistoryChanged: broadcastHistoryChanged }
+        {
+          onStart: () => {
+            for (const window of BrowserWindow.getAllWindows()) {
+              window.webContents.send("chat-stream-start")
+            }
+          },
+          onDelta: delta => {
+            for (const window of BrowserWindow.getAllWindows()) {
+              window.webContents.send("chat-stream-delta", delta)
+            }
+          },
+          onStreamEvent: delta => {
+            for (const window of BrowserWindow.getAllWindows()) {
+              window.webContents.send("chat-stream-delta", delta)
+            }
+          },
+          onComplete: answer => {
+            for (const window of BrowserWindow.getAllWindows()) {
+              window.webContents.send("chat-stream-complete", { answer })
+            }
+            broadcastHistoryChanged()
+          },
+          onError: error => {
+            for (const window of BrowserWindow.getAllWindows()) {
+              window.webContents.send("chat-stream-error", error.message)
+            }
+          },
+          onHistoryChanged: broadcastHistoryChanged
+        }
       )
       broadcastHistoryChanged()
       return response
@@ -295,8 +324,14 @@ export function initializeIpcHandlers(appState: AppState): void {
       "directoryProfiles" in patch ||
       "workingDirectory" in patch ||
       "model" in patch ||
-      "reasoningEffort" in patch
+      "reasoningEffort" in patch ||
+      "webSearchEnabled" in patch
     ) {
+      if ("webSearchEnabled" in patch) {
+        appState.processingHelper.getLLMHelper().clearChatHistory()
+        const activeSessionId = getActiveSessionId()
+        if (activeSessionId) updateChatSessionCodexThreadId(activeSessionId, undefined)
+      }
       appState.processingHelper.invalidateReadyStatus()
       appState.processingHelper.prepareForLaunch().catch(error => {
         console.warn("Codex prelaunch failed after settings update:", error)
