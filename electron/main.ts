@@ -5,7 +5,6 @@ import { ScreenshotCaptureMode, ScreenshotHelper } from "./shell/ScreenshotHelpe
 import { ShortcutsHelper } from "./shell/shortcuts"
 import { CodexReadyStatus, ProcessingHelper } from "./services/ProcessingHelper"
 import { getAppSettings, updateAppSettings } from "./stores/AppSettings"
-import { listChatSessions } from "./stores/HistoryStore"
 
 export class AppState {
   private static instance: AppState | null = null
@@ -238,9 +237,10 @@ export class AppState {
     this.setView("queue")
     this.processingHelper.resetSession()
     await this.processingHelper.prepareForLaunch()
+    const history = await this.processingHelper.getLLMHelper().listChatSessions()
     for (const window of BrowserWindow.getAllWindows()) {
       window.webContents.send("screenshots-cleared")
-      window.webContents.send("history-changed", listChatSessions())
+      window.webContents.send("history-changed", history)
       window.webContents.send("reset-view")
     }
     this.showMainWindow()

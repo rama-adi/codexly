@@ -2,15 +2,11 @@ import fs from "fs"
 import { getAppSettings, getDirectWorkingDirectory, getLaunchWorkingDirectory, updateAppSettings } from "../stores/AppSettings"
 import { CodexAppServerClient } from "./CodexAppServerClient"
 import {
-  appendChatMessage,
-  embedMessageScreenshots,
   getActiveSessionId,
-  getChatSession,
-  updateChatSessionCodexThreadId,
-  updateChatSessionTitle,
+  setActiveSessionId,
 } from "../stores/HistoryStore"
 import { getPersonalizationConfig } from "../stores/PersonalizationStore"
-import { canReplaceThreadTitle, generateThreadTitle, sanitizeThreadTitle } from "./ThreadTitleHelper"
+import { sanitizeThreadTitle } from "./ThreadTitleHelper"
 
 type ReasoningEffortOption = {
   reasoningEffort: string
@@ -38,6 +34,34 @@ type StreamCallbacks = {
   onComplete?: (text: string) => void
   onError?: (error: Error) => void
   onHistoryChanged?: () => void
+}
+
+type ChatMessage = {
+  id: string
+  role: "user" | "assistant"
+  content: string
+  screenshotPaths?: string[]
+  screenshotDataUrls?: string[]
+  screenshots?: Array<{ path: string; dataUrl: string }>
+  createdAt: string
+}
+
+type ChatSession = {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  workingDirectory?: string
+  codexThreadId?: string
+  messages: ChatMessage[]
+}
+
+type HistoryIndexItem = {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  messageCount: number
 }
 
 const DEFAULT_MODEL = "gpt-5.4"
@@ -68,31 +92,9 @@ export class LLMHelper {
       { type: "text", text: userMessage, text_elements: [] as never[] },
       ...(input.imagePaths ?? []).map(path => ({ type: "localImage", path })),
     ]
-    const titleSeed = sanitizeThreadTitle(userMessage || "Screenshot session")
+    if (threadId) setActiveSessionId(threadId)
 
     callbacks.onStart?.()
-    const userSession = appendChatMessage(
-      {
-        role: "user",
-        content: userMessage,
-        screenshotPaths: input.imagePaths,
-      },
-      {
-        titleHint: titleSeed,
-        workingDirectory: configuredCwd,
-        codexThreadId: threadId,
-        embedScreenshots: false,
-      }
-    )
-    const userMessageId = userSession.messages.at(-1)?.id
-    this.generateTitleForFirstTurn({
-      sessionId: userSession.id,
-      titleSeed,
-      message: userMessage,
-      imagePaths: input.imagePaths,
-      workingDirectory: configuredCwd,
-      onHistoryChanged: callbacks.onHistoryChanged,
-    })
 
     let answer = ""
     let transcript = ""
@@ -111,11 +113,8 @@ export class LLMHelper {
           return
         }
         const content = transcript.trim() || answer
-        appendChatMessage(
-          { role: "assistant", content },
-          { workingDirectory: configuredCwd, codexThreadId: threadId }
-        )
         callbacks.onComplete?.(content)
+        callbacks.onHistoryChanged?.()
         resolve(content)
       }
 
@@ -197,19 +196,13 @@ export class LLMHelper {
 
       try {
         await startTurn()
-        if (userMessageId && input.imagePaths?.length) {
-          setImmediate(() => {
-            embedMessageScreenshots(userSession.id, userMessageId)
-            callbacks.onHistoryChanged?.()
-          })
-        }
       } catch (error: any) {
         if (this.isThreadNotFoundError(error)) {
           try {
             this.codexThreadId = null
-            updateChatSessionCodexThreadId(userSession.id, undefined)
+            setActiveSessionId(null)
             threadId = await this.startThread(client, configuredCwd)
-            updateChatSessionCodexThreadId(userSession.id, threadId)
+            setActiveSessionId(threadId)
             await startTurn()
             callbacks.onHistoryChanged?.()
             return
@@ -251,6 +244,81 @@ export class LLMHelper {
   }
 
   public clearChatHistory(): void {
+    this.codexThreadId = null
+  }
+
+  public async listChatSessions(): Promise<HistoryIndexItem[]> {
+    const client = await this.getClient(this.resolveWorkingDirectory(getLaunchWorkingDirectory(getAppSettings())))
+    const response = await client.request("thread/list", {
+      limit: 100,
+      archived: false,
+      sourceKinds: ["appServer"],
+      sortKey: "updated_at",
+      sortDirection: "desc",
+    })
+    const threads = Array.isArray(response?.data) ? response.data : []
+    return threads
+      .filter((thread: any) => String(thread?.preview ?? thread?.name ?? "").trim())
+      .map((thread: any) => this.threadToIndexItem(thread))
+  }
+
+  public async getChatSession(threadId: string): Promise<ChatSession | null> {
+    if (!threadId) return null
+    const client = await this.getClient(this.resolveWorkingDirectory(getLaunchWorkingDirectory(getAppSettings())))
+    try {
+      const response = await client.request("thread/read", { threadId, includeTurns: true })
+      return this.threadToChatSession(response?.thread)
+    } catch (error) {
+      if (this.isThreadNotFoundError(error)) return null
+      throw error
+    }
+  }
+
+  public async getActiveChatSession(): Promise<ChatSession | null> {
+    const activeThreadId = getActiveSessionId()
+    return activeThreadId ? this.getChatSession(activeThreadId) : null
+  }
+
+  public async activateChatSession(threadId: string): Promise<ChatSession | null> {
+    const session = await this.getChatSession(threadId)
+    if (!session) return null
+    setActiveSessionId(threadId)
+    this.codexThreadId = null
+    return session
+  }
+
+  public async deleteChatSession(threadId: string): Promise<boolean> {
+    if (!threadId) return false
+    const client = await this.getClient(this.resolveWorkingDirectory(getLaunchWorkingDirectory(getAppSettings())))
+    try {
+      await client.request("thread/archive", { threadId })
+      if (getActiveSessionId() === threadId) {
+        setActiveSessionId(null)
+        this.codexThreadId = null
+      }
+      return true
+    } catch (error) {
+      if (this.isThreadNotFoundError(error)) return false
+      throw error
+    }
+  }
+
+  public async newChatSession(): Promise<ChatSession> {
+    setActiveSessionId(null)
+    this.codexThreadId = null
+    return {
+      id: "",
+      title: "New session",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      messages: [],
+    }
+  }
+
+  public async clearChatSessions(): Promise<void> {
+    const sessions = await this.listChatSessions()
+    await Promise.allSettled(sessions.map(session => this.deleteChatSession(session.id)))
+    setActiveSessionId(null)
     this.codexThreadId = null
   }
 
@@ -328,13 +396,12 @@ export class LLMHelper {
   private async ensureThread(client: CodexAppServerClient, cwd: string | undefined): Promise<string> {
     if (this.codexThreadId) return this.codexThreadId
     const activeSessionId = getActiveSessionId()
-    const activeSession = activeSessionId ? getChatSession(activeSessionId) : null
-    if (activeSession?.codexThreadId) {
+    if (activeSessionId) {
       try {
-        return await this.resumeThread(client, activeSession.codexThreadId, cwd)
+        return await this.resumeThread(client, activeSessionId, cwd)
       } catch (error) {
         if (!this.isThreadNotFoundError(error)) throw error
-        updateChatSessionCodexThreadId(activeSession.id, undefined)
+        setActiveSessionId(null)
       }
     }
 
@@ -366,6 +433,7 @@ export class LLMHelper {
     })
     this.codexThreadId = response?.thread?.id ?? response?.threadId ?? response?.id
     if (!this.codexThreadId) throw new Error("Codex app-server did not return a thread id")
+    setActiveSessionId(this.codexThreadId)
     return this.codexThreadId
   }
 
@@ -464,36 +532,120 @@ export class LLMHelper {
     return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}...` : normalized
   }
 
-  private generateTitleForFirstTurn(input: {
-    sessionId: string
-    titleSeed: string
-    message: string
-    imagePaths?: string[]
-    workingDirectory?: string
-    onHistoryChanged?: () => void
-  }): void {
-    setImmediate(async () => {
+  private threadToIndexItem(thread: any): HistoryIndexItem {
+    const messages = this.threadToMessages(thread)
+    return {
+      id: String(thread?.id ?? ""),
+      title: this.threadTitle(thread),
+      createdAt: this.isoFromUnixSeconds(thread?.createdAt),
+      updatedAt: this.isoFromUnixSeconds(thread?.updatedAt ?? thread?.createdAt),
+      messageCount: messages.length || this.countThreadMessages(thread) || (thread?.preview ? 1 : 0),
+    }
+  }
+
+  private threadToChatSession(thread: any): ChatSession | null {
+    if (!thread?.id) return null
+    const messages = this.threadToMessages(thread)
+    return {
+      ...this.threadToIndexItem(thread),
+      workingDirectory: typeof thread.cwd === "string" ? thread.cwd : undefined,
+      codexThreadId: thread.id,
+      messages,
+    }
+  }
+
+  private threadTitle(thread: any): string {
+    return sanitizeThreadTitle(String(thread?.name || thread?.preview || "New session"))
+  }
+
+  private countThreadMessages(thread: any): number {
+    return Array.isArray(thread?.turns)
+      ? thread.turns.reduce((count: number, turn: any) => count + (Array.isArray(turn?.items) ? turn.items.length : 0), 0)
+      : 0
+  }
+
+  private threadToMessages(thread: any): ChatMessage[] {
+    if (!Array.isArray(thread?.turns)) return []
+    return thread.turns.flatMap((turn: any) => this.turnToMessages(turn))
+  }
+
+  private turnToMessages(turn: any): ChatMessage[] {
+    if (!Array.isArray(turn?.items)) return []
+    const createdAt = this.isoFromUnixSeconds(turn?.startedAt ?? turn?.completedAt)
+    return turn.items
+      .map((item: any, index: number) => this.threadItemToMessage(item, createdAt, index))
+      .filter((message: ChatMessage | null): message is ChatMessage => Boolean(message))
+  }
+
+  private threadItemToMessage(item: any, createdAt: string, index: number): ChatMessage | null {
+    const id = String(item?.id ?? `item-${index}`)
+    switch (item?.type) {
+      case "userMessage": {
+        const textParts = Array.isArray(item.content)
+          ? item.content.filter((part: any) => part?.type === "text").map((part: any) => String(part.text ?? ""))
+          : []
+        const imagePaths = Array.isArray(item.content)
+          ? item.content.filter((part: any) => part?.type === "localImage").map((part: any) => String(part.path ?? "")).filter(Boolean)
+          : []
+        return {
+          id,
+          role: "user",
+          content: textParts.join("\n\n").trim() || "Solve the attached screenshot.",
+          screenshotPaths: imagePaths.length ? imagePaths : undefined,
+          screenshots: this.screenshotRecords(imagePaths),
+          createdAt,
+        }
+      }
+      case "agentMessage":
+        if (!String(item.text ?? "").trim()) return null
+        return { id, role: "assistant", content: String(item.text), createdAt }
+      case "plan":
+        return { id, role: "assistant", content: String(item.text ?? ""), createdAt }
+      case "reasoning": {
+        const summary = Array.isArray(item.summary) ? item.summary.join("\n\n") : ""
+        const content = Array.isArray(item.content) ? item.content.join("\n\n") : ""
+        const text = [summary, content].filter(Boolean).join("\n\n")
+        return text ? { id, role: "assistant", content: text, createdAt } : null
+      }
+      case "webSearch":
+        return { id, role: "assistant", content: `_Searched the web${this.describeWebSearch(item)}._`, createdAt }
+      case "commandExecution": {
+        const command = String(item.command ?? "command")
+        const output = String(item.aggregatedOutput ?? "").trim()
+        const status = item.exitCode === null || item.exitCode === undefined ? String(item.status ?? "completed") : `exit ${item.exitCode}`
+        return {
+          id,
+          role: "assistant",
+          content: [`_Ran command: \`${this.truncateInline(command)}\` (${status})._`, output ? `\n\`\`\`text\n${output}\n\`\`\`` : ""].join(""),
+          createdAt,
+        }
+      }
+      case "fileChange":
+        return { id, role: "assistant", content: "_Applied file changes._", createdAt }
+      case "mcpToolCall":
+        return { id, role: "assistant", content: `_Used ${this.truncateInline(String(item.server ?? "app"))}: ${this.truncateInline(String(item.tool ?? "tool"))}._`, createdAt }
+      case "dynamicToolCall":
+        return { id, role: "assistant", content: `_Used tool: ${this.truncateInline(String(item.tool ?? "tool"))}._`, createdAt }
+      default:
+        return null
+    }
+  }
+
+  private screenshotRecords(paths: string[]): Array<{ path: string; dataUrl: string }> | undefined {
+    const records = paths.flatMap(path => {
       try {
-        const session = getChatSession(input.sessionId)
-        if (!session || session.messages.length !== 1) return
-        if (!canReplaceThreadTitle(session.title, input.titleSeed)) return
-
-        const title = await generateThreadTitle({
-          message: input.message,
-          imagePaths: input.imagePaths,
-          workingDirectory: input.workingDirectory,
-          model: this.modelName,
-        })
-        if (!title) return
-
-        const latestSession = getChatSession(input.sessionId)
-        if (!latestSession || !canReplaceThreadTitle(latestSession.title, input.titleSeed)) return
-        updateChatSessionTitle(input.sessionId, title)
-        input.onHistoryChanged?.()
-      } catch (error) {
-        console.warn("Failed to generate Codex thread title:", error)
+        const buffer = fs.readFileSync(path)
+        return [{ path, dataUrl: `data:image/png;base64,${buffer.toString("base64")}` }]
+      } catch {
+        return []
       }
     })
+    return records.length ? records : undefined
+  }
+
+  private isoFromUnixSeconds(value: unknown): string {
+    const seconds = typeof value === "number" && Number.isFinite(value) ? value : Date.now() / 1000
+    return new Date(seconds * 1000).toISOString()
   }
 
   private buildDeveloperInstructions(): string {

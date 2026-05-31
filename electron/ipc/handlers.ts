@@ -6,23 +6,23 @@ import { AppState } from "../main"
 import { getAppSettings, getLaunchWorkingDirectory, updateAppSettings } from "../stores/AppSettings"
 import { getPersonalizationConfig, updatePersonalizationConfig } from "../stores/PersonalizationStore"
 import {
-  activateChatSession,
   clearChatSessions,
-  deleteChatSession,
-  getActiveChatSession,
   getActiveSessionId,
-  getChatSession,
-  listChatSessions,
   resetActiveSession,
-  updateChatSessionCodexThreadId
+  setActiveSessionId,
 } from "../stores/HistoryStore"
 
 export function initializeIpcHandlers(appState: AppState): void {
   const broadcastHistoryChanged = () => {
-    const history = listChatSessions()
-    for (const window of BrowserWindow.getAllWindows()) {
-      window.webContents.send("history-changed", history)
-    }
+    appState.processingHelper.getLLMHelper().listChatSessions()
+      .then(history => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          window.webContents.send("history-changed", history)
+        }
+      })
+      .catch(error => {
+        console.warn("Failed to broadcast Codex history:", error)
+      })
   }
 
   ipcMain.handle(
@@ -136,9 +136,9 @@ export function initializeIpcHandlers(appState: AppState): void {
       appState.processingHelper.resetSession()
       for (const window of BrowserWindow.getAllWindows()) {
         window.webContents.send("screenshots-cleared")
-        window.webContents.send("history-changed", listChatSessions())
         window.webContents.send("reset-view")
       }
+      broadcastHistoryChanged()
       console.log("Screenshot queues have been cleared.")
       return { success: true }
     } catch (error: any) {
@@ -149,7 +149,7 @@ export function initializeIpcHandlers(appState: AppState): void {
 
   ipcMain.handle("chat", async (event, message: string) => {
     try {
-      const activeSession = getActiveChatSession()
+      const activeSession = await appState.processingHelper.getLLMHelper().getActiveChatSession()
       const response = await appState.processingHelper.getLLMHelper().streamAnswer(
         {
           message,
@@ -206,8 +206,8 @@ export function initializeIpcHandlers(appState: AppState): void {
   })
 
   ipcMain.handle("clear-chat-sessions", async () => {
+    await appState.processingHelper.getLLMHelper().clearChatSessions()
     clearChatSessions()
-    appState.processingHelper.getLLMHelper().clearChatHistory()
     appState.processingHelper.invalidateReadyStatus()
     appState.processingHelper.prepareForLaunch().catch(error => {
       console.warn("Codex prelaunch failed after clearing sessions:", error)
@@ -330,7 +330,7 @@ export function initializeIpcHandlers(appState: AppState): void {
       if ("webSearchEnabled" in patch) {
         appState.processingHelper.getLLMHelper().clearChatHistory()
         const activeSessionId = getActiveSessionId()
-        if (activeSessionId) updateChatSessionCodexThreadId(activeSessionId, undefined)
+        if (activeSessionId) setActiveSessionId(null)
       }
       appState.processingHelper.invalidateReadyStatus()
       appState.processingHelper.prepareForLaunch().catch(error => {
@@ -353,19 +353,19 @@ export function initializeIpcHandlers(appState: AppState): void {
   })
 
   ipcMain.handle("get-chat-history-index", async () => {
-    return listChatSessions()
+    return appState.processingHelper.getLLMHelper().listChatSessions()
   })
 
   ipcMain.handle("get-chat-session", async (_event, id: string) => {
-    return getChatSession(id)
+    return appState.processingHelper.getLLMHelper().getChatSession(id)
   })
 
   ipcMain.handle("get-active-chat-session", async () => {
-    return getActiveChatSession()
+    return appState.processingHelper.getLLMHelper().getActiveChatSession()
   })
 
   ipcMain.handle("activate-chat-session", async (_event, id: string) => {
-    const session = activateChatSession(id)
+    const session = await appState.processingHelper.getLLMHelper().activateChatSession(id)
     if (session) {
       appState.processingHelper.getLLMHelper().clearChatHistory()
       appState.processingHelper.invalidateReadyStatus()
@@ -379,13 +379,12 @@ export function initializeIpcHandlers(appState: AppState): void {
 
   ipcMain.handle("delete-chat-session", async (_event, id: string) => {
     const wasActive = getActiveSessionId() === id
-    const deleted = deleteChatSession(id)
+    const deleted = await appState.processingHelper.getLLMHelper().deleteChatSession(id)
     if (deleted) {
       if (wasActive) {
-        const nextActiveSession = getActiveChatSession()
         appState.processingHelper.getLLMHelper().clearChatHistory()
         appState.processingHelper.invalidateReadyStatus()
-        appState.processingHelper.prepareForLaunch(nextActiveSession?.workingDirectory).catch(error => {
+        appState.processingHelper.prepareForLaunch().catch(error => {
           console.warn("Codex prelaunch failed after deleting active session:", error)
         })
       }
@@ -395,7 +394,8 @@ export function initializeIpcHandlers(appState: AppState): void {
   })
 
   ipcMain.handle("new-chat-session", async () => {
-    const session = resetActiveSession()
+    const session = await appState.processingHelper.getLLMHelper().newChatSession()
+    resetActiveSession()
     appState.processingHelper.getLLMHelper().clearChatHistory()
     appState.processingHelper.invalidateReadyStatus()
     appState.processingHelper.prepareForLaunch().catch(error => {

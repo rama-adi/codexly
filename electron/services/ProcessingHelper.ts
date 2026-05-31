@@ -4,7 +4,7 @@ import { AppState } from "../main"
 import { LLMHelper } from "./LLMHelper"
 import dotenv from "dotenv"
 import { getAppSettings, getLaunchWorkingDirectory } from "../stores/AppSettings"
-import { getActiveChatSession, listChatSessions, resetActiveSession } from "../stores/HistoryStore"
+import { resetActiveSession } from "../stores/HistoryStore"
 import { BrowserWindow } from "electron"
 
 dotenv.config()
@@ -16,13 +16,6 @@ export type CodexReadyStatus = {
   cwd?: string
   threadId?: string | null
   error?: string
-}
-
-function broadcastHistoryChanged() {
-  const history = listChatSessions()
-  for (const window of BrowserWindow.getAllWindows()) {
-    window.webContents.send("history-changed", history)
-  }
 }
 
 export class ProcessingHelper {
@@ -41,6 +34,18 @@ export class ProcessingHelper {
   constructor(appState: AppState) {
     this.appState = appState
     this.llmHelper = new LLMHelper()
+  }
+
+  private broadcastHistoryChanged(): void {
+    this.llmHelper.listChatSessions()
+      .then(history => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          window.webContents.send("history-changed", history)
+        }
+      })
+      .catch(error => {
+        console.warn("Failed to broadcast Codex history:", error)
+      })
   }
 
   public async processScreenshots(): Promise<void> {
@@ -78,9 +83,9 @@ export class ProcessingHelper {
                 this.appState.PROCESSING_EVENTS.SOLUTION_STREAM_COMPLETE,
                 { answer }
               )
-              broadcastHistoryChanged()
+              this.broadcastHistoryChanged()
             },
-            onHistoryChanged: broadcastHistoryChanged,
+            onHistoryChanged: () => this.broadcastHistoryChanged(),
           }
         )
       } catch (error: any) {
@@ -123,9 +128,9 @@ export class ProcessingHelper {
               this.appState.PROCESSING_EVENTS.SOLUTION_STREAM_COMPLETE,
               { answer }
             )
-            broadcastHistoryChanged()
+            this.broadcastHistoryChanged()
           },
-          onHistoryChanged: broadcastHistoryChanged,
+          onHistoryChanged: () => this.broadcastHistoryChanged(),
         }
       )
 
@@ -193,7 +198,7 @@ export class ProcessingHelper {
   }
 
   public async prepareForActiveSession(): Promise<void> {
-    const activeSession = getActiveChatSession()
+    const activeSession = await this.llmHelper.getActiveChatSession()
     await this.prepareForLaunch(activeSession?.workingDirectory)
   }
 
