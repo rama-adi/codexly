@@ -8,6 +8,23 @@ import type { ChatSession } from "@/shared/ipc"
 
 type ChatMessage = ChatSession["messages"][number]
 
+const messageScreenshots = (message: ChatMessage) => {
+  const screenshots = [
+    ...(message.screenshots ?? []),
+    ...(message.screenshotDataUrls?.map((dataUrl, index) => ({
+      path: message.screenshotPaths?.[index] ?? `${message.id}-${index}`,
+      dataUrl,
+    })) ?? []),
+  ]
+  const seen = new Set<string>()
+  return screenshots.filter(screenshot => {
+    const key = `${screenshot.path}\n${screenshot.dataUrl}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 const ToolbarChatPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [chatInput, setChatInput] = useState("")
   const [activeSession, setActiveSession] = useState<ChatSession | null>(null)
@@ -179,13 +196,7 @@ const ToolbarChatPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           </div>
         ) : (
           displayedMessages.map(msg => {
-            const screenshots =
-              msg.screenshots ??
-              msg.screenshotDataUrls?.map((dataUrl, index) => ({
-                path: msg.screenshotPaths?.[index] ?? `${msg.id}-${index}`,
-                dataUrl,
-              })) ??
-              []
+            const screenshots = messageScreenshots(msg)
 
             return (
               <div
@@ -204,7 +215,7 @@ const ToolbarChatPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                     <div className="mb-2 grid grid-cols-2 gap-1.5">
                       {screenshots.map(screenshot => (
                         <img
-                          key={screenshot.path}
+                          key={`${screenshot.path}-${screenshot.dataUrl.slice(0, 48)}`}
                           src={screenshot.dataUrl}
                           alt="Screenshot"
                           className="max-h-24 rounded border border-white/10 object-cover"

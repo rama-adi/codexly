@@ -18,7 +18,6 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
@@ -95,8 +94,8 @@ const WindowControls: React.FC = () => (
 )
 
 const CodexlyMark: React.FC<{ showText?: boolean }> = ({ showText = true }) => (
-  <div className="flex min-w-0 items-center gap-2">
-    <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
+  <div className="flex min-w-0 items-center justify-center gap-2">
+    <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white shadow-sm">
       <Sparkles className="size-3.5" />
     </span>
     {showText && (
@@ -108,8 +107,8 @@ const CodexlyMark: React.FC<{ showText?: boolean }> = ({ showText = true }) => (
 )
 
 const SidebarBrandBlock: React.FC = () => (
-  <div className="px-2 pb-2 pt-1 text-sidebar-foreground">
-    <CodexlyMark />
+  <div className="flex justify-center px-2 py-3 text-sidebar-foreground">
+    <CodexlyMark showText={false} />
   </div>
 )
 
@@ -121,7 +120,7 @@ const renderNavItem = (item: NavItem, activePath: string) => {
       <SidebarMenuButton asChild isActive={active} tooltip={item.title}>
         <Link to={item.to}>
           <Icon />
-          <span>{item.title}</span>
+          <span className="sr-only">{item.title}</span>
         </Link>
       </SidebarMenuButton>
     </SidebarMenuItem>
@@ -137,6 +136,7 @@ const MainActivityLayout: React.FC = () => {
   const [actions, setActions] = React.useState<React.ReactNode>(null)
   const location = useLocation()
   const title = titleByPath[location.pathname] ?? "Home"
+  const isHome = location.pathname === "/home"
   const isHistory = location.pathname === "/history"
   const toggleWindowMaximize = () => {
     shellService.toggleCurrentWindowMaximize()
@@ -157,44 +157,43 @@ const MainActivityLayout: React.FC = () => {
 
   return (
     <SidebarProvider
-      style={{ "--sidebar-width": "12rem" } as React.CSSProperties}
+      style={{ "--sidebar-width": "6rem" } as React.CSSProperties}
     >
       <div
-        className="h-screen min-h-screen w-full overflow-hidden bg-background text-foreground"
+        className="h-screen min-h-screen w-full overflow-hidden bg-[#f3f5f6] text-foreground"
         data-clickable-root
       >
         <div className="flex h-full min-h-0 w-full">
           <Sidebar
             collapsible="none"
-            className="h-full min-h-screen shrink-0 border-r border-sidebar-border bg-sidebar"
+            className="h-full min-h-screen shrink-0 border-0 bg-[#f3f5f6]"
           >
             <SidebarHeader
               onDoubleClick={toggleWindowMaximize}
-              className={`draggable-area relative h-12 shrink-0 flex-row items-center gap-2 border-b border-sidebar-border px-4 py-0 wco:h-[env(titlebar-area-height)] wco:pl-[calc(env(titlebar-area-x)+1em)] ${
-                isMac ? "pl-[90px]" : ""
+              className={`draggable-area relative h-[70px] shrink-0 flex-row items-center justify-center gap-2 px-3 py-0 wco:h-[env(titlebar-area-height)] wco:pl-[calc(env(titlebar-area-x)+1em)] ${
+                isMac ? "pt-8" : ""
               }`}
             >
               {isMac && !isWindowFocused && <InactiveMacTrafficLights />}
             </SidebarHeader>
-            <SidebarContent className="min-h-0">
-              <SidebarGroup>
+            <SidebarContent className="min-h-0 px-3">
+              <SidebarGroup className="items-center px-0">
                 <SidebarBrandBlock />
-                <SidebarGroupLabel>Navigation</SidebarGroupLabel>
                 <SidebarGroupContent>
-                  <SidebarMenu>
+                  <SidebarMenu className="items-center gap-3">
                     {primaryNav.map(item => renderNavItem(item, location.pathname))}
                   </SidebarMenu>
                 </SidebarGroupContent>
               </SidebarGroup>
             </SidebarContent>
-            <SidebarFooter className="shrink-0 border-t border-sidebar-border">
-              <SidebarMenu>
+            <SidebarFooter className="shrink-0 px-3 pb-4">
+              <SidebarMenu className="items-center">
                 {footerNav.map(item => renderNavItem(item, location.pathname))}
               </SidebarMenu>
             </SidebarFooter>
           </Sidebar>
-          <SidebarInset className="flex min-h-0 flex-col bg-background">
-            {isHistory ? (
+          <SidebarInset className="flex min-h-0 flex-col bg-[#f3f5f6]">
+            {isHome ? null : isHistory ? (
               <header
                 onDoubleClick={toggleWindowMaximize}
                 className="draggable-area sticky top-0 z-10 grid h-12 shrink-0 grid-cols-[minmax(220px,260px)_minmax(0,1fr)] border-b border-border bg-card wco:h-[env(titlebar-area-height)]"

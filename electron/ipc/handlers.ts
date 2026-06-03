@@ -156,9 +156,11 @@ export function initializeIpcHandlers(appState: AppState): void {
         window.webContents.send("chat-stream-start")
       }
       const activeSession = await appState.processingHelper.getLLMHelper().getActiveChatSession()
+      const extraScreenshotQueue = appState.getScreenshotHelper().getExtraScreenshotQueue()
       const response = await appState.processingHelper.getLLMHelper().streamAnswer(
         {
           message,
+          imagePaths: extraScreenshotQueue.length ? extraScreenshotQueue : undefined,
           workingDirectory:
             activeSession?.workingDirectory ?? getLaunchWorkingDirectory(getAppSettings())
         },

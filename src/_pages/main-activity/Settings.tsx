@@ -192,8 +192,9 @@ const Settings: React.FC = () => {
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto bg-background text-foreground">
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-6 py-5">
+    <div className="min-h-0 flex-1 overflow-y-auto bg-[#f3f5f6] text-foreground">
+      <div className="m-2 min-h-[calc(100vh-4rem)] rounded-xl border border-[#dfe3e6] bg-white px-5 py-5 shadow-[0_1px_2px_rgba(15,23,42,0.08),0_16px_42px_rgba(15,23,42,0.05)]">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-5">
         <Card>
           <CardHeader>
             <div className="min-w-0">
@@ -372,6 +373,7 @@ const Settings: React.FC = () => {
             />
           </CardRows>
         </Card>
+        </div>
       </div>
     </div>
   )

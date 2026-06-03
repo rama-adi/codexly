@@ -963,9 +963,7 @@ export class LLMHelper {
     const textParts = Array.isArray(item.content)
       ? item.content.filter((part: any) => part?.type === "text").map((part: any) => String(part.text ?? ""))
       : []
-    const imagePaths = Array.isArray(item.content)
-      ? item.content.filter((part: any) => part?.type === "localImage").map((part: any) => String(part.path ?? "")).filter(Boolean)
-      : []
+    const imagePaths = this.userInputImageReferences(item.content)
     return {
       id,
       role: "user",
@@ -1169,10 +1167,7 @@ export class LLMHelper {
         if (payload?.type === "user_message") {
           flushAssistant()
           const message = String(payload?.message ?? "").trim()
-          const imagePaths = [
-            ...(Array.isArray(payload?.images) ? payload.images : []),
-            ...(Array.isArray(payload?.local_images) ? payload.local_images : []),
-          ].map(value => String(value ?? "")).filter(Boolean)
+          const imagePaths = this.rolloutImageReferences(payload)
           messages.push({
             id: `rollout-user-${messages.length}`,
             role: "user",
@@ -1235,11 +1230,47 @@ export class LLMHelper {
     return null
   }
 
-  private screenshotRecords(paths: string[]): Array<{ path: string; dataUrl: string }> | undefined {
-    const records = paths.flatMap(path => {
+  private userInputImageReferences(content: unknown): string[] {
+    if (!Array.isArray(content)) return []
+    return content.flatMap((part: any) => {
+      if (part?.type === "localImage") {
+        const path = String(part.path ?? "").trim()
+        return path ? [path] : []
+      }
+      if (part?.type === "image") {
+        const url = String(part.url ?? "").trim()
+        return url ? [url] : []
+      }
+      return []
+    })
+  }
+
+  private rolloutImageReferences(payload: any): string[] {
+    return [
+      ...this.normalizeRolloutImageList(payload?.images),
+      ...this.normalizeRolloutImageList(payload?.local_images),
+    ]
+  }
+
+  private normalizeRolloutImageList(value: unknown): string[] {
+    if (!Array.isArray(value)) return []
+    return value.flatMap(item => {
+      if (typeof item === "string") return item.trim() ? [item.trim()] : []
+      if (!item || typeof item !== "object") return []
+      const record = item as { path?: unknown; url?: unknown }
+      const reference = String(record.path ?? record.url ?? "").trim()
+      return reference ? [reference] : []
+    })
+  }
+
+  private screenshotRecords(references: string[]): Array<{ path: string; dataUrl: string }> | undefined {
+    const records = references.flatMap(reference => {
+      if (/^(?:https?:|data:image\/)/i.test(reference)) {
+        return [{ path: reference, dataUrl: reference }]
+      }
       try {
-        const buffer = fs.readFileSync(path)
-        return [{ path, dataUrl: `data:image/png;base64,${buffer.toString("base64")}` }]
+        const buffer = fs.readFileSync(reference)
+        return [{ path: reference, dataUrl: `data:image/png;base64,${buffer.toString("base64")}` }]
       } catch {
         return []
       }

@@ -10,6 +10,23 @@ import type { ChatSession, HistoryIndexItem } from "@/types/electron"
 
 type ChatMessage = ChatSession["messages"][number]
 
+const messageScreenshots = (message: ChatMessage) => {
+  const screenshots = [
+    ...(message.screenshots ?? []),
+    ...(message.screenshotDataUrls?.map((dataUrl, index) => ({
+      path: message.screenshotPaths?.[index] ?? `${message.id}-${index}`,
+      dataUrl,
+    })) ?? []),
+  ]
+  const seen = new Set<string>()
+  return screenshots.filter(screenshot => {
+    const key = `${screenshot.path}\n${screenshot.dataUrl}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
   month: "short",
   day: "numeric",
@@ -240,14 +257,14 @@ const History: React.FC = () => {
   usePageActions(titlebarContent)
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-background text-foreground">
+    <div className="flex min-h-0 flex-1 flex-col bg-[#f3f5f6] p-2 text-foreground">
       {error && (
-        <div className="mx-6 mt-5 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+        <div className="mb-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
           {error}
         </div>
       )}
 
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(220px,260px)_minmax(0,1fr)] overflow-hidden">
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(220px,260px)_minmax(0,1fr)] overflow-hidden rounded-xl border border-[#dfe3e6] bg-white shadow-[0_1px_2px_rgba(15,23,42,0.08),0_16px_42px_rgba(15,23,42,0.05)]">
         <div className="min-h-0 overflow-y-auto border-r border-border bg-card">
           <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-border bg-card px-4 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             <span>
@@ -311,13 +328,7 @@ const History: React.FC = () => {
                 <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-6 py-5">
                   <div className="flex flex-col gap-3">
                     {selectedSession.messages.map(message => {
-                      const screenshots =
-                        message.screenshots ??
-                        message.screenshotDataUrls?.map((dataUrl, index) => ({
-                          path: message.screenshotPaths?.[index] ?? `${message.id}-${index}`,
-                          dataUrl,
-                        })) ??
-                        []
+                      const screenshots = messageScreenshots(message)
 
                       return (
                         <div
@@ -345,7 +356,7 @@ const History: React.FC = () => {
                               <div className="mb-2 grid grid-cols-2 gap-2">
                                 {screenshots.map(screenshot => (
                                   <img
-                                    key={screenshot.path}
+                                    key={`${screenshot.path}-${screenshot.dataUrl.slice(0, 48)}`}
                                     src={screenshot.dataUrl}
                                     alt="Screenshot"
                                     className="max-h-44 rounded border border-current/10 object-cover"
