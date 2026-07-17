@@ -3,7 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { registerIpc, type IpcRegistration } from './ipc/register-ipc'
-import { SettingsStore } from './persistence/settings-store'
+import { DEFAULT_SETTINGS, SettingsStore } from './persistence/settings-store'
 import type { Bootstrap } from '../src/shared/schemas/bootstrap'
 import type { Capability } from '../src/shared/schemas/capabilities'
 import type { WindowState } from '../src/shared/schemas/windows'
@@ -66,9 +66,7 @@ async function createBootstrap(
   requesterRole: WindowRole,
 ): Promise<Bootstrap> {
   const storedSettings =
-    requesterRole === 'homepage'
-      ? await settingsStore.load()
-      : { theme: 'system' as const, launchAtLogin: false }
+    requesterRole === 'homepage' ? await settingsStore.load() : DEFAULT_SETTINGS
   const generatedAt = new Date().toISOString()
   const windows = (['homepage', 'overlay'] as const)
     .map((role) => windowManager.getSnapshot(role))
@@ -82,32 +80,7 @@ async function createBootstrap(
   return {
     version: 1,
     generatedAt,
-    settings: {
-      version: 1,
-      appearance: {
-        theme: storedSettings.theme,
-        reducedMotion: false,
-      },
-      application: {
-        launchAtLogin: storedSettings.launchAtLogin,
-        showDockIcon: true,
-        startMinimized: false,
-      },
-      privacy: {
-        persistConversations: true,
-        shareDiagnostics: false,
-      },
-      capture: {
-        includeMicrophone: false,
-        includeSystemAudio: false,
-        screenshotFormat: 'png',
-      },
-      assistant: {
-        model: 'codex',
-        reasoningEffort: 'medium',
-        responseLanguage: 'en',
-      },
-    },
+    settings: storedSettings,
     auth: {
       version: 1,
       state: 'unauthenticated',

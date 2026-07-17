@@ -8,6 +8,7 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+.claude/worktrees/
 dist
 dist-electron
 dist-ssr
@@ -15,6 +16,7 @@ release
 .packaging
 *.tsbuildinfo
 *.tgz
+runtime-verification-*.png
 *.local
 
 # Editor directories and files

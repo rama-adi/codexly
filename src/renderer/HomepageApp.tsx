@@ -1,6 +1,6 @@
 import { ArrowUpRight, Command, FolderOpen, PanelsTopLeft, Settings2 } from "lucide-react"
 import { useEffect, useState } from "react"
-import { hasCapability } from "./desktop"
+import { desktop, hasCapability } from "./desktop"
 import {
   homepageSections,
   resolveHomepageSection,
@@ -52,6 +52,28 @@ const useHashSection = () => {
 
 export function HomepageApp() {
   const { section, navigate } = useHashSection()
+  const [bridgeStatus, setBridgeStatus] = useState<"connecting" | "connected" | "unavailable">(
+    desktop.available ? "connecting" : "unavailable",
+  )
+
+  useEffect(() => {
+    if (!desktop.available) return
+
+    let active = true
+    void desktop.bootstrap().then(
+      () => {
+        if (active) setBridgeStatus("connected")
+      },
+      () => {
+        if (active) setBridgeStatus("unavailable")
+      },
+    )
+
+    return () => {
+      active = false
+    }
+  }, [])
+
   const canCapture = hasCapability("capture")
   const copy = sectionCopy[section]
 
@@ -114,7 +136,7 @@ export function HomepageApp() {
 
       <footer className="homepage-footer">
         <span>⌘ K to focus commands</span>
-        <span>Secure desktop bridge: not connected</span>
+        <span>Secure desktop bridge: {bridgeStatus}</span>
       </footer>
     </main>
   )
