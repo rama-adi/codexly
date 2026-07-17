@@ -1,43 +1,43 @@
-// @see - https://www.electron.build/configuration/configuration
+// @see https://www.electron.build/configuration/configuration
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
-  "appId": "YourAppID",
+  "appId": "com.codexly.desktop",
   "asar": true,
-  "productName": "YourAppName",
+  "productName": "Codexly",
   "directories": {
     "output": "release/${version}"
   },
   "files": [
-    "dist",
-    "dist-electron"
+    "dist/**/*",
+    "dist-electron/**/*",
+    "package.json",
+    "!node_modules/@openai/codex{,/**}",
+    "!node_modules/@openai/codex-*/**"
+  ],
+  "extraResources": [
+    {
+      "from": ".packaging/codex",
+      "to": "codex",
+      "filter": ["**/*"]
+    }
   ],
   "mac": {
-    "target": [
-      "dmg"
-    ],
-    "artifactName": "${productName}-Mac-${version}-Installer.${ext}"
+    "target": ["dmg"],
+    "artifactName": "${productName}-Mac-${version}-${arch}.${ext}"
   },
   "win": {
     "target": [
       {
         "target": "nsis",
-        "arch": [
-          "x64"
-        ]
+        "arch": ["x64"]
       }
     ],
-    "artifactName": "${productName}-Windows-${version}-Setup.${ext}"
+    "artifactName": "${productName}-Windows-${version}-${arch}.${ext}"
   },
   "nsis": {
     "oneClick": false,
     "perMachine": false,
     "allowToChangeInstallationDirectory": true,
     "deleteAppDataOnUninstall": false
-  },
-  "linux": {
-    "target": [
-      "AppImage"
-    ],
-    "artifactName": "${productName}-Linux-${version}.${ext}"
   }
 }

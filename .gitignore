@@ -9,7 +9,12 @@ lerna-debug.log*
 
 node_modules
 dist
+dist-electron
 dist-ssr
+release
+.packaging
+*.tsbuildinfo
+*.tgz
 *.local
 
 # Editor directories and files
