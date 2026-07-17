@@ -5,6 +5,7 @@ import {
   createHomepageWindowOptions,
   createOverlayWindowOptions,
   createRendererTarget,
+  WINDOW_ROLES,
   type WindowRole,
 } from './window-options'
 import {
@@ -14,13 +15,10 @@ import {
   type WindowSnapshot,
 } from './window-state'
 
-export const WINDOW_SNAPSHOT_CHANNEL = 'codexly:window:snapshot'
-
 export interface WindowManagerOptions {
   mainDist: string
   rendererDist: string
   devServerUrl?: string
-  onSnapshot?: (snapshot: WindowSnapshot) => void
 }
 
 export class WindowManager {
@@ -29,8 +27,8 @@ export class WindowManager {
   private overlayState: OverlayState = 'hidden'
   private overlayStreaming = false
   private overlayTransitionQueue: Promise<void> = Promise.resolve()
-  private readonly loadedWindows = new WeakSet<BrowserWindow>()
   private readonly latestSnapshots = new Map<WindowRole, WindowSnapshot>()
+  private readonly snapshotListeners = new Set<(snapshot: WindowSnapshot) => void>()
   private destroyed = false
 
   constructor(private readonly options: WindowManagerOptions) {}
@@ -49,6 +47,23 @@ export class WindowManager {
   getSnapshot(role: WindowRole): WindowSnapshot | null {
     const window = this.getWindow(role)
     return window ? this.readSnapshot(role, window) : (this.latestSnapshots.get(role) ?? null)
+  }
+
+  getRoleForWebContentsId(webContentsId: number): WindowRole | null {
+    for (const role of WINDOW_ROLES) {
+      const window = this.getWindow(role)
+      if (window?.webContents.id === webContentsId) {
+        return role
+      }
+    }
+    return null
+  }
+
+  subscribeToSnapshots(listener: (snapshot: WindowSnapshot) => void): () => void {
+    this.snapshotListeners.add(listener)
+    return () => {
+      this.snapshotListeners.delete(listener)
+    }
   }
 
   showHomepage(): void {
@@ -151,6 +166,7 @@ export class WindowManager {
     this.overlayWindow?.destroy()
     this.homepageWindow = null
     this.overlayWindow = null
+    this.snapshotListeners.clear()
   }
 
   private ensureHomepageWindow(): BrowserWindow {
@@ -225,7 +241,6 @@ export class WindowManager {
       event.preventDefault()
     })
     window.webContents.on('did-finish-load', () => {
-      this.loadedWindows.add(window)
       this.publishSnapshot(role, window)
     })
 
@@ -298,13 +313,8 @@ export class WindowManager {
 
     const snapshot = this.readSnapshot(role, window)
     this.latestSnapshots.set(role, snapshot)
-    this.options.onSnapshot?.(snapshot)
-
-    if (
-      this.loadedWindows.has(window) &&
-      !window.webContents.isDestroyed()
-    ) {
-      window.webContents.send(WINDOW_SNAPSHOT_CHANNEL, snapshot)
+    for (const listener of this.snapshotListeners) {
+      listener(snapshot)
     }
   }
 
@@ -339,7 +349,9 @@ export class WindowManager {
       ...(role === 'overlay' ? { overlayState: overlayState ?? 'destroyed' } : {}),
     }
     this.latestSnapshots.set(role, snapshot)
-    this.options.onSnapshot?.(snapshot)
+    for (const listener of this.snapshotListeners) {
+      listener(snapshot)
+    }
   }
 
   private enqueueOverlayTransition(

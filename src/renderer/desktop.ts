@@ -1,20 +1,49 @@
-export type RendererCapability = "capture" | "window-controls"
+import type { SubscriptionTopic } from '../shared/ipc/events'
+import type { Bootstrap } from '../shared/schemas/bootstrap'
+import type { CapabilityName } from '../shared/schemas/capabilities'
+import type {
+  DesktopSubscriptionCleanup,
+  DesktopSubscriptionListener,
+} from '../types/desktop-bridge'
+import { desktopClient } from './services/desktop-client'
 
-export interface RendererDesktop {
-  readonly capabilities: ReadonlySet<RendererCapability>
-  capture(): Promise<void>
-  minimize(): Promise<void>
+export type RendererCapability = 'capture' | 'window-controls'
+
+const capabilityNames: Record<RendererCapability, CapabilityName> = {
+  capture: 'screenshots',
+  'window-controls': 'windowControls',
 }
 
-/**
- * Renderer-only seam for the future typed preload bridge. It deliberately
- * exposes no ambient Electron globals, so the web shell remains runnable.
- */
-export const desktop: RendererDesktop = {
-  capabilities: new Set(),
-  capture: async () => undefined,
-  minimize: async () => undefined,
+let latestBootstrap: Bootstrap | null = null
+
+export const desktop = {
+  get available(): boolean {
+    return desktopClient.available
+  },
+  get snapshot(): Bootstrap | null {
+    return latestBootstrap
+  },
+  async bootstrap(): Promise<Bootstrap> {
+    latestBootstrap = await desktopClient.bootstrap()
+    return latestBootstrap
+  },
+  async refreshSnapshot(): Promise<Bootstrap> {
+    latestBootstrap = await desktopClient.snapshot()
+    return latestBootstrap
+  },
+  subscribe(
+    topics: readonly SubscriptionTopic[],
+    listener: DesktopSubscriptionListener,
+  ): Promise<DesktopSubscriptionCleanup> {
+    return desktopClient.subscribe(topics, listener)
+  },
 }
 
-export const hasCapability = (capability: RendererCapability): boolean =>
-  desktop.capabilities.has(capability)
+export const hasCapability = (capability: RendererCapability): boolean => {
+  const name = capabilityNames[capability]
+  return (
+    latestBootstrap?.capabilities.items.some(
+      (item) => item.name === name && item.available,
+    ) ?? false
+  )
+}

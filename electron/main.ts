@@ -1,8 +1,15 @@
-import { app } from 'electron'
+import { app, screen } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { registerIpc, type IpcRegistration } from './ipc/register-ipc'
+import { SettingsStore } from './persistence/settings-store'
+import type { Bootstrap } from '../src/shared/schemas/bootstrap'
+import type { Capability } from '../src/shared/schemas/capabilities'
+import type { WindowState } from '../src/shared/schemas/windows'
 import { WindowManager } from './windows/window-manager'
+import type { WindowRole } from './windows/window-options'
+import type { WindowSnapshot } from './windows/window-state'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const appRoot = path.join(__dirname, '..')
@@ -19,6 +26,9 @@ const windowManager = new WindowManager({
   devServerUrl,
 })
 
+let ipcRegistration: IpcRegistration | null = null
+let unsubscribeSnapshots: (() => void) | null = null
+
 app.on('window-all-closed', () => {
   // The process intentionally remains alive for tray-resident operation.
 })
@@ -28,11 +38,142 @@ app.on('activate', () => {
 })
 
 app.on('before-quit', () => {
+  unsubscribeSnapshots?.()
+  ipcRegistration?.dispose()
   windowManager.destroy()
 })
 
 void app.whenReady().then(() => {
+  const settingsStore = new SettingsStore({ userDataPath: app.getPath('userData') })
+  ipcRegistration = registerIpc({
+    rendererFilePath: path.join(rendererDist, 'index.html'),
+    devServerUrl,
+    resolveWindowRole: (webContentsId) =>
+      windowManager.getRoleForWebContentsId(webContentsId),
+    getBootstrap: async (role) => createBootstrap(settingsStore, role),
+  })
+  unsubscribeSnapshots = windowManager.subscribeToSnapshots((snapshot) => {
+    const window = toContractWindow(snapshot)
+    if (window) {
+      ipcRegistration?.publish({ type: 'window.changed', window })
+    }
+  })
   windowManager.start()
 })
+
+async function createBootstrap(
+  settingsStore: SettingsStore,
+  requesterRole: WindowRole,
+): Promise<Bootstrap> {
+  const storedSettings =
+    requesterRole === 'homepage'
+      ? await settingsStore.load()
+      : { theme: 'system' as const, launchAtLogin: false }
+  const generatedAt = new Date().toISOString()
+  const windows = (['homepage', 'overlay'] as const)
+    .map((role) => windowManager.getSnapshot(role))
+    .filter((snapshot): snapshot is WindowSnapshot => snapshot !== null)
+    .map(toContractWindow)
+    .filter((window): window is WindowState => window !== null)
+    .filter(
+      (window) => requesterRole === 'homepage' || window.role === 'toolbar',
+    )
+
+  return {
+    version: 1,
+    generatedAt,
+    settings: {
+      version: 1,
+      appearance: {
+        theme: storedSettings.theme,
+        reducedMotion: false,
+      },
+      application: {
+        launchAtLogin: storedSettings.launchAtLogin,
+        showDockIcon: true,
+        startMinimized: false,
+      },
+      privacy: {
+        persistConversations: true,
+        shareDiagnostics: false,
+      },
+      capture: {
+        includeMicrophone: false,
+        includeSystemAudio: false,
+        screenshotFormat: 'png',
+      },
+      assistant: {
+        model: 'codex',
+        reasoningEffort: 'medium',
+        responseLanguage: 'en',
+      },
+    },
+    auth: {
+      version: 1,
+      state: 'unauthenticated',
+      reason: 'signed_out',
+    },
+    capabilities: {
+      version: 1,
+      platform: getSupportedPlatform(),
+      evaluatedAt: generatedAt,
+      items: createCapabilities(),
+    },
+    windows,
+    conversations: [],
+    sessions: [],
+  }
+}
+
+function getSupportedPlatform(): 'darwin' | 'linux' | 'win32' {
+  return process.platform === 'darwin' || process.platform === 'win32'
+    ? process.platform
+    : 'linux'
+}
+
+function createCapabilities(): Capability[] {
+  const unavailable = (
+    name: Capability['name'],
+    detail: string,
+  ): Capability => ({
+    name,
+    available: false,
+    reason: 'unavailable',
+    detail,
+  })
+
+  return [
+    unavailable('codex', 'The Codex runtime is not connected.'),
+    unavailable('filesystem', 'Filesystem access is not enabled.'),
+    unavailable('globalShortcuts', 'Global shortcuts are not registered.'),
+    unavailable('microphone', 'Microphone capture is not enabled.'),
+    unavailable('notifications', 'Notifications are not enabled.'),
+    unavailable('screenshots', 'Screenshot capture is not enabled.'),
+    unavailable('systemAudio', 'System audio capture is not enabled.'),
+    unavailable('updater', 'The updater is not configured.'),
+    unavailable('windowControls', 'Window control commands are not exposed.'),
+  ]
+}
+
+function toContractWindow(snapshot: WindowSnapshot): WindowState | null {
+  if (!snapshot.bounds) {
+    return null
+  }
+
+  const display = screen.getDisplayMatching(snapshot.bounds)
+  return {
+    version: 1,
+    role: snapshot.role === 'homepage' ? 'main' : 'toolbar',
+    displayId: String(display.id),
+    bounds: snapshot.bounds,
+    visible: snapshot.visible,
+    focused: snapshot.focused,
+    minimized: snapshot.minimized,
+    maximized: snapshot.maximized,
+    fullScreen: snapshot.fullScreen,
+    alwaysOnTop: snapshot.role === 'overlay',
+    updatedAt: new Date().toISOString(),
+  }
+}
 
 export { windowManager }
