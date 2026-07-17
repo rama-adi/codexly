@@ -1,30 +1,44 @@
-import { z } from 'zod'
-
+import { CONTRACT_VERSION } from '../../src/shared/schemas/common'
+import {
+  CanonicalSettingsSchema,
+  type CanonicalSettings,
+} from '../../src/shared/schemas/settings'
 import { AtomicJsonStore } from './atomic-json-store'
 import { migrateRecord, type Migration } from './migrations'
 
-/**
- * Temporary local contract until the shared settings contracts land.
- * Replace this schema with the shared import during integration; retain the
- * `version` field and keep credentials/tokens in an OS-backed secret store.
- */
-export const SettingsSchema = z
-  .object({
-    version: z.literal(1),
-    theme: z.enum(['system', 'light', 'dark']),
-    launchAtLogin: z.boolean(),
-  })
-  .strict()
+/** The persisted, non-secret settings contract shared with the renderer. */
+export const SettingsSchema = CanonicalSettingsSchema
 
-export type Settings = z.infer<typeof SettingsSchema>
+export type Settings = CanonicalSettings
 
-export const DEFAULT_SETTINGS: Settings = Object.freeze({
-  version: 1,
-  theme: 'system',
-  launchAtLogin: false,
+export const DEFAULT_SETTINGS = Object.freeze<Settings>({
+  version: CONTRACT_VERSION,
+  appearance: {
+    theme: 'system',
+    reducedMotion: false,
+  },
+  application: {
+    launchAtLogin: false,
+    showDockIcon: true,
+    startMinimized: false,
+  },
+  privacy: {
+    persistConversations: true,
+    shareDiagnostics: false,
+  },
+  capture: {
+    includeMicrophone: false,
+    includeSystemAudio: false,
+    screenshotFormat: 'png',
+  },
+  assistant: {
+    model: 'gpt-4o',
+    reasoningEffort: 'medium',
+    responseLanguage: 'en',
+  },
 })
 
-const CURRENT_SETTINGS_VERSION = 1
+const CURRENT_SETTINGS_VERSION = CONTRACT_VERSION
 const settingsMigrations: readonly Migration[] = []
 
 export type SettingsStoreOptions = Readonly<{
@@ -74,8 +88,8 @@ export class SettingsStore {
   #enqueue<R>(operation: () => Promise<R>): Promise<R> {
     const result = this.#queue.then(operation, operation)
     this.#queue = result.then(
-      () => undefined,
-      () => undefined,
+      (): void => undefined,
+      (): void => undefined,
     )
     return result
   }

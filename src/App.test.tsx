@@ -1,30 +1,36 @@
-import { strict as assert } from "node:assert"
-import { test } from "node:test"
-import { renderToStaticMarkup } from "react-dom/server"
-import { App } from "./App"
-import { resolveHomepageSection, resolveRendererRole } from "./renderer/roles"
+import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, expect, it } from 'vitest'
 
-test("role resolution permits only supported renderer roles", () => {
-  assert.equal(resolveRendererRole("?role=overlay"), "overlay")
-  assert.equal(resolveRendererRole("?role=homepage"), "homepage")
-  assert.equal(resolveRendererRole("?role=<script>"), "homepage")
-  assert.equal(resolveRendererRole("?role=overlay&role=homepage"), "overlay")
-  assert.equal(resolveRendererRole(""), "homepage")
+import { App } from './App'
+import { resolveHomepageSection, resolveRendererRole } from './renderer/roles'
+
+describe('renderer roles', () => {
+  it('permits only supported renderer roles', () => {
+    expect(resolveRendererRole('?role=overlay')).toBe('overlay')
+    expect(resolveRendererRole('?role=homepage')).toBe('homepage')
+    expect(resolveRendererRole('?role=<script>')).toBe('homepage')
+    expect(resolveRendererRole('?role=overlay&role=homepage')).toBe('overlay')
+    expect(resolveRendererRole('')).toBe('homepage')
+  })
+
+  it('uses a safe workspace fallback for homepage section routing', () => {
+    expect(resolveHomepageSection('#activity')).toBe('activity')
+    expect(resolveHomepageSection('#invalid')).toBe('workspace')
+  })
 })
 
-test("homepage section hash routing has a safe workspace fallback", () => {
-  assert.equal(resolveHomepageSection("#activity"), "activity")
-  assert.equal(resolveHomepageSection("#invalid"), "workspace")
-})
+describe('application shells', () => {
+  it('renders the homepage surface by default', () => {
+    const markup = renderToStaticMarkup(<App search="" />)
 
-test("homepage surface renders as the default shell", () => {
-  const markup = renderToStaticMarkup(<App search="" />)
-  assert.match(markup, /data-renderer-role="homepage"/)
-  assert.match(markup, /Start from the work in front of you\./)
-})
+    expect(markup).toContain('data-renderer-role="homepage"')
+    expect(markup).toContain('Start from the work in front of you.')
+  })
 
-test("overlay surface renders from the explicit role", () => {
-  const markup = renderToStaticMarkup(<App search="?role=overlay" />)
-  assert.match(markup, /data-renderer-role="overlay"/)
-  assert.match(markup, /Listening for context/)
+  it('renders the overlay surface for the explicit role', () => {
+    const markup = renderToStaticMarkup(<App search="?role=overlay" />)
+
+    expect(markup).toContain('data-renderer-role="overlay"')
+    expect(markup).toContain('Listening for context')
+  })
 })

@@ -51,8 +51,8 @@ export class AtomicJsonStore<T> {
   #enqueue<R>(operation: () => Promise<R>): Promise<R> {
     const result = this.#queue.then(operation, operation)
     this.#queue = result.then(
-      () => undefined,
-      () => undefined,
+      (): void => undefined,
+      (): void => undefined,
     )
     return result
   }
@@ -133,8 +133,8 @@ export class AtomicJsonStore<T> {
       await rename(temporary, destination)
       await this.#syncDirectory()
     } catch (error) {
-      await file?.close().catch(() => undefined)
-      await unlink(temporary).catch(() => undefined)
+      await file?.close().catch((): undefined => undefined)
+      await unlink(temporary).catch((): undefined => undefined)
       throw error
     }
   }
@@ -149,7 +149,7 @@ export class AtomicJsonStore<T> {
         throw error
       }
     } finally {
-      await directory?.close().catch(() => undefined)
+      await directory?.close().catch((): undefined => undefined)
     }
   }
 

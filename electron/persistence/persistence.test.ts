@@ -86,10 +86,18 @@ describe('SettingsStore', () => {
     expect(await store.load()).toEqual(DEFAULT_SETTINGS)
     await Promise.all(
       Array.from({ length: 10 }, (_, index) =>
-        store.update((current) => ({ ...current, launchAtLogin: index % 2 === 0, theme: index % 2 === 0 ? 'dark' : 'light' })),
+        store.update((current) => ({
+          ...current,
+          appearance: { ...current.appearance, theme: index % 2 === 0 ? 'dark' : 'light' },
+          application: { ...current.application, launchAtLogin: index % 2 === 0 },
+        })),
       ),
     )
 
-    expect(await store.load()).toEqual({ version: 1, launchAtLogin: false, theme: 'light' })
+    expect(await store.load()).toEqual({
+      ...DEFAULT_SETTINGS,
+      appearance: { ...DEFAULT_SETTINGS.appearance, theme: 'light' },
+      application: { ...DEFAULT_SETTINGS.application, launchAtLogin: false },
+    })
   })
 })
