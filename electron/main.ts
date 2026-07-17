@@ -1,6 +1,8 @@
-import { app, BrowserWindow } from 'electron'
+import { app } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+import { WindowManager } from './windows/window-manager'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const appRoot = path.join(__dirname, '..')
@@ -11,43 +13,26 @@ const devServerUrl = process.env['VITE_DEV_SERVER_URL']
 process.env.APP_ROOT = appRoot
 process.env.VITE_PUBLIC = devServerUrl ? path.join(appRoot, 'public') : rendererDist
 
-let mainWindow: BrowserWindow | null = null
-
-function createWindow() {
-  mainWindow = new BrowserWindow({
-    width: 1100,
-    height: 760,
-    minWidth: 800,
-    minHeight: 600,
-    webPreferences: {
-      preload: path.join(mainDist, 'preload.mjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  })
-
-  mainWindow.on('closed', () => {
-    mainWindow = null
-  })
-
-  if (devServerUrl) {
-    void mainWindow.loadURL(devServerUrl)
-  } else {
-    void mainWindow.loadFile(path.join(rendererDist, 'index.html'))
-  }
-}
+const windowManager = new WindowManager({
+  mainDist,
+  rendererDist,
+  devServerUrl,
+})
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
+  // The process intentionally remains alive for tray-resident operation.
 })
 
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow()
-  }
+  windowManager.showHomepage()
 })
 
-void app.whenReady().then(createWindow)
+app.on('before-quit', () => {
+  windowManager.destroy()
+})
+
+void app.whenReady().then(() => {
+  windowManager.start()
+})
+
+export { windowManager }
