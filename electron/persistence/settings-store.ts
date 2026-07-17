@@ -32,7 +32,7 @@ export const DEFAULT_SETTINGS = Object.freeze<Settings>({
     screenshotFormat: 'png',
   },
   assistant: {
-    model: 'gpt-4o',
+    model: 'gpt-5.5',
     reasoningEffort: 'medium',
     responseLanguage: 'en',
   },

@@ -328,9 +328,14 @@ function authorizeProductCommand(role: WindowRole, command: ProductCommand): voi
     'sessions.create',
     'conversation.send',
     'conversation.stop',
+    'conversation.solvePending',
     'attachments.capture',
+    'attachments.list',
+    'attachments.discard',
+    'attachments.clear',
     'window.openHome',
     'window.toggleOverlay',
+    'window.resizeOverlay',
   ])
   if (!allowed.has(command.type)) {
     throw new BridgeAccessError('forbidden', 'The overlay cannot perform this action.')

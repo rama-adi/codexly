@@ -42,8 +42,10 @@ export function createOverlayWindowOptions(
   preloadPath: string,
 ): BrowserWindowConstructorOptions {
   return {
-    width: 480,
-    height: 640,
+    width: 640,
+    height: 64,
+    minWidth: 360,
+    minHeight: 48,
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',

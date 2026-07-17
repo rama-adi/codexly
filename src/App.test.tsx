@@ -31,6 +31,6 @@ describe('application shells', () => {
     const markup = renderToStaticMarkup(<App search="?role=overlay" />)
 
     expect(markup).toContain('data-renderer-role="overlay"')
-    expect(markup).toContain('Ask about your work')
+    expect(markup).toContain('Screenshot queue ready.')
   })
 })

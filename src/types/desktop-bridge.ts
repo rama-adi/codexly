@@ -37,9 +37,14 @@ export interface CodexlyDesktopBridgeV1 {
     attachmentIds: string[]
   }): Promise<unknown>
   stopTurn(turnId: string): Promise<boolean>
+  solvePending(modelId: string): Promise<unknown>
   capture(): Promise<unknown>
+  listAttachments(): Promise<unknown>
+  discardAttachment(attachmentId: string): Promise<boolean>
+  clearAttachments(): Promise<void>
   openHome(): Promise<void>
   toggleOverlay(): Promise<void>
+  resizeOverlay(width: number, height: number): Promise<void>
   onProductEvent(listener: (event: ProductEvent) => void): () => void
 }
 

@@ -87,9 +87,14 @@ export const desktopClient = {
   sendMessage: (input: Parameters<CodexlyDesktopBridgeV1['sendMessage']>[0]) =>
     requireBridge().sendMessage(input) as Promise<{ sessionId: string; turnId: string }>,
   stopTurn: (turnId: string) => requireBridge().stopTurn(turnId),
+  solvePending: (modelId: string) => requireBridge().solvePending(modelId) as Promise<{ sessionId: string; turnId: string }>,
   capture: () => requireBridge().capture() as Promise<unknown>,
+  listAttachments: () => requireBridge().listAttachments() as Promise<Array<{ id: string; name: string; preview: string }>>,
+  discardAttachment: (attachmentId: string) => requireBridge().discardAttachment(attachmentId),
+  clearAttachments: () => requireBridge().clearAttachments(),
   openHome: () => requireBridge().openHome(),
   toggleOverlay: () => requireBridge().toggleOverlay(),
+  resizeOverlay: (width: number, height: number) => requireBridge().resizeOverlay(width, height),
   onProductEvent(listener: (event: ProductEvent) => void) {
     return requireBridge().onProductEvent(listener)
   },

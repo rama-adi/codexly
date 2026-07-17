@@ -181,12 +181,23 @@ const bridge: CodexlyDesktopBridgeV1 = Object.freeze({
   sendMessage: (input: Parameters<CodexlyDesktopBridgeV1['sendMessage']>[0]) => invokeProduct({ type: 'conversation.send', ...input }),
   stopTurn: (turnId: string) =>
     invokeProduct({ type: 'conversation.stop', turnId }) as Promise<boolean>,
+  solvePending: (modelId: string) =>
+    invokeProduct({ type: 'conversation.solvePending', modelId }),
   capture: () => invokeProduct({ type: 'attachments.capture' }),
+  listAttachments: () => invokeProduct({ type: 'attachments.list' }),
+  discardAttachment: (attachmentId: string) =>
+    invokeProduct({ type: 'attachments.discard', attachmentId }) as Promise<boolean>,
+  clearAttachments: async () => {
+    await invokeProduct({ type: 'attachments.clear' })
+  },
   openHome: async () => {
     await invokeProduct({ type: 'window.openHome' })
   },
   toggleOverlay: async () => {
     await invokeProduct({ type: 'window.toggleOverlay' })
+  },
+  resizeOverlay: async (width: number, height: number) => {
+    await invokeProduct({ type: 'window.resizeOverlay', width, height })
   },
   onProductEvent(listener: (event: ProductEvent) => void) {
     productListeners.add(listener)

@@ -79,6 +79,29 @@ try {
   const urlAfterNavigation = homepage.url()
 
   await homepage.screenshot({ path: 'runtime-verification-homepage.png' })
+  await homepage.evaluate(() => window.codexly.v1.toggleOverlay())
+  await app.evaluate(async ({ BrowserWindow }) => {
+    const overlayWindow = BrowserWindow.getAllWindows().find((window) =>
+      window.webContents.getURL().includes('role=overlay'),
+    )
+    if (!overlayWindow) throw new Error('Overlay window is missing')
+    const deadline = Date.now() + 5_000
+    while (!overlayWindow.isVisible()) {
+      if (Date.now() > deadline) throw new Error('Overlay did not become visible')
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+  })
+  let captureProbe = 'not-run'
+  try {
+    await overlay.getByRole('button', { name: /Capture/ }).click()
+    await overlay.locator('img[alt^="Screenshot"]').first().waitFor({ timeout: 15_000 })
+    captureProbe = 'captured'
+  } catch (error) {
+    captureProbe = `blocked: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`
+  }
+  await overlay.screenshot({ path: 'runtime-verification-overlay.png' })
+  const overlayText = await overlay.locator('body').innerText()
+  await homepage.evaluate(() => window.codexly.v1.toggleOverlay())
   await homepage.close()
   await new Promise((resolve) => setTimeout(resolve, 500))
 
@@ -97,6 +120,8 @@ try {
         homepageSecurity,
         overlaySecurity,
         runtimeStatus,
+        overlayText,
+        captureProbe,
         bootstrap: {
           version: bootstrap.version,
           windowRoles: bootstrap.windows.map((window) => window.role),

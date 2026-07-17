@@ -37,9 +37,14 @@ export const ProductCommandSchema = z.discriminatedUnion('type', [
     })
     .strict(),
   z.object({ type: z.literal('conversation.stop'), turnId: IdSchema }).strict(),
+  z.object({ type: z.literal('conversation.solvePending'), modelId: z.string().trim().min(1).max(128) }).strict(),
   z.object({ type: z.literal('attachments.capture') }).strict(),
+  z.object({ type: z.literal('attachments.list') }).strict(),
+  z.object({ type: z.literal('attachments.discard'), attachmentId: IdSchema }).strict(),
+  z.object({ type: z.literal('attachments.clear') }).strict(),
   z.object({ type: z.literal('window.openHome') }).strict(),
   z.object({ type: z.literal('window.toggleOverlay') }).strict(),
+  z.object({ type: z.literal('window.resizeOverlay'), width: z.number().int().min(320).max(1200), height: z.number().int().min(48).max(1200) }).strict(),
 ])
 
 export const ProductResponseSchema = z.discriminatedUnion('ok', [
@@ -88,6 +93,7 @@ export const ProductEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('sessions.changed') }).strict(),
   z.object({ type: z.literal('runtime.status'), status: z.unknown() }).strict(),
   z.object({ type: z.literal('attachment.captured'), attachment: z.unknown() }).strict(),
+  z.object({ type: z.literal('attachments.cleared') }).strict(),
 ])
 
 export type ProductCommand = z.infer<typeof ProductCommandSchema>

@@ -69,6 +69,7 @@ export class ProductController {
   readonly #shortcuts: ShortcutManager
   readonly #activeTurns = new Map<string, { sessionId: string; abort(reason?: string): Promise<boolean> }>()
   readonly #assistantBuffers = new Map<string, string>()
+  readonly #pendingAttachmentIds: string[] = []
   #runtimeError: string | null = null
 
   static async create(options: ProductControllerOptions): Promise<ProductController> {
@@ -178,17 +179,49 @@ export class ProductController {
       // Workspace selection remains optional when the home directory is unavailable.
     }
 
+    const capture = async () => {
+      await this.#captureDisplay()
+    }
     this.#shortcuts.configure({
-      toggleOverlay: {
+      summonOverlay: {
         accelerator: 'CommandOrControl+Shift+Space',
-        callback: () => this.#toggleOverlay(),
-      },
-      capture: {
-        accelerator: 'CommandOrControl+Shift+4',
         callback: async () => {
-          await this.#captureDisplay()
+          await this.#windowManager.showOverlay()
         },
       },
+      toggleOverlay: {
+        accelerator: 'CommandOrControl+B',
+        callback: () => this.#toggleOverlay(),
+      },
+      captureDisplay: {
+        accelerator: 'CommandOrControl+H',
+        callback: capture,
+      },
+      captureSelection: {
+        accelerator: 'CommandOrControl+Shift+H',
+        callback: capture,
+      },
+      solve: {
+        accelerator: 'CommandOrControl+Enter',
+        callback: async () => {
+          await this.#solvePending('gpt-5.5')
+        },
+      },
+      clearBuffer: {
+        accelerator: 'CommandOrControl+K',
+        callback: () => this.#clearPendingAttachments(),
+      },
+      resetSession: {
+        accelerator: 'CommandOrControl+R',
+        callback: async () => {
+          await this.#clearPendingAttachments()
+          await this.#sessions.create({ workspaceId: (await this.#workspaces.getSelected())?.id ?? null })
+        },
+      },
+      moveLeft: { accelerator: 'CommandOrControl+Left', callback: () => this.#moveOverlay(-40, 0) },
+      moveRight: { accelerator: 'CommandOrControl+Right', callback: () => this.#moveOverlay(40, 0) },
+      moveUp: { accelerator: 'CommandOrControl+Up', callback: () => this.#moveOverlay(0, -40) },
+      moveDown: { accelerator: 'CommandOrControl+Down', callback: () => this.#moveOverlay(0, 40) },
       cancelCapture: {
         accelerator: 'Escape',
         dispatch: 'immediate',
@@ -241,14 +274,32 @@ export class ProductController {
         return this.#send(command)
       case 'conversation.stop':
         return this.#stop(command.turnId)
+      case 'conversation.solvePending':
+        return this.#solvePending(command.modelId)
       case 'attachments.capture':
         return this.#captureDisplay()
+      case 'attachments.list':
+        return this.#listPendingAttachments()
+      case 'attachments.discard': {
+        const removed = await this.#attachments.discardPending(command.attachmentId)
+        const index = this.#pendingAttachmentIds.indexOf(command.attachmentId)
+        if (index >= 0) this.#pendingAttachmentIds.splice(index, 1)
+        return removed
+      }
+      case 'attachments.clear':
+        await this.#clearPendingAttachments()
+        return null
       case 'window.openHome':
         this.#windowManager.showHomepage()
         return null
       case 'window.toggleOverlay':
         await this.#toggleOverlay()
         return null
+      case 'window.resizeOverlay': {
+        const overlay = this.#windowManager.getWindow('overlay')
+        if (overlay) overlay.setContentSize(command.width, command.height)
+        return null
+      }
     }
   }
 
@@ -263,7 +314,8 @@ export class ProductController {
     if (!workspace) throw new Error('Select a workspace before sending a message.')
     const session = command.sessionId
       ? await this.#requireSession(command.sessionId)
-      : await this.#sessions.create({ workspaceId: workspace.id })
+      : (await this.#sessions.getActive()) ??
+        (await this.#sessions.create({ workspaceId: workspace.id }))
     const now = new Date().toISOString()
     await this.#sessions.appendMessage(session.id, {
       id: crypto.randomUUID(),
@@ -272,6 +324,11 @@ export class ProductController {
       attachmentIds: command.attachmentIds,
       createdAt: now,
     })
+    await Promise.all(
+      command.attachmentIds.map((id) =>
+        this.#attachments.associate(id, { ownerType: 'session', ownerId: session.id }),
+      ),
+    )
     const attachments = await Promise.all(
       command.attachmentIds.map(async (id) => {
         const verified = await this.#attachments.resolveVerifiedBytes(id)
@@ -296,6 +353,40 @@ export class ProductController {
     return { sessionId: session.id, turnId: handle.turnId }
   }
 
+  async #solvePending(modelId: string) {
+    if (this.#pendingAttachmentIds.length === 0) {
+      throw new Error('There are no screenshots to process.')
+    }
+    return this.#send({
+      type: 'conversation.send',
+      message: 'Analyze the attached screenshots and provide the most useful direct answer. If this is a coding problem, explain the approach and provide a complete solution.',
+      modelId,
+      attachmentIds: [...this.#pendingAttachmentIds],
+    })
+  }
+
+  async #listPendingAttachments() {
+    const pending = (await this.#attachments.list()).filter(
+      (attachment) => attachment.associations.length === 0,
+    )
+    this.#pendingAttachmentIds.splice(0, this.#pendingAttachmentIds.length, ...pending.map((attachment) => attachment.id))
+    return Promise.all(
+      pending.map(async (attachment) => {
+        const verified = await this.#attachments.resolveVerifiedBytes(attachment.id)
+        return {
+          ...attachment,
+          preview: `data:${attachment.mimeType};base64,${verified.bytes.toString('base64')}`,
+        }
+      }),
+    )
+  }
+
+  async #clearPendingAttachments(): Promise<void> {
+    const ids = this.#pendingAttachmentIds.splice(0)
+    await Promise.all(ids.map((id) => this.#attachments.discardPending(id).catch(() => false)))
+    this.#publish({ type: 'attachments.cleared' }, ['overlay'])
+  }
+
   async #stop(turnId: string): Promise<boolean> {
     return (await this.#activeTurns.get(turnId)?.abort('Stopped by user')) ?? false
   }
@@ -310,10 +401,14 @@ export class ProductController {
       },
     })
     if (outcome.kind === 'captured') {
-      this.#publish(
-        { type: 'attachment.captured', attachment: outcome.attachment },
-        ['overlay'],
-      )
+      this.#pendingAttachmentIds.push(outcome.attachment.id)
+      const verified = await this.#attachments.resolveVerifiedBytes(outcome.attachment.id)
+      const attachment = {
+        ...outcome.attachment,
+        preview: `data:${outcome.attachment.mimeType};base64,${verified.bytes.toString('base64')}`,
+      }
+      this.#publish({ type: 'attachment.captured', attachment }, ['overlay'])
+      return { ...outcome, attachment }
     }
     return outcome
   }
@@ -322,6 +417,13 @@ export class ProductController {
     const overlay = this.#windowManager.getWindow('overlay')
     if (overlay?.isVisible()) await this.#windowManager.hideOverlay()
     else await this.#windowManager.showOverlay()
+  }
+
+  #moveOverlay(deltaX: number, deltaY: number): void {
+    const overlay = this.#windowManager.getWindow('overlay')
+    if (!overlay) return
+    const bounds = overlay.getBounds()
+    overlay.setPosition(bounds.x + deltaX, bounds.y + deltaY)
   }
 
   #runtimeStatus(): RuntimeStatus {
