@@ -1,0 +1,354 @@
+import type { LanguageModel } from 'ai'
+import type {
+  CodexAppServerProvider,
+  CodexAppServerSession,
+  CodexAppServerSettings,
+} from 'ai-sdk-provider-codex-cli'
+import { describe, expect, it, vi } from 'vitest'
+
+import {
+  ConversationRuntime,
+  type ConversationEventStore,
+  type ConversationProviderManager,
+  type ConversationThreadStore,
+} from './conversation-runtime'
+import type { TurnEventEnvelope } from './turn-controller'
+
+function asyncParts(parts: Array<Record<string, unknown>>) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      for (const part of parts) {
+        yield part
+      }
+    },
+  }
+}
+
+function createProvider() {
+  const settings: CodexAppServerSettings[] = []
+  const model = { specificationVersion: 'v4' } as unknown as LanguageModel
+  const provider = ((_modelId: string, value?: CodexAppServerSettings) => {
+    settings.push(value ?? {})
+    return model
+  }) as unknown as CodexAppServerProvider
+  provider.close = vi.fn(async () => undefined)
+  provider.dispose = provider.close
+  provider.listModels = vi.fn()
+  provider.languageModel = provider
+  provider.chat = provider
+  provider.embeddingModel = () => {
+    throw new Error('unsupported')
+  }
+  provider.imageModel = () => {
+    throw new Error('unsupported')
+  }
+  return { provider, settings }
+}
+
+function createStores(initialThreadId: string | null = null) {
+  let threadId = initialThreadId
+  const savedThreads: Array<string | null> = []
+  const events: TurnEventEnvelope[] = []
+  const threads: ConversationThreadStore = {
+    getThreadId: async () => threadId,
+    setThreadId: async (_conversationId, next) => {
+      threadId = next
+      savedThreads.push(next)
+    },
+  }
+  const eventStore: ConversationEventStore = {
+    append: async (event) => {
+      events.push(event)
+    },
+  }
+  return { threads, eventStore, events, savedThreads }
+}
+
+function createManager(
+  provider: CodexAppServerProvider,
+): ConversationProviderManager {
+  return {
+    getProvider: vi.fn(async () => ({
+      provider,
+      release: vi.fn(async () => undefined),
+    })),
+    dispose: vi.fn(async () => undefined),
+  }
+}
+
+const baseInput = {
+  conversationId: 'conversation-1',
+  modelId: 'gpt-test',
+  message: 'Explain the code.',
+  workspacePath: '/workspace',
+  workspaceRevision: 1,
+  configRevision: 1,
+}
+
+describe('ConversationRuntime', () => {
+  it('resumes a persisted thread with locked-down model settings and records events', async () => {
+    const { provider, settings } = createProvider()
+    const stores = createStores('thr-existing')
+    const stream = vi.fn(() => ({
+      stream: asyncParts([
+        {
+          type: 'raw',
+          rawValue: {
+            method: 'thread/started',
+            params: { thread: { id: 'thr-existing' } },
+          },
+        },
+        { type: 'text-delta', id: 'answer', text: 'Done.' },
+      ]),
+      finishReason: Promise.resolve('stop'),
+    }))
+    const runtime = new ConversationRuntime({
+      providers: createManager(provider),
+      threads: stores.threads,
+      events: stores.eventStore,
+      stream: stream as unknown as typeof import('ai').streamText,
+      generateTurnId: () => 'turn-1',
+      now: () => new Date('2026-02-03T04:05:06.000Z'),
+    })
+
+    const handle = await runtime.startTurn(baseInput)
+    expect(await handle.completion).toBe('completed')
+
+    expect(settings[0]).toMatchObject({ resume: 'thr-existing' })
+    expect(settings[0].developerInstructions).toContain('read-only')
+    expect(stream).toHaveBeenCalledWith(
+      expect.objectContaining({
+        maxRetries: 0,
+        include: { rawChunks: true },
+      }),
+    )
+    expect(stores.events.map((event) => event.sequence)).toEqual([1, 2, 3, 4])
+    expect(stores.events[stores.events.length - 1]?.event).toEqual({
+      type: 'turn.completed',
+      finishReason: 'stop',
+    })
+  })
+
+  it('persists a session thread as soon as the provider creates it', async () => {
+    const { provider, settings } = createProvider()
+    const stores = createStores()
+    const manager = createManager(provider)
+    const runtime = new ConversationRuntime({
+      providers: manager,
+      threads: stores.threads,
+      events: stores.eventStore,
+      stream: (() => ({
+        stream: asyncParts([]),
+        finishReason: Promise.resolve('stop'),
+      })) as unknown as typeof import('ai').streamText,
+      generateTurnId: () => 'turn-1',
+    })
+
+    const handle = await runtime.startTurn(baseInput)
+    while (!settings[0]) {
+      await Promise.resolve()
+    }
+    const session = {
+      threadId: 'thr-new',
+      turnId: null,
+      injectMessage: async () => undefined,
+      interrupt: async () => undefined,
+      isActive: () => false,
+    } satisfies CodexAppServerSession
+    await settings[0].onSessionCreated?.(session)
+    await handle.completion
+
+    expect(stores.savedThreads).toEqual(['thr-new'])
+  })
+
+  it('aborts through both AbortSignal and session interrupt and emits one terminal event', async () => {
+    const { provider, settings } = createProvider()
+    const stores = createStores()
+    let releaseStream: (() => void) | undefined
+    const streamGate = new Promise<void>((resolve) => {
+      releaseStream = resolve
+    })
+    const runtime = new ConversationRuntime({
+      providers: createManager(provider),
+      threads: stores.threads,
+      events: stores.eventStore,
+      stream: ((options: { abortSignal?: AbortSignal }) => ({
+        stream: {
+          async *[Symbol.asyncIterator]() {
+            await streamGate
+            if (options.abortSignal?.aborted) {
+              throw options.abortSignal.reason
+            }
+            yield { type: 'start' }
+          },
+        },
+        finishReason: Promise.resolve('other'),
+      })) as unknown as typeof import('ai').streamText,
+      generateTurnId: () => 'turn-1',
+      interruptTimeoutMs: 20,
+    })
+
+    const handle = await runtime.startTurn(baseInput)
+    while (!settings[0]) {
+      await Promise.resolve()
+    }
+    const interrupt = vi.fn(async () => undefined)
+    await settings[0].onSessionCreated?.({
+      threadId: 'thr-1',
+      turnId: 'provider-turn',
+      injectMessage: async () => undefined,
+      interrupt,
+      isActive: () => true,
+    })
+    await handle.abort('user cancelled')
+    releaseStream?.()
+
+    expect(await handle.completion).toBe('interrupted')
+    expect(interrupt).toHaveBeenCalledOnce()
+    expect(
+      stores.events.filter((event) =>
+        ['turn.completed', 'turn.interrupted', 'turn.failed'].includes(
+          event.event.type,
+        ),
+      ),
+    ).toHaveLength(1)
+  })
+
+  it('suppresses stale events when a new turn supersedes an older turn', async () => {
+    const { provider } = createProvider()
+    const stores = createStores()
+    let releaseOld: (() => void) | undefined
+    const oldGate = new Promise<void>((resolve) => {
+      releaseOld = resolve
+    })
+    let call = 0
+    const runtime = new ConversationRuntime({
+      providers: createManager(provider),
+      threads: stores.threads,
+      events: stores.eventStore,
+      stream: (() => {
+        call += 1
+        const current = call
+        return {
+          stream: {
+            async *[Symbol.asyncIterator]() {
+              if (current === 1) {
+                await oldGate
+                yield { type: 'text-delta', text: 'stale' }
+              } else {
+                yield { type: 'text-delta', text: 'fresh' }
+              }
+            },
+          },
+          finishReason: Promise.resolve('stop'),
+        }
+      }) as unknown as typeof import('ai').streamText,
+      generateTurnId: () => `turn-${call + 1}`,
+      interruptTimeoutMs: 1,
+    })
+
+    const first = await runtime.startTurn(baseInput)
+    await Promise.resolve()
+    const second = await runtime.startTurn({ ...baseInput, message: 'New question' })
+    releaseOld?.()
+    await Promise.all([first.completion, second.completion])
+
+    const deltas = stores.events.filter(
+      (event) => event.event.type === 'assistant.delta',
+    )
+    expect(deltas).toHaveLength(1)
+    expect(deltas[0].event).toMatchObject({ text: 'fresh' })
+    expect(await first.completion).toBe('interrupted')
+    expect(await second.completion).toBe('completed')
+  })
+
+  it('clears a stale persisted thread and retries the same turn once', async () => {
+    const { provider, settings } = createProvider()
+    const stores = createStores('thr-stale')
+    let calls = 0
+    const runtime = new ConversationRuntime({
+      providers: createManager(provider),
+      threads: stores.threads,
+      events: stores.eventStore,
+      stream: (() => {
+        calls += 1
+        return {
+          stream: {
+            async *[Symbol.asyncIterator]() {
+              if (calls === 1) {
+                throw new Error("Thread 'thr-stale' not found after server restart")
+              }
+              yield { type: 'text-delta', text: 'recovered' }
+            },
+          },
+          finishReason: Promise.resolve('stop'),
+        }
+      }) as unknown as typeof import('ai').streamText,
+      generateTurnId: () => 'turn-retry',
+    })
+
+    const handle = await runtime.startTurn(baseInput)
+    expect(await handle.completion).toBe('completed')
+    expect(calls).toBe(2)
+    expect(settings[0].resume).toBe('thr-stale')
+    expect(settings[1].resume).toBeUndefined()
+    expect(stores.savedThreads).toContain(null)
+  })
+
+  it('settles completion even when terminal event persistence fails', async () => {
+    const { provider } = createProvider()
+    const stores = createStores()
+    stores.eventStore.append = async (event) => {
+      stores.events.push(event)
+      if (event.event.type === 'turn.failed') {
+        throw new Error('event store unavailable')
+      }
+    }
+    const runtime = new ConversationRuntime({
+      providers: createManager(provider),
+      threads: stores.threads,
+      events: stores.eventStore,
+      stream: (() => ({
+        stream: {
+          async *[Symbol.asyncIterator]() {
+            yield { type: 'start' }
+            throw new Error('provider failed')
+          },
+        },
+        finishReason: Promise.resolve('other'),
+      })) as unknown as typeof import('ai').streamText,
+      generateTurnId: () => 'turn-failure',
+    })
+
+    const handle = await runtime.startTurn(baseInput)
+    expect(await handle.completion).toBe('failed')
+  })
+
+  it('uses one stable session callback per conversation', async () => {
+    const { provider, settings } = createProvider()
+    const stores = createStores()
+    const runtime = new ConversationRuntime({
+      providers: createManager(provider),
+      threads: stores.threads,
+      events: stores.eventStore,
+      stream: (() => ({
+        stream: asyncParts([]),
+        finishReason: Promise.resolve('stop'),
+      })) as unknown as typeof import('ai').streamText,
+      generateTurnId: () => `turn-${settings.length}`,
+    })
+
+    await (await runtime.startTurn(baseInput)).completion
+    await (await runtime.startTurn({ ...baseInput, message: 'again' })).completion
+    await (
+      await runtime.startTurn({
+        ...baseInput,
+        conversationId: 'conversation-2',
+        message: 'separate',
+      })
+    ).completion
+
+    expect(settings[0].onSessionCreated).toBe(settings[1].onSessionCreated)
+    expect(settings[2].onSessionCreated).not.toBe(settings[0].onSessionCreated)
+  })
+})
