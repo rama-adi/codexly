@@ -6,6 +6,7 @@ import dotenv from "dotenv"
 import { getAppSettings, getLaunchWorkingDirectory } from "../stores/AppSettings"
 import { resetActiveSession } from "../stores/HistoryStore"
 import { BrowserWindow } from "electron"
+import { devLog, devMeasure } from "../utils/devLog"
 
 dotenv.config()
 
@@ -37,29 +38,45 @@ export class ProcessingHelper {
   }
 
   private broadcastHistoryChanged(): void {
+    const done = devMeasure("history", "broadcastHistoryChanged")
     const send = (history: Array<{ id: string; title: string; createdAt: string; updatedAt: string; messageCount: number }>) => {
+      devLog("history", "broadcast history payload", { count: history.length, windowCount: BrowserWindow.getAllWindows().length })
       for (const window of BrowserWindow.getAllWindows()) {
         window.webContents.send("history-changed", history)
       }
     }
     send(this.llmHelper.getCachedChatSessions())
     this.llmHelper.listChatSessions()
-      .then(send)
+      .then(history => {
+        send(history)
+        done({ count: history.length })
+      })
       .catch(error => {
         if (!this.llmHelper.shouldIgnoreBackgroundError(error)) console.warn("Failed to broadcast Codex history:", error)
+        done({ error: error?.message ?? String(error) })
       })
   }
 
   public async processScreenshots(): Promise<void> {
+    const done = devMeasure("processing", "processScreenshots")
     const mainWindow = this.appState.getMainWindow()
-    if (!mainWindow) return
+    if (!mainWindow) {
+      done({ skipped: "no-main-window" })
+      return
+    }
 
     const view = this.appState.getView()
+    devLog("processing", "processScreenshots view", {
+      view,
+      queueCount: this.appState.getScreenshotHelper().getScreenshotQueue().length,
+      extraQueueCount: this.appState.getScreenshotHelper().getExtraScreenshotQueue().length,
+    })
 
     if (view === "queue") {
       const screenshotQueue = this.appState.getScreenshotHelper().getScreenshotQueue()
       if (screenshotQueue.length === 0) {
         mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.NO_SCREENSHOTS)
+        done({ skipped: "no-screenshots" })
         return
       }
 
@@ -96,6 +113,7 @@ export class ProcessingHelper {
         mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.INITIAL_SOLUTION_ERROR, error.message)
       } finally {
         this.currentProcessingAbortController = null
+        done({ mode: "initial" })
       }
       return
     }
@@ -105,6 +123,7 @@ export class ProcessingHelper {
     if (extraScreenshotQueue.length === 0) {
       console.log("No extra screenshots to process")
       mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.NO_SCREENSHOTS)
+      done({ skipped: "no-extra-screenshots" })
       return
     }
 
@@ -143,6 +162,7 @@ export class ProcessingHelper {
       mainWindow.webContents.send(this.appState.PROCESSING_EVENTS.INITIAL_SOLUTION_ERROR, error.message)
     } finally {
       this.currentExtraProcessingAbortController = null
+      done({ mode: "continuation" })
     }
   }
 
@@ -156,19 +176,25 @@ export class ProcessingHelper {
 
   public resetSession(): void {
     resetActiveSession()
-    this.llmHelper.clearChatHistory()
-    this.invalidateReadyStatus()
+    this.llmHelper.resetActiveThread()
   }
 
   public async prepareForLaunch(workingDirectory?: string): Promise<void> {
+    const done = devMeasure("processing", "prepareForLaunch")
     const settings = getAppSettings()
     const cwd = workingDirectory ?? getLaunchWorkingDirectory(settings)
     const key = cwd || "__direct__"
-    if (this.readyStatus.state === "ready" && this.readyStatus.key === key) return
+    if (this.readyStatus.state === "ready" && this.readyStatus.key === key) {
+      done({ cached: true, state: this.readyStatus.state, key })
+      return
+    }
     if (this.readyStatus.state === "warming" && this.readyStatus.key === key && this.preparePromise) {
+      devLog("processing", "prepareForLaunch joined in-flight warmup", { key })
+      this.preparePromise.finally((): void => done({ joined: true, key })).catch((): undefined => undefined)
       return this.preparePromise
     }
 
+    devLog("processing", "prepareForLaunch warming", { key, model: settings.model, cwd })
     this.setReadyStatus({ state: "warming", key, model: settings.model, cwd, threadId: null })
     this.preparePromise = this.llmHelper.prepareForLaunch(cwd)
       .then(async () => {
@@ -194,6 +220,7 @@ export class ProcessingHelper {
       })
       .finally(() => {
         this.preparePromise = null
+        done({ key, state: this.readyStatus.state, threadId: this.readyStatus.threadId ?? null })
       })
     this.llmHelper.refreshChatSessionsInBackground()
 
@@ -201,8 +228,10 @@ export class ProcessingHelper {
   }
 
   public async prepareForActiveSession(): Promise<void> {
-    const activeSession = await this.llmHelper.getActiveChatSession()
-    await this.prepareForLaunch(activeSession?.workingDirectory)
+    devLog("processing", "prepareForActiveSession", {
+      cwd: this.llmHelper.getActiveChatSessionWorkingDirectory() ?? null,
+    })
+    await this.prepareForLaunch(this.llmHelper.getActiveChatSessionWorkingDirectory())
   }
 
   public getReadyStatus(): CodexReadyStatus {
@@ -227,6 +256,7 @@ export class ProcessingHelper {
 
   private setReadyStatus(status: CodexReadyStatus): void {
     this.readyStatus = status
+    devLog("processing", "ready status changed", status as unknown as Record<string, unknown>)
     for (const window of BrowserWindow.getAllWindows()) {
       window.webContents.send("codex-ready-status-changed", status)
     }

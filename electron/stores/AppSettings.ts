@@ -10,7 +10,7 @@ export const directoryProfileSchema = z.object({
 })
 
 export const appSettingsSchema = z.object({
-  model: z.string().default("gpt-5.4"),
+  model: z.string().default("gpt-5.5"),
   stealthEnabled: z.boolean().default(true),
   mode: z.enum(["simpleQA", "coding"]).default("simpleQA"),
   // concise = just give me the answer (answer only for simpleQA, answer and code for coding)

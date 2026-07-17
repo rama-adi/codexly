@@ -5,6 +5,7 @@ import AssistantTranscript from "@/components/AssistantTranscript"
 import MarkdownMessage from "@/components/MarkdownMessage"
 import { historyService, llmService, processingService } from "@/services/desktop"
 import type { ChatSession } from "@/shared/ipc"
+import { devLog, devMeasure } from "@/utils/devLog"
 
 type ChatMessage = ChatSession["messages"][number]
 
@@ -33,31 +34,72 @@ const ToolbarChatPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [streamingAnswer, setStreamingAnswer] = useState("")
   const [currentModel, setCurrentModel] = useState<{ provider: string; model: string }>({
     provider: "codex",
-    model: "gpt-5.4",
+    model: "gpt-5.5",
   })
   const chatInputRef = useRef<HTMLInputElement>(null)
   const messagesRef = useRef<HTMLDivElement>(null)
+  const streamMeasureRef = useRef<((details?: Record<string, unknown>) => void) | null>(null)
+  const sawFirstDeltaRef = useRef(false)
 
   useEffect(() => {
-    llmService.getCurrentConfig().then(setCurrentModel).catch(() => undefined)
+    const initDone = devMeasure("toolbar", "initial data load")
+    Promise.allSettled([
+      llmService.getCurrentConfig().then(config => {
+        setCurrentModel(config)
+        return config
+      }),
+      historyService.getActiveSession().then(session => {
+        setActiveSession(session)
+        return session
+      }),
+    ])
+      .then(results => {
+        const config = results[0].status === "fulfilled" ? results[0].value : null
+        const session = results[1].status === "fulfilled" ? results[1].value : null
+        initDone({
+          model: config?.model ?? null,
+          activeMessageCount: session?.messages.length ?? 0,
+          failures: results.filter(result => result.status === "rejected").length,
+        })
+      })
+      .catch(() => undefined)
     const cleanupModel = llmService.onConfigChanged(setCurrentModel)
-    historyService.getActiveSession().then(setActiveSession).catch(() => undefined)
     const cleanupHistory = historyService.onChanged(() => {
       if (chatLoadingRef.current) return
-      historyService.getActiveSession().then(setActiveSession).catch(() => undefined)
+      const done = devMeasure("toolbar", "history changed reload")
+      historyService.getActiveSession()
+        .then(session => {
+          setActiveSession(session)
+          done({ messageCount: session?.messages.length ?? 0 })
+        })
+        .catch(error => done({ error: error instanceof Error ? error.message : String(error) }))
     })
     const cleanupStream = [
       processingService.onChatStreamStart(() => {
-        if (chatLoadingRef.current) setStreamingAnswer("")
+        if (!chatLoadingRef.current) return
+        setStreamingAnswer("")
+        sawFirstDeltaRef.current = false
+        devLog("toolbar", "chat stream start")
       }),
       processingService.onChatStreamDelta(delta => {
-        if (chatLoadingRef.current) setStreamingAnswer(current => current + delta)
+        if (!chatLoadingRef.current) return
+        if (!sawFirstDeltaRef.current) {
+          sawFirstDeltaRef.current = true
+          devLog("toolbar", "first chat delta", { deltaLength: delta.length })
+        }
+        setStreamingAnswer(current => current + delta)
       }),
       processingService.onChatStreamComplete(data => {
-        if (chatLoadingRef.current) setStreamingAnswer(current => current || data.answer)
+        if (!chatLoadingRef.current) return
+        setStreamingAnswer(current => current || data.answer)
+        streamMeasureRef.current?.({ answerLength: data.answer.length })
+        streamMeasureRef.current = null
       }),
       processingService.onChatStreamError(error => {
-        if (chatLoadingRef.current) setStreamingAnswer(`Error: ${error}`)
+        if (!chatLoadingRef.current) return
+        setStreamingAnswer(`Error: ${error}`)
+        streamMeasureRef.current?.({ error })
+        streamMeasureRef.current = null
       }),
     ]
     requestAnimationFrame(() => chatInputRef.current?.focus())
@@ -100,6 +142,9 @@ const ToolbarChatPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       content: message,
       createdAt: timestamp,
     }
+    streamMeasureRef.current = devMeasure("toolbar", "chat request")
+    sawFirstDeltaRef.current = false
+    devLog("toolbar", "chat submit", { messageLength: message.length })
     setChatLoading(true)
     setStreamingAnswer("")
     setChatInput("")
@@ -122,8 +167,14 @@ const ToolbarChatPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     )
     try {
       await processingService.chat(message)
-      setActiveSession(await historyService.getActiveSession())
+      setStreamingAnswer("")
+      const reloadDone = devMeasure("toolbar", "reload active session after chat")
+      const active = await historyService.getActiveSession()
+      setActiveSession(active)
+      reloadDone({ messageCount: active?.messages.length ?? 0 })
     } catch (err) {
+      streamMeasureRef.current?.({ error: String(err) })
+      streamMeasureRef.current = null
       setActiveSession(current =>
         current
           ? {

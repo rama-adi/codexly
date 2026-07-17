@@ -2,19 +2,23 @@ import fs from "fs"
 import os from "os"
 import path from "path"
 import crypto from "crypto"
+import { streamText } from "ai"
+import { createCodexAppServer, type CodexAppServerProvider, type CodexAppServerSession } from "ai-sdk-provider-codex-cli"
 import { getAppSettings, getDirectThreadsDirectory, getLaunchWorkingDirectory, updateAppSettings } from "../stores/AppSettings"
-import { CodexAppServerClient } from "./CodexAppServerClient"
 import {
   getActiveSessionId,
   setActiveSessionId,
 } from "../stores/HistoryStore"
 import { getPersonalizationConfig } from "../stores/PersonalizationStore"
 import { sanitizeThreadTitle } from "./ThreadTitleHelper"
+import { devLog, devMeasure } from "../utils/devLog"
 
 type ReasoningEffortOption = {
   reasoningEffort: string
   description?: string
 }
+
+type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh"
 
 type ModelOption = {
   id: string
@@ -67,15 +71,21 @@ type HistoryIndexItem = {
   messageCount: number
 }
 
-const DEFAULT_MODEL = "gpt-5.4"
+const DEFAULT_MODEL = "gpt-5.5"
 const CODEX_THREAD_ID_PATTERN = /^(?:urn:uuid:)?[0-9a-fA-F-]{32,36}$/
+const HISTORY_INDEX_LIMIT = 100
+const HISTORY_CODEX_INDEX_SCAN_LIMIT = 60
+const HISTORY_ROLLOUT_FALLBACK_SCAN_LIMIT = 80
 
 export class LLMHelper {
   private modelName = DEFAULT_MODEL
-  private client: CodexAppServerClient | null = null
+  private provider: CodexAppServerProvider | null = null
   private codexThreadId: string | null = null
-  private clientKey: string | null = null
-  private clientReplacePromise: Promise<CodexAppServerClient> | null = null
+  private providerKey: string | null = null
+  private providerReplacePromise: Promise<CodexAppServerProvider> | null = null
+  private currentSession: CodexAppServerSession | null = null
+  private providerWarmupKey: string | null = null
+  private providerWarmupPromise: Promise<void> | null = null
   private directWorkingDirectory: string | null = null
   private directThreadHasUserMessage = false
   private historyIndexCache: HistoryIndexItem[] = []
@@ -92,200 +102,228 @@ export class LLMHelper {
     imagePaths?: string[]
     workingDirectory?: string
     signal?: AbortSignal
+    forceEffort?: ReasoningEffort
   }, callbacks: StreamCallbacks = {}): Promise<string> {
+    const done = devMeasure("llm", "streamAnswer")
     const settings = getAppSettings()
     const configuredCwd = this.resolveWorkingDirectory(input.workingDirectory || getLaunchWorkingDirectory(settings))
-    const client = await this.getClient(configuredCwd)
-    let threadId = await this.ensureThread(client, configuredCwd)
+    const provider = await this.getProvider(configuredCwd)
+    let threadId = this.getActiveThreadId()
     const userMessage = input.message?.trim() || "Solve the attached screenshot."
-    const userInput = [
-      { type: "text", text: userMessage, text_elements: [] as never[] },
-      ...(input.imagePaths ?? []).map(path => ({ type: "localImage", path })),
-    ]
+    const textOnlyTurn = !input.imagePaths?.length
+    const turnConfigOverrides = this.appServerConfigOverrides(textOnlyTurn ? false : settings.webSearchEnabled)
+    const turnEffort = input.forceEffort ?? this.resolveTurnEffort(settings.reasoningEffort, textOnlyTurn)
+    devLog("llm", "streamAnswer prepared", {
+      cwd: configuredCwd,
+      model: this.modelName,
+      effort: turnEffort,
+      hasThreadId: Boolean(threadId),
+      imageCount: input.imagePaths?.length ?? 0,
+      messageLength: userMessage.length,
+    })
     callbacks.onStart?.()
 
     let answer = ""
     let transcript = ""
     let turnId: string | null = null
-    let settled = false
+    let sawFirstDelta = false
     const itemPhases = new Map<string, string>()
     const itemStreamedLengths = new Map<string, number>()
-    const cleanups: Array<() => void> = []
-
-    return new Promise<string>(async (resolve, reject) => {
-      const finish = (error?: Error) => {
-        if (settled) return
-        settled = true
-        cleanups.forEach(cleanup => cleanup())
-        if (error) {
-          callbacks.onError?.(error)
-          reject(error)
-          return
-        }
-        const content = transcript.trim() || answer
-        callbacks.onComplete?.(content)
-        callbacks.onHistoryChanged?.()
-        this.refreshChatSessionsInBackground()
-        this.refreshChatSessionInBackground(threadId)
-        resolve(content)
+    const appendStreamEvent = (delta: string) => {
+      if (!delta) return
+      transcript += delta
+      callbacks.onStreamEvent?.(delta)
+    }
+    const appendAssistantDelta = (delta: string) => {
+      if (!delta) return
+      if (!sawFirstDelta) {
+        sawFirstDelta = true
+        devLog("llm", "first assistant delta", { threadId, turnId })
       }
-
-      const appendStreamEvent = (delta: string) => {
-        if (!delta) return
-        transcript += delta
-        callbacks.onStreamEvent?.(delta)
+      answer += delta
+      transcript += delta
+      callbacks.onDelta?.(delta)
+    }
+    const markItemStreamed = (params: any, delta: string) => {
+      const itemId = this.eventItemId(params)
+      if (!itemId || !delta) return
+      itemStreamedLengths.set(itemId, (itemStreamedLengths.get(itemId) ?? 0) + delta.length)
+    }
+    const appendCompletedTextIfMissing = (item: any, append: (text: string) => void) => {
+      const itemId = item?.id ? String(item.id) : ""
+      if (!itemId) return
+      const text = this.completedItemText(item)
+      if (!text) return
+      const streamedLength = itemStreamedLengths.get(itemId) ?? 0
+      const missing = streamedLength > 0 ? text.slice(streamedLength) : text
+      if (missing) append(missing)
+      itemStreamedLengths.set(itemId, Math.max(streamedLength, text.length))
+    }
+    const handleRaw = (rawValue: unknown) => {
+      const raw = rawValue as { method?: string; params?: any }
+      const method = raw?.method
+      const params = raw?.params ?? {}
+      if (!method) return
+      const rawThreadId = this.eventThreadId(params)
+      if (rawThreadId) {
+        threadId = rawThreadId
+        this.codexThreadId = rawThreadId
+        setActiveSessionId(rawThreadId)
       }
+      if (threadId && rawThreadId && rawThreadId !== threadId) return
+      if (turnId && this.eventTurnId(params) && this.eventTurnId(params) !== turnId) return
 
-      const markItemStreamed = (params: any, delta: string) => {
-        const itemId = this.eventItemId(params)
-        if (!itemId || !delta) return
-        itemStreamedLengths.set(itemId, (itemStreamedLengths.get(itemId) ?? 0) + delta.length)
+      if (method === "turn/started") {
+        turnId = this.eventTurnId(params)
+        devLog("llm", "turn started", { threadId, turnId })
+        return
       }
-
-      const appendCompletedTextIfMissing = (item: any, append: (text: string) => void) => {
-        const itemId = item?.id ? String(item.id) : ""
-        if (!itemId) return
-        const text = this.completedItemText(item)
-        if (!text) return
-        const streamedLength = itemStreamedLengths.get(itemId) ?? 0
-        const missing = streamedLength > 0 ? text.slice(streamedLength) : text
-        if (missing) append(missing)
-        itemStreamedLengths.set(itemId, Math.max(streamedLength, text.length))
+      if (method === "item/started") {
+        this.trackItemPhase(params.item, itemPhases)
+        appendStreamEvent(this.formatStartedItem(params.item))
+        return
       }
-
-      cleanups.push(
-        client.on("turn/started", params => {
-          if (this.eventThreadId(params) === threadId) turnId = this.eventTurnId(params)
-        }),
-        client.on("item/started", params => {
-          if (this.eventThreadId(params) !== threadId) return
-          if (turnId && this.eventTurnId(params) !== turnId) return
-          this.trackItemPhase(params.item, itemPhases)
-          appendStreamEvent(this.formatStartedItem(params.item))
-        }),
-        client.on("item/completed", params => {
-          if (this.eventThreadId(params) !== threadId) return
-          if (turnId && this.eventTurnId(params) !== turnId) return
-          this.trackItemPhase(params.item, itemPhases)
-          if (params.item?.type === "agentMessage") {
-            const phase = this.agentMessageDeltaPhase(params, itemPhases)
-            appendCompletedTextIfMissing(params.item, text => {
-              if (phase === "commentary") {
-                appendStreamEvent(text)
-                return
-              }
-              answer += text
-              transcript += text
-              callbacks.onDelta?.(text)
-            })
-          } else {
-            appendCompletedTextIfMissing(params.item, appendStreamEvent)
-          }
-          appendStreamEvent(this.formatCompletedItem(params.item))
-        }),
-        client.on("item/agentMessage/delta", params => {
-          if (this.eventThreadId(params) !== threadId) return
-          if (turnId && this.eventTurnId(params) !== turnId) return
-          const delta = String(params.delta ?? "")
+      if (method === "item/completed") {
+        this.trackItemPhase(params.item, itemPhases)
+        if (params.item?.type === "agentMessage") {
           const phase = this.agentMessageDeltaPhase(params, itemPhases)
-          markItemStreamed(params, delta)
-          if (phase === "commentary") {
-            appendStreamEvent(delta)
-            return
-          }
-
-          answer += delta
-          transcript += delta
-          callbacks.onDelta?.(delta)
-        }),
-        client.on("item/plan/delta", params => {
-          if (this.eventThreadId(params) !== threadId) return
-          if (turnId && this.eventTurnId(params) !== turnId) return
-          const delta = String(params.delta ?? "")
-          markItemStreamed(params, delta)
-          appendStreamEvent(delta)
-        }),
-        client.on("item/reasoning/summaryTextDelta", params => {
-          if (this.eventThreadId(params) !== threadId) return
-          if (turnId && this.eventTurnId(params) !== turnId) return
-          const delta = String(params.delta ?? "")
-          markItemStreamed(params, delta)
-          appendStreamEvent(delta)
-        }),
-        client.on("item/reasoning/textDelta", params => {
-          if (this.eventThreadId(params) !== threadId) return
-          if (turnId && this.eventTurnId(params) !== turnId) return
-          const delta = String(params.delta ?? "")
-          markItemStreamed(params, delta)
-          appendStreamEvent(delta)
-        }),
-        client.on("item/commandExecution/outputDelta", params => {
-          if (this.eventThreadId(params) !== threadId) return
-          if (turnId && this.eventTurnId(params) !== turnId) return
-          const text = String(params.delta ?? params.output ?? "")
-          if (text) appendStreamEvent(`\n\n\`\`\`text\n${text}\n\`\`\``)
-        }),
-        client.on("item/fileChange/outputDelta", params => {
-          if (this.eventThreadId(params) !== threadId) return
-          if (turnId && this.eventTurnId(params) !== turnId) return
-          appendStreamEvent(String(params.delta ?? params.output ?? ""))
-        }),
-        client.on("turn/completed", params => {
-          if (this.eventThreadId(params) !== threadId) return
-          if (turnId && this.eventTurnId(params) !== turnId) return
-          finish()
-        }),
-        client.on("error", params => {
-          finish(new Error(params?.message ?? "Codex app-server error"))
-        })
-      )
-
-      if (input.signal) {
-        const onAbort = () => finish(new Error("Request cancelled"))
-        input.signal.addEventListener("abort", onAbort, { once: true })
-        cleanups.push(() => input.signal?.removeEventListener("abort", onAbort))
-      }
-
-      const startTurn = () =>
-        client.request("turn/start", {
-          threadId,
-          input: userInput,
-          ...(configuredCwd ? { cwd: configuredCwd } : {}),
-          model: this.modelName,
-          personality: "pragmatic",
-          effort: settings.reasoningEffort,
-          summary: "none",
-        })
-
-      try {
-        await startTurn()
-        this.markDirectThreadUsed(threadId, configuredCwd)
-        setActiveSessionId(threadId)
-      } catch (error: any) {
-        if (this.isThreadNotFoundError(error)) {
-          try {
-            this.codexThreadId = null
-            setActiveSessionId(null)
-            threadId = await this.startThread(client, configuredCwd)
-            await startTurn()
-            this.markDirectThreadUsed(threadId, configuredCwd)
-            setActiveSessionId(threadId)
-            callbacks.onHistoryChanged?.()
-            return
-          } catch (retryError: any) {
-            finish(new Error(retryError?.message ?? String(retryError)))
-            return
-          }
+          appendCompletedTextIfMissing(params.item, phase === "commentary" ? appendStreamEvent : appendAssistantDelta)
+        } else {
+          appendCompletedTextIfMissing(params.item, appendStreamEvent)
         }
-        finish(new Error(error?.message ?? String(error)))
+        appendStreamEvent(this.formatCompletedItem(params.item))
+        return
       }
-    })
+      if (method === "item/agentMessage/delta") {
+        const delta = String(params.delta ?? "")
+        const phase = this.agentMessageDeltaPhase(params, itemPhases)
+        markItemStreamed(params, delta)
+        if (phase === "commentary") appendStreamEvent(delta)
+        else appendAssistantDelta(delta)
+        return
+      }
+      if (
+        method === "item/plan/delta" ||
+        method === "item/reasoning/summaryTextDelta" ||
+        method === "item/reasoning/textDelta"
+      ) {
+        const delta = String(params.delta ?? "")
+        markItemStreamed(params, delta)
+        appendStreamEvent(delta)
+        return
+      }
+      if (method === "item/commandExecution/outputDelta") {
+        const text = String(params.delta ?? params.output ?? "")
+        if (text) appendStreamEvent(`\n\n\`\`\`text\n${text}\n\`\`\``)
+        return
+      }
+      if (method === "item/fileChange/outputDelta") {
+        appendStreamEvent(String(params.delta ?? params.output ?? ""))
+      }
+    }
+
+    try {
+      const result = streamText({
+        model: provider(this.modelName, {
+          cwd: configuredCwd,
+          personality: "pragmatic",
+          effort: turnEffort,
+          summary: "none",
+          approvalPolicy: "never",
+          sandboxPolicy: "read-only",
+          developerInstructions: this.buildDeveloperInstructions(),
+          configOverrides: turnConfigOverrides,
+          includeRawChunks: true,
+          persistExtendedHistory: true,
+          serverRequests: this.providerRequestHandlers(),
+          onSessionCreated: session => {
+            this.currentSession = session
+            this.codexThreadId = session.threadId
+            threadId = session.threadId
+            setActiveSessionId(session.threadId)
+          },
+        }),
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: userMessage },
+              ...(input.imagePaths ?? []).map(imagePath => ({ type: "image" as const, image: fs.readFileSync(imagePath) })),
+            ],
+          },
+        ],
+        abortSignal: input.signal,
+        includeRawChunks: true,
+        providerOptions: {
+          "codex-app-server": {
+            ...(threadId ? { threadId } : { threadMode: "persistent" }),
+            includeRawChunks: true,
+            persistExtendedHistory: true,
+            configOverrides: turnConfigOverrides,
+          },
+        } as any,
+      })
+
+      for await (const part of result.fullStream) {
+        if (part.type === "raw") {
+          handleRaw(part.rawValue)
+          continue
+        }
+        if (part.type === "text-delta" && !turnId) {
+          appendAssistantDelta(String(part.text ?? ""))
+          continue
+        }
+        if (part.type === "reasoning-delta" && !turnId) {
+          appendStreamEvent(String(part.text ?? ""))
+        }
+      }
+
+      const content = transcript.trim() || answer
+      this.markDirectThreadUsed(threadId, configuredCwd)
+      callbacks.onComplete?.(content)
+      callbacks.onHistoryChanged?.()
+      this.refreshChatSessionsInBackground()
+      if (threadId) this.refreshChatSessionInBackground(threadId)
+      done({ threadId, answerLength: answer.length, transcriptLength: transcript.length })
+      return content
+    } catch (error: any) {
+      if (this.isThreadNotFoundError(error) && threadId) {
+        this.codexThreadId = null
+        setActiveSessionId(null)
+      }
+      const normalized = new Error(error?.message ?? String(error))
+      if (turnEffort === "minimal" && this.isMinimalToolIncompatibilityError(normalized)) {
+        devLog("llm", "minimal effort rejected by tools; retrying with low effort", {
+          threadId,
+          messageLength: userMessage.length,
+        })
+        done({ retry: "low", error: normalized.message })
+        return this.streamAnswer({ ...input, forceEffort: "low" }, callbacks)
+      }
+      callbacks.onError?.(normalized)
+      done({ error: normalized.message })
+      throw normalized
+    }
   }
 
   public async prepareForLaunch(workingDirectory?: string): Promise<void> {
+    const done = devMeasure("llm", "prepareForLaunch")
     const settings = getAppSettings()
     const configuredCwd = this.resolveWorkingDirectory(workingDirectory || getLaunchWorkingDirectory(settings))
-    await this.getClient(configuredCwd)
+    const provider = await this.getProvider(configuredCwd)
+    const key = this.getProviderKey(configuredCwd, settings.webSearchEnabled)
+    if (this.providerWarmupKey === key) {
+      done({ cwd: configuredCwd, cached: true })
+      return
+    }
+    if (!this.providerWarmupPromise) {
+      this.providerWarmupPromise = this.warmProvider(provider, configuredCwd, key)
+        .finally(() => {
+          this.providerWarmupPromise = null
+        })
+    }
+    await this.providerWarmupPromise
+    done({ cwd: configuredCwd, cached: false })
   }
 
   public async getReadyState(workingDirectory?: string): Promise<{
@@ -297,7 +335,7 @@ export class LLMHelper {
     const settings = getAppSettings()
     const configuredCwd = this.resolveWorkingDirectory(workingDirectory || getLaunchWorkingDirectory(settings))
     return {
-      ready: Boolean(this.client && this.clientKey === this.getClientKey(configuredCwd)),
+      ready: Boolean(this.provider && this.providerKey === this.getProviderKey(configuredCwd)),
       threadId: this.codexThreadId,
       cwd: configuredCwd,
       model: this.modelName,
@@ -309,12 +347,13 @@ export class LLMHelper {
   }
 
   public clearChatHistory(): void {
-    this.codexThreadId = null
-    if (this.clientReplacePromise) return
-    this.client?.stop()
-    this.client = null
-    this.clientKey = null
+    this.resetActiveThread()
     this.cleanupUnusedDirectThread()
+  }
+
+  public resetActiveThread(): void {
+    this.codexThreadId = null
+    this.currentSession = null
   }
 
   public cleanupUnusedDirectSession(): void {
@@ -345,25 +384,19 @@ export class LLMHelper {
   }
 
   private async loadChatSessions(): Promise<HistoryIndexItem[]> {
-    const client = await this.getClient(this.resolveWorkingDirectory(getLaunchWorkingDirectory(getAppSettings())))
-    const response = await client.request("thread/list", {
-      limit: 100,
-      archived: false,
-      sortKey: "updated_at",
-      sortDirection: "desc",
-    })
-    const threads = Array.isArray(response?.data) ? response.data : []
-    const items: HistoryIndexItem[] = threads
-      .filter((thread: any) => this.isThreadInScopedWorkspace(thread))
-      .map((thread: any) => this.threadToIndexItem(thread))
+    const done = devMeasure("history", "loadChatSessions")
+    const items = this.readRolloutIndexItems()
+      .filter(item => item)
+      .slice(0, 100) as HistoryIndexItem[]
     const activeThreadId = getActiveSessionId()
     if (activeThreadId && !items.some(item => item.id === activeThreadId)) {
       const activeSession = await this.getChatSession(activeThreadId)
-      if (activeSession && this.isCwdInScopedWorkspace(activeSession.workingDirectory)) {
+      if (activeSession) {
         items.unshift(this.chatSessionToIndexItem(activeSession))
       }
     }
     this.historyIndexCache = items
+    done({ count: items.length, activeSessionId: activeThreadId ?? null })
     return items
   }
 
@@ -389,33 +422,16 @@ export class LLMHelper {
   }
 
   private async refreshChatSession(threadId: string): Promise<ChatSession | null> {
-    const client = await this.getClient(this.resolveWorkingDirectory(getLaunchWorkingDirectory(getAppSettings())))
-    try {
-      const response = await client.request("thread/read", { threadId, includeTurns: true })
-      const session = this.threadToChatSession(response?.thread)
-      if (session) this.sessionCache.set(session.id, session)
-      return session
-    } catch (error) {
-      if (this.isThreadNotFoundError(error)) return null
-      if (this.isThreadNotMaterializedError(error)) return this.getUnmaterializedChatSession(client, threadId)
-      throw error
-    }
+    const done = devMeasure("history", "refreshChatSession")
+    const session = this.readRolloutSession(threadId) ?? this.getUnmaterializedChatSession(threadId)
+    this.sessionCache.set(session.id, session)
+    done({ threadId, messageCount: session.messages.length })
+    return session
   }
 
-  private async getUnmaterializedChatSession(client: CodexAppServerClient, threadId: string): Promise<ChatSession> {
-    try {
-      const response = await client.request("thread/read", { threadId, includeTurns: false })
-      const session = this.threadToChatSession(response?.thread)
-      if (session) {
-        this.sessionCache.set(session.id, session)
-        return session
-      }
-    } catch {
-      // Fall through to an empty shell; the thread exists in memory but has no persisted turns yet.
-    }
-
+  private getUnmaterializedChatSession(threadId: string): ChatSession {
     const timestamp = new Date().toISOString()
-    const session: ChatSession = {
+    return {
       id: threadId,
       title: "New session",
       createdAt: timestamp,
@@ -423,8 +439,6 @@ export class LLMHelper {
       codexThreadId: threadId,
       messages: [],
     }
-    this.sessionCache.set(threadId, session)
-    return session
   }
 
   public async getActiveChatSession(): Promise<ChatSession | null> {
@@ -432,30 +446,41 @@ export class LLMHelper {
     return activeThreadId ? this.getChatSession(activeThreadId) : null
   }
 
+  public getActiveChatSessionWorkingDirectory(): string | undefined {
+    const activeThreadId = getActiveSessionId()
+    if (!activeThreadId) return undefined
+    const cached = this.sessionCache.get(activeThreadId)
+    if (cached?.workingDirectory) return cached.workingDirectory
+    const rolloutPath = this.findRolloutPath(activeThreadId)
+    return rolloutPath ? this.readRolloutWorkingDirectory(rolloutPath) : undefined
+  }
+
   public async activateChatSession(threadId: string): Promise<ChatSession | null> {
     const session = await this.getChatSession(threadId)
     if (!session) return null
     setActiveSessionId(threadId)
-    this.codexThreadId = null
+    this.codexThreadId = threadId
     return session
   }
 
   public async deleteChatSession(threadId: string): Promise<boolean> {
     if (!threadId) return false
-    const client = await this.getClient(this.resolveWorkingDirectory(getLaunchWorkingDirectory(getAppSettings())))
-    try {
-      await client.request("thread/archive", { threadId })
-      this.sessionCache.delete(threadId)
-      this.historyIndexCache = this.historyIndexCache.filter(item => item.id !== threadId)
-      if (getActiveSessionId() === threadId) {
-        setActiveSessionId(null)
-        this.codexThreadId = null
+    const rolloutPath = this.findRolloutPath(threadId)
+    if (rolloutPath) {
+      try {
+        fs.rmSync(rolloutPath, { force: true })
+      } catch (error) {
+        console.warn("Failed to remove Codex session history:", error)
+        return false
       }
-      return true
-    } catch (error) {
-      if (this.isThreadNotFoundError(error)) return false
-      throw error
     }
+    this.sessionCache.delete(threadId)
+    this.historyIndexCache = this.historyIndexCache.filter(item => item.id !== threadId)
+    if (getActiveSessionId() === threadId) {
+      setActiveSessionId(null)
+      this.codexThreadId = null
+    }
+    return Boolean(rolloutPath)
   }
 
   public async newChatSession(): Promise<ChatSession> {
@@ -499,20 +524,12 @@ export class LLMHelper {
   public async getAvailableModels(): Promise<ModelOption[]> {
     try {
       const cwd = this.resolveWorkingDirectory(getLaunchWorkingDirectory(getAppSettings()))
-      const client = await this.getClient(cwd)
-      const result = await client.request("model/list", {
-        limit: 20,
-        includeHidden: false,
-      })
-      const models = Array.isArray(result?.data)
-        ? result.data
-        : Array.isArray(result?.models)
-          ? result.models
-          : []
+      const provider = await this.getProvider(cwd)
+      const result = await provider.listModels()
+      const models = Array.isArray(result?.models) ? result.models : []
       return models
         .map((model: any) => this.normalizeModelOption(model))
         .filter((model: ModelOption | null): model is ModelOption => Boolean(model))
-        .filter((model: ModelOption) => model.inputModalities.includes("image"))
     } catch (error) {
       console.warn("Failed to list Codex models:", error)
       return []
@@ -521,106 +538,117 @@ export class LLMHelper {
 
   public async testConnection(): Promise<{ success: boolean; error?: string }> {
     try {
-      await this.getClient(this.resolveWorkingDirectory(getLaunchWorkingDirectory(getAppSettings())))
+      const provider = await this.getProvider(this.resolveWorkingDirectory(getLaunchWorkingDirectory(getAppSettings())))
+      await provider.listModels().catch((): undefined => undefined)
       return { success: true }
     } catch (error: any) {
       return { success: false, error: error?.message ?? String(error) }
     }
   }
 
-  private async getClient(cwd: string | undefined): Promise<CodexAppServerClient> {
+  private async getProvider(cwd: string | undefined): Promise<CodexAppServerProvider> {
     const settings = getAppSettings()
-    const spawnCwd = cwd || this.resolveWorkingDirectory(undefined)
-    const key = this.getClientKey(cwd, settings.webSearchEnabled)
-    if (this.client && this.clientKey === key) return this.client
-    if (!this.clientReplacePromise) {
-      this.clientReplacePromise = this.replaceClient(spawnCwd, key, settings.webSearchEnabled)
+    const resolvedCwd = cwd || this.resolveWorkingDirectory(undefined)
+    const key = this.getProviderKey(cwd, settings.webSearchEnabled)
+    if (this.provider && this.providerKey === key) {
+      devLog("llm", "provider reused", { key })
+      return this.provider
+    }
+    if (!this.providerReplacePromise) {
+      this.providerReplacePromise = this.replaceProvider(resolvedCwd, key, settings.webSearchEnabled)
         .finally(() => {
-          this.clientReplacePromise = null
+          this.providerReplacePromise = null
         })
     }
-    return this.clientReplacePromise
+    return this.providerReplacePromise
   }
 
-  private async replaceClient(cwd: string, key: string, webSearchEnabled: boolean): Promise<CodexAppServerClient> {
+  private async replaceProvider(cwd: string, key: string, webSearchEnabled: boolean): Promise<CodexAppServerProvider> {
+    const done = devMeasure("llm", "replaceProvider")
     this.cleanupUnusedDirectThread(cwd)
-    this.client?.stop()
-    this.client = null
-    this.clientKey = null
+    await this.provider?.close().catch(error => console.warn("Failed to close Codex provider:", error))
+    this.provider = null
+    this.providerKey = null
+    this.providerWarmupKey = null
+    this.providerWarmupPromise = null
     this.codexThreadId = null
-
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const client = new CodexAppServerClient(cwd, webSearchEnabled)
-      try {
-        await client.start()
-        this.client = client
-        this.clientKey = key
-        return client
-      } catch (error) {
-        client.stop()
-        if (attempt === 0 && this.isBenignCodexExitError(error)) continue
-        throw error
-      }
-    }
-
-    throw new Error("Codex app-server failed to start")
+    this.currentSession = null
+    const provider = createCodexAppServer({
+      defaultSettings: {
+        cwd,
+        minCodexVersion: "0.130.0",
+        personality: "pragmatic",
+        approvalPolicy: "never",
+        sandboxPolicy: "read-only",
+        effort: getAppSettings().reasoningEffort,
+        summary: "none",
+        persistExtendedHistory: true,
+        includeRawChunks: true,
+        autoApprove: false,
+        configOverrides: this.appServerConfigOverrides(webSearchEnabled),
+        serverRequests: this.providerRequestHandlers(),
+      },
+    })
+    this.provider = provider
+    this.providerKey = key
+    done({ cwd, key, webSearchEnabled })
+    return provider
   }
 
-  private getClientKey(cwd: string | undefined, webSearchEnabled = getAppSettings().webSearchEnabled): string {
+  private async warmProvider(provider: CodexAppServerProvider, cwd: string, key: string): Promise<void> {
+    const done = devMeasure("llm", "warmProvider")
+    const settings = getAppSettings()
+    await provider.listModels().catch(error => {
+      devLog("llm", "warmProvider model list skipped", {
+        error: error instanceof Error ? error.message : String(error),
+      })
+    })
+    if (this.provider === provider && this.getProviderKey(cwd, settings.webSearchEnabled) === key) {
+      this.providerWarmupKey = key
+    }
+    done({ cwd, key, warmupKey: this.providerWarmupKey })
+  }
+
+  private getProviderKey(cwd: string | undefined, webSearchEnabled = getAppSettings().webSearchEnabled): string {
     return `${cwd || this.resolveWorkingDirectory(undefined)}::web_search:${webSearchEnabled ? "live" : "disabled"}`
   }
 
-  private async ensureThread(client: CodexAppServerClient, cwd: string | undefined): Promise<string> {
+  private appServerConfigOverrides(webSearchEnabled: boolean): Record<string, boolean> {
+    return {
+      "tools.web_search": webSearchEnabled,
+      "tools.image_generation": false,
+    }
+  }
+
+  private resolveTurnEffort(configuredEffort: ReasoningEffort, textOnlyTurn: boolean): ReasoningEffort {
+    if (!textOnlyTurn) return configuredEffort
+    return "minimal"
+  }
+
+  private getActiveThreadId(): string | null {
     if (this.codexThreadId) return this.codexThreadId
     const activeSessionId = getActiveSessionId()
-    if (activeSessionId && CODEX_THREAD_ID_PATTERN.test(activeSessionId)) {
-      try {
-        return await this.resumeThread(client, activeSessionId, cwd)
-      } catch (error) {
-        if (!this.isStaleThreadError(error)) throw error
-        setActiveSessionId(null)
-      }
-    } else if (activeSessionId) {
+    if (activeSessionId && CODEX_THREAD_ID_PATTERN.test(activeSessionId)) return activeSessionId
+    if (activeSessionId) {
       setActiveSessionId(null)
     }
-
-    return this.startThread(client, cwd)
+    return null
   }
 
-  private async resumeThread(client: CodexAppServerClient, threadId: string, cwd: string | undefined): Promise<string> {
-    const response = await client.request("thread/resume", {
-      threadId,
-      ...(cwd ? { cwd } : {}),
-      personality: "pragmatic",
-    })
-    this.codexThreadId = response?.thread?.id ?? response?.threadId ?? response?.id ?? threadId
-    if (this.isDirectWorkingDirectory(cwd)) {
-      this.directWorkingDirectory = cwd ?? this.directWorkingDirectory
-      this.directThreadHasUserMessage = true
+  private providerRequestHandlers() {
+    return {
+      onToolRequestUserInput: async (request: any) => ({
+        answers: Object.fromEntries(
+          (request.params?.questions ?? []).map((question: any) => [
+            question.id,
+            { answers: question?.options?.[0]?.label ? [question.options[0].label] : ["ok"] },
+          ])
+        ),
+      }),
+      onCommandExecutionApproval: async () => ({ decision: "decline" as const }),
+      onFileChangeApproval: async () => ({ decision: "decline" as const }),
+      onSkillApproval: async () => ({ decision: "decline" as const }),
     }
-    return this.codexThreadId
-  }
-
-  private async startThread(client: CodexAppServerClient, cwd: string | undefined): Promise<string> {
-    const activeSessionId = getActiveSessionId()
-    const response = await client.request("thread/start", {
-      ...(cwd ? { cwd } : {}),
-      config: { web_search: getAppSettings().webSearchEnabled ? "live" : "disabled" },
-      model: this.modelName,
-      developerInstructions: this.buildDeveloperInstructions(),
-      personality: "pragmatic",
-      sandbox: "read-only",
-      approvalPolicy: "never",
-      serviceName: "codexly",
-      sessionStartSource: activeSessionId ? "startup" : "clear",
-    })
-    this.codexThreadId = response?.thread?.id ?? response?.threadId ?? response?.id
-    if (!this.codexThreadId) throw new Error("Codex app-server did not return a thread id")
-    if (this.isDirectWorkingDirectory(cwd)) {
-      this.directWorkingDirectory = cwd ?? this.directWorkingDirectory
-      this.directThreadHasUserMessage = false
-    }
-    return this.codexThreadId
   }
 
   private resolveWorkingDirectory(cwd: string | undefined): string {
@@ -649,7 +677,7 @@ export class LLMHelper {
   }
 
   private cleanupUnusedDirectThread(preserveDirectory?: string): void {
-    if (this.clientReplacePromise) return
+    if (this.providerReplacePromise) return
     if (!this.directWorkingDirectory || this.directThreadHasUserMessage) return
     if (
       preserveDirectory &&
@@ -693,7 +721,7 @@ export class LLMHelper {
 
   private isCwdInScopedWorkspace(cwd: string | undefined): boolean {
     const normalizedCwd = this.normalizeDirectoryPath(cwd)
-    if (!normalizedCwd) return false
+    if (!normalizedCwd) return true
     return this.scopedHistoryDirectories().some(directory =>
       normalizedCwd === directory || normalizedCwd.startsWith(`${directory}${path.sep}`)
     )
@@ -723,6 +751,11 @@ export class LLMHelper {
 
   private isThreadNotMaterializedError(error: unknown): boolean {
     return /not materialized yet|includeTurns is unavailable/i.test(error instanceof Error ? error.message : String(error))
+  }
+
+  private isMinimalToolIncompatibilityError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error)
+    return /reasoning\.effort 'minimal'|reasoning\.effort "minimal"|cannot be used with reasoning\.effort/i.test(message)
   }
 
   public shouldIgnoreBackgroundError(error: unknown): boolean {
@@ -1138,12 +1171,200 @@ export class LLMHelper {
     return /\b(I('|’)ll|I('|’)m|I am|I will|I found|I’m|I’ll)\b/.test(content)
   }
 
-  private readRolloutEventMessages(threadId: string): ChatMessage[] {
-    const rolloutPath = this.findRolloutPath(threadId)
-    if (!rolloutPath) return []
+  private readRolloutSessions(): ChatSession[] {
+    return this.listRolloutPaths()
+      .flatMap(rolloutPath => {
+        const threadId = this.threadIdFromRolloutPath(rolloutPath)
+        if (!threadId) return []
+        const session = this.readRolloutSession(threadId, rolloutPath)
+        return session ? [session] : []
+      })
+  }
+
+  private readRolloutIndexItems(): Array<HistoryIndexItem | null> {
+    const codexSessionIndex = this.readCodexSessionIndex()
+    const rolloutPathsByThreadId = this.listRolloutPathsByThreadId()
+    const seen = new Set<string>()
+    const items: Array<HistoryIndexItem | null> = []
+
+    for (const [threadId, indexedSession] of Array.from(codexSessionIndex.entries())
+      .sort((left, right) => Date.parse(right[1].updatedAt) - Date.parse(left[1].updatedAt))
+      .slice(0, HISTORY_CODEX_INDEX_SCAN_LIMIT)) {
+      seen.add(threadId)
+      const item = this.rolloutIndexItemFromPath(threadId, rolloutPathsByThreadId.get(threadId), indexedSession)
+      if (item) items.push(item)
+      if (items.length >= HISTORY_INDEX_LIMIT) return items
+    }
+
+    for (const [threadId, rolloutPath] of this.recentRolloutPathEntries(rolloutPathsByThreadId, HISTORY_ROLLOUT_FALLBACK_SCAN_LIMIT)) {
+      if (seen.has(threadId)) continue
+      const item = this.rolloutIndexItemFromPath(threadId, rolloutPath, codexSessionIndex.get(threadId))
+      if (item) items.push(item)
+      if (items.length >= HISTORY_INDEX_LIMIT) return items
+    }
+
+    return items.sort((left, right) => {
+      if (!left) return 1
+      if (!right) return -1
+      return Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
+    })
+  }
+
+  private recentRolloutPathEntries(
+    rolloutPathsByThreadId: Map<string, string>,
+    limit: number
+  ): Array<[string, string]> {
+    return Array.from(rolloutPathsByThreadId.entries())
+      .sort((left, right) => {
+        try {
+          return fs.statSync(right[1]).mtimeMs - fs.statSync(left[1]).mtimeMs
+        } catch {
+          return 0
+        }
+      })
+      .slice(0, limit)
+  }
+
+  private rolloutIndexItemFromPath(
+    threadId: string,
+    rolloutPath: string | undefined,
+    indexedSession?: { title: string; updatedAt: string }
+  ): HistoryIndexItem | null {
+    if (!rolloutPath) return null
+    let stat: fs.Stats
+    try {
+      stat = fs.statSync(rolloutPath)
+    } catch {
+      return null
+    }
+    const metadata = this.readRolloutIndexMetadata(rolloutPath)
+    if (!this.isCwdInScopedWorkspace(metadata.workingDirectory)) return null
+    const timestamp = stat.mtime.toISOString()
+    return {
+      id: threadId,
+      title: sanitizeThreadTitle(indexedSession?.title || metadata.titleSeed || "New session"),
+      createdAt: metadata.createdAt || timestamp,
+      updatedAt: indexedSession?.updatedAt || metadata.updatedAt || timestamp,
+      messageCount: metadata.messageCount,
+    }
+  }
+
+  private readRolloutIndexMetadata(rolloutPath: string): {
+    titleSeed: string
+    createdAt: string
+    updatedAt: string
+    messageCount: number
+    workingDirectory?: string
+  } {
+    let titleSeed = ""
+    let createdAt = ""
+    let updatedAt = ""
+    let messageCount = 0
+    let workingDirectory: string | undefined
 
     try {
       const lines = fs.readFileSync(rolloutPath, "utf8").split(/\r?\n/)
+      const hasResponseItems = lines.some(line => {
+        if (!line.trim()) return false
+        try {
+          const entry = JSON.parse(line)
+          return entry?.type === "response_item" && entry?.payload?.type === "message"
+        } catch {
+          return false
+        }
+      })
+
+      for (const line of lines) {
+        if (!line.trim()) continue
+        const entry = JSON.parse(line)
+        const timestamp = typeof entry?.timestamp === "string" ? entry.timestamp : ""
+        if (timestamp) {
+          if (!createdAt) createdAt = timestamp
+          updatedAt = timestamp
+        }
+        workingDirectory ??= this.rolloutEntryWorkingDirectory(entry)
+        const payload = entry?.payload ?? {}
+        if (hasResponseItems && entry?.type === "event_msg") continue
+        if (entry?.type === "event_msg" && payload?.type === "user_message") {
+          messageCount += 1
+          if (!titleSeed) titleSeed = String(payload?.message ?? "").trim()
+          continue
+        }
+        if (entry?.type === "event_msg" && payload?.type === "agent_message") {
+          messageCount += 1
+          continue
+        }
+        if (entry?.type === "response_item" && payload?.type === "message") {
+          const message = this.responseItemToChatMessage(payload, timestamp || updatedAt || createdAt, messageCount)
+          if (!message) continue
+          messageCount += 1
+          if (message.role === "user" && !titleSeed) titleSeed = message.content
+        }
+      }
+    } catch {
+      return { titleSeed: "", createdAt: "", updatedAt: "", messageCount: 0 }
+    }
+
+    return { titleSeed, createdAt, updatedAt, messageCount, workingDirectory }
+  }
+
+  private readRolloutSession(threadId: string, rolloutPath = this.findRolloutPath(threadId)): ChatSession | null {
+    if (!rolloutPath) return null
+    const messages = this.readRolloutEventMessagesFromPath(rolloutPath)
+    if (!messages.length) return null
+    const createdAt = messages[0]?.createdAt ?? new Date().toISOString()
+    const updatedAt = messages.at(-1)?.createdAt ?? createdAt
+    const firstUserMessage = messages.find(message => message.role === "user")?.content
+    return {
+      id: threadId,
+      title: sanitizeThreadTitle(this.readCodexSessionIndex().get(threadId)?.title || firstUserMessage || "New session"),
+      createdAt,
+      updatedAt,
+      codexThreadId: threadId,
+      workingDirectory: this.readRolloutWorkingDirectory(rolloutPath),
+      messages,
+    }
+  }
+
+  private readCodexSessionIndex(): Map<string, { title: string; updatedAt: string }> {
+    const indexPath = path.join(os.homedir(), ".codex", "session_index.jsonl")
+    const sessions = new Map<string, { title: string; updatedAt: string }>()
+    if (!fs.existsSync(indexPath)) return sessions
+
+    try {
+      for (const line of fs.readFileSync(indexPath, "utf8").split(/\r?\n/)) {
+        if (!line.trim()) continue
+        const entry = JSON.parse(line)
+        const id = typeof entry?.id === "string" ? entry.id : ""
+        const title = typeof entry?.thread_name === "string" ? entry.thread_name.trim() : ""
+        const updatedAt = typeof entry?.updated_at === "string" ? entry.updated_at : ""
+        if (id && title) sessions.set(id, { title, updatedAt })
+      }
+    } catch {
+      return sessions
+    }
+
+    return sessions
+  }
+
+  private readRolloutEventMessages(threadId: string): ChatMessage[] {
+    const rolloutPath = this.findRolloutPath(threadId)
+    if (!rolloutPath) return []
+    return this.readRolloutEventMessagesFromPath(rolloutPath)
+  }
+
+  private readRolloutEventMessagesFromPath(rolloutPath: string): ChatMessage[] {
+    try {
+      const lines = fs.readFileSync(rolloutPath, "utf8").split(/\r?\n/)
+      const hasResponseItems = lines.some(line => {
+        if (!line.trim()) return false
+        try {
+          const entry = JSON.parse(line)
+          return entry?.type === "response_item" && entry?.payload?.type === "message"
+        } catch {
+          return false
+        }
+      })
       const messages: ChatMessage[] = []
       let assistantParts: string[] = []
       let assistantCreatedAt = ""
@@ -1162,6 +1383,15 @@ export class LLMHelper {
         const entry = JSON.parse(line)
         const timestamp = typeof entry?.timestamp === "string" ? entry.timestamp : new Date().toISOString()
         const payload = entry?.payload ?? {}
+
+        if (entry?.type === "response_item") {
+          const message = this.responseItemToChatMessage(payload, timestamp, messages.length)
+          if (message?.role === "user") flushAssistant()
+          if (message) messages.push(message)
+          continue
+        }
+
+        if (hasResponseItems) continue
         if (entry?.type !== "event_msg") continue
 
         if (payload?.type === "user_message") {
@@ -1200,6 +1430,63 @@ export class LLMHelper {
       console.warn("Failed to read Codex rollout event history:", error)
       return []
     }
+  }
+
+  private readRolloutWorkingDirectory(rolloutPath: string): string | undefined {
+    try {
+      for (const line of fs.readFileSync(rolloutPath, "utf8").split(/\r?\n/)) {
+        if (!line.trim()) continue
+        const entry = JSON.parse(line)
+        const cwd = this.rolloutEntryWorkingDirectory(entry)
+        if (cwd) return cwd
+      }
+    } catch {
+      return undefined
+    }
+    return undefined
+  }
+
+  private listRolloutPaths(): string[] {
+    return Array.from(this.listRolloutPathsByThreadId().values()).sort((left, right) => {
+      try {
+        return fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs
+      } catch {
+        return 0
+      }
+    })
+  }
+
+  private listRolloutPathsByThreadId(): Map<string, string> {
+    const root = path.join(os.homedir(), ".codex", "sessions")
+    const paths = new Map<string, string>()
+    if (!fs.existsSync(root)) return paths
+    const stack = [root]
+    while (stack.length) {
+      const current = stack.pop()
+      if (!current) continue
+      let entries: fs.Dirent[]
+      try {
+        entries = fs.readdirSync(current, { withFileTypes: true })
+      } catch {
+        continue
+      }
+      for (const entry of entries) {
+        const entryPath = path.join(current, entry.name)
+        if (entry.isDirectory()) {
+          stack.push(entryPath)
+        } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+          const threadId = this.threadIdFromRolloutPath(entryPath)
+          if (threadId) paths.set(threadId, entryPath)
+        }
+      }
+    }
+    return paths
+  }
+
+  private threadIdFromRolloutPath(rolloutPath: string): string | null {
+    const filename = path.basename(rolloutPath)
+    const match = filename.match(/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/)
+    return match?.[1] ?? null
   }
 
   private findRolloutPath(threadId: string): string | null {
@@ -1249,7 +1536,75 @@ export class LLMHelper {
     return [
       ...this.normalizeRolloutImageList(payload?.images),
       ...this.normalizeRolloutImageList(payload?.local_images),
+      ...this.normalizeRolloutImageList(payload?.localImages),
     ]
+  }
+
+  private rolloutEntryWorkingDirectory(entry: any): string | undefined {
+    const cwd =
+      entry?.cwd ??
+      entry?.payload?.cwd ??
+      entry?.payload?.metadata?.cwd ??
+      entry?.payload?.turn?.cwd ??
+      entry?.payload?.thread?.cwd
+    return typeof cwd === "string" && cwd.trim() ? cwd : undefined
+  }
+
+  private responseItemToChatMessage(payload: any, createdAt: string, index: number): ChatMessage | null {
+    if (payload?.type !== "message") return null
+    const role = payload.role === "assistant" ? "assistant" : payload.role === "user" ? "user" : null
+    if (!role) return null
+    const content = Array.isArray(payload.content) ? payload.content : []
+    const text = this.responseItemText(payload)
+    if (!text && this.isSyntheticResponseItemMessage(payload)) return null
+    const imagePaths = content.flatMap((part: any) => {
+      const reference = part?.image ?? part?.image_url ?? part?.imageUrl ?? part?.url ?? part?.path
+      return typeof reference === "string" && reference.trim() ? [reference.trim()] : []
+    })
+    if (!text && !imagePaths.length) return null
+    return {
+      id: String(payload.id ?? `response-item-${index}`),
+      role,
+      content: text || (role === "user" ? "Solve the attached screenshot." : ""),
+      screenshotPaths: imagePaths.length ? imagePaths : undefined,
+      screenshots: imagePaths.length ? this.screenshotRecords(imagePaths) : undefined,
+      createdAt,
+    }
+  }
+
+  private responseItemText(payload: any): string {
+    const content = Array.isArray(payload?.content) ? payload.content : []
+    return content
+      .flatMap((part: any) => {
+        const text = part?.text ?? part?.content
+        if (typeof text !== "string") return []
+        const cleaned = this.cleanResponseItemText(text)
+        return cleaned ? [cleaned] : []
+      })
+      .join("\n\n")
+      .trim()
+  }
+
+  private isSyntheticResponseItemMessage(payload: any): boolean {
+    const content = Array.isArray(payload?.content) ? payload.content : []
+    const textParts: string[] = content
+      .flatMap((part: any) => {
+        const text = part?.text ?? part?.content
+        return typeof text === "string" ? [text] : []
+      })
+      .filter((text: string) => text.trim())
+    return textParts.length > 0 && textParts.every(text => !this.cleanResponseItemText(text))
+  }
+
+  private cleanResponseItemText(text: string): string {
+    const trimmed = text.trim()
+    if (!trimmed) return ""
+    if (/^<image\s+name=\[[^\]]+\]>\s*$/i.test(trimmed)) return ""
+    if (/^<\/image>\s*$/i.test(trimmed)) return ""
+    if (/^<(?:environment_context|permissions instructions|apps_instructions|skills_instructions|plugins_instructions|codex_internal_context)\b[\s\S]*<\/(?:environment_context|permissions instructions|apps_instructions|skills_instructions|plugins_instructions|codex_internal_context)>$/i.test(trimmed)) {
+      return ""
+    }
+    return trimmed.replace(/^User:\s*/i, "").trim()
   }
 
   private normalizeRolloutImageList(value: unknown): string[] {
@@ -1314,6 +1669,18 @@ export class LLMHelper {
   }
 
   private loadSavedModel(): string {
-    return getAppSettings().model || DEFAULT_MODEL
+    const settings = getAppSettings()
+    const savedModel = settings.model?.trim()
+    if (!savedModel || savedModel === "gpt-5.4" || /spark/i.test(savedModel)) {
+      updateAppSettings({
+        model: DEFAULT_MODEL,
+        reasoningEffort: "low",
+      })
+      return DEFAULT_MODEL
+    }
+    if (settings.reasoningEffort !== "low") {
+      updateAppSettings({ reasoningEffort: "low" })
+    }
+    return savedModel
   }
 }

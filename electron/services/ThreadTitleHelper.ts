@@ -1,13 +1,14 @@
-import { spawn } from "child_process"
+import { generateObject } from "ai"
+import { codexExec } from "ai-sdk-provider-codex-cli"
 import fs from "fs"
 import os from "os"
-import path from "path"
-import { codexSpawnEnv, resolveCodexBinary } from "./CodexBinary"
+import { z } from "zod"
 
 const TITLE_FALLBACK = "New session"
 const TITLE_MAX_LENGTH = 28
 const CODEX_TITLE_TIMEOUT_MS = 180_000
 const CODEX_TITLE_REASONING_EFFORT = "low"
+const threadTitleSchema = z.object({ title: z.string() })
 
 export function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolean {
   const trimmedCurrentTitle = currentTitle.trim()
@@ -56,120 +57,41 @@ function buildThreadTitlePrompt(input: { message: string; imageCount: number }):
   ].filter(Boolean).join("\n")
 }
 
-function makeTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "codexly-title-"))
-}
-
-function readGeneratedTitle(outputPath: string): string | null {
-  const content = fs.readFileSync(outputPath, "utf8").trim()
-  if (!content) return null
-
-  try {
-    const parsed = JSON.parse(content)
-    return typeof parsed?.title === "string" ? parsed.title : null
-  } catch {
-    const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]
-    if (fenced) {
-      try {
-        const parsed = JSON.parse(fenced.trim())
-        return typeof parsed?.title === "string" ? parsed.title : null
-      } catch {
-        return null
-      }
-    }
-    return null
-  }
-}
-
 export async function generateThreadTitle(input: {
   message: string
   imagePaths?: string[]
   workingDirectory?: string
   model: string
 }): Promise<string | null> {
-  const tempDir = makeTempDir()
-  const schemaPath = path.join(tempDir, "schema.json")
-  const outputPath = path.join(tempDir, "output.json")
+  const imagePaths = (input.imagePaths ?? []).filter(imagePath => {
+    try {
+      return fs.statSync(imagePath).isFile()
+    } catch {
+      return false
+    }
+  })
+  const result = await generateObject({
+    model: codexExec(input.model, {
+      cwd: input.workingDirectory || process.cwd() || os.homedir(),
+      skipGitRepoCheck: true,
+      sandboxMode: "read-only",
+      approvalMode: "never",
+      reasoningEffort: CODEX_TITLE_REASONING_EFFORT,
+      logger: false,
+    }),
+    schema: threadTitleSchema,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: buildThreadTitlePrompt({ message: input.message, imageCount: imagePaths.length }) },
+          ...imagePaths.map(imagePath => ({ type: "image" as const, image: fs.readFileSync(imagePath) })),
+        ],
+      },
+    ],
+    abortSignal: AbortSignal.timeout(CODEX_TITLE_TIMEOUT_MS),
+  })
 
-  try {
-    fs.writeFileSync(
-      schemaPath,
-      JSON.stringify({
-        type: "object",
-        additionalProperties: false,
-        properties: { title: { type: "string" } },
-        required: ["title"],
-      })
-    )
-    fs.writeFileSync(outputPath, "")
-
-    const command = resolveCodexBinary()
-    const imagePaths = (input.imagePaths ?? []).filter(imagePath => {
-      try {
-        return fs.statSync(imagePath).isFile()
-      } catch {
-        return false
-      }
-    })
-    const args = [
-      "exec",
-      "--ephemeral",
-      "--skip-git-repo-check",
-      "-s",
-      "read-only",
-      "--model",
-      input.model,
-      "--config",
-      `model_reasoning_effort="${CODEX_TITLE_REASONING_EFFORT}"`,
-      "--output-schema",
-      schemaPath,
-      "--output-last-message",
-      outputPath,
-      ...imagePaths.flatMap(imagePath => ["--image", imagePath]),
-      "-",
-    ]
-
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn(command, args, {
-        cwd: input.workingDirectory || process.cwd() || os.homedir(),
-        env: codexSpawnEnv(),
-        shell: process.platform === "win32",
-      })
-      const timer = setTimeout(() => {
-        child.kill()
-        reject(new Error("Codex title generation timed out"))
-      }, CODEX_TITLE_TIMEOUT_MS)
-      let stderr = ""
-      let stdout = ""
-
-      child.stdout.on("data", chunk => {
-        stdout += String(chunk)
-      })
-      child.stderr.on("data", chunk => {
-        stderr += String(chunk)
-      })
-      child.once("error", error => {
-        clearTimeout(timer)
-        reject(error)
-      })
-      child.once("exit", code => {
-        clearTimeout(timer)
-        if (code === 0) {
-          resolve()
-          return
-        }
-        const detail = stderr.trim() || stdout.trim()
-        reject(new Error(detail || `Codex title generation exited with code ${code ?? "unknown"}`))
-      })
-      child.stdin.end(buildThreadTitlePrompt({ message: input.message, imageCount: imagePaths.length }))
-    })
-
-    const rawTitle = readGeneratedTitle(outputPath)
-    if (!rawTitle) return null
-
-    const title = sanitizeThreadTitle(rawTitle)
+  const title = sanitizeThreadTitle(result.object.title)
     return title === TITLE_FALLBACK ? null : title
-  } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true })
-  }
 }

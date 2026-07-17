@@ -7,8 +7,12 @@ import MarkdownMessage from "@/components/MarkdownMessage"
 import { historyService, processingService } from "@/services/desktop"
 import { usePageActions } from "@/components/ui/page-header"
 import type { ChatSession, HistoryIndexItem } from "@/types/electron"
+import { devLog, devMeasure } from "@/utils/devLog"
 
 type ChatMessage = ChatSession["messages"][number]
+
+let cachedHistoryItems: HistoryIndexItem[] | null = null
+const cachedSessions = new Map<string, ChatSession>()
 
 const messageScreenshots = (message: ChatMessage) => {
   const screenshots = [
@@ -35,14 +39,18 @@ const dateFormatter = new Intl.DateTimeFormat(undefined, {
 })
 
 const History: React.FC = () => {
-  const [items, setItems] = useState<HistoryIndexItem[]>([])
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [items, setItems] = useState<HistoryIndexItem[]>(() => cachedHistoryItems ?? [])
+  const [selectedId, setSelectedId] = useState<string | null>(() => cachedHistoryItems?.[0]?.id ?? null)
   const [selectedSession, setSelectedSession] = useState<ChatSession | null>(
-    null
+    () => {
+      const firstId = cachedHistoryItems?.[0]?.id
+      return firstId ? cachedSessions.get(firstId) ?? null : null
+    }
   )
   const chatInputRef = React.useRef<HTMLInputElement>(null)
   const chatLoadingRef = React.useRef(false)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(() => !cachedHistoryItems)
+  const [sessionLoading, setSessionLoading] = useState(false)
   const [chatInput, setChatInput] = useState("")
   const [chatLoading, setChatLoading] = useState(false)
   const [streamingAnswer, setStreamingAnswer] = useState("")
@@ -54,17 +62,21 @@ const History: React.FC = () => {
   )
 
   const load = async () => {
+    const done = devMeasure("history", "load index")
     setError("")
     try {
       const history = await historyService.getIndex()
+      cachedHistoryItems = history
       setItems(history)
       setSelectedId(current =>
         current && history.some(item => item.id === current)
           ? current
-          : history[0]?.id ?? null
+            : history[0]?.id ?? null
       )
+      done({ count: history.length })
     } catch (error) {
       setError(String(error))
+      done({ error: String(error) })
     } finally {
       setLoading(false)
     }
@@ -73,6 +85,8 @@ const History: React.FC = () => {
   useEffect(() => {
     load()
     const cleanupHistory = historyService.onChanged(history => {
+      devLog("history", "history changed", { count: history.length })
+      cachedHistoryItems = history
       setItems(history)
       setSelectedId(current =>
         current && history.some(item => item.id === current)
@@ -83,16 +97,23 @@ const History: React.FC = () => {
 
     const cleanupStream = [
       processingService.onChatStreamStart(() => {
-        if (chatLoadingRef.current) setStreamingAnswer("")
+        if (!chatLoadingRef.current) return
+        devLog("history", "chat stream start")
+        setStreamingAnswer("")
       }),
       processingService.onChatStreamDelta(delta => {
-        if (chatLoadingRef.current) setStreamingAnswer(current => current + delta)
+        if (!chatLoadingRef.current) return
+        setStreamingAnswer(current => current + delta)
       }),
       processingService.onChatStreamComplete(data => {
-        if (chatLoadingRef.current) setStreamingAnswer(current => current || data.answer)
+        if (!chatLoadingRef.current) return
+        devLog("history", "chat stream complete", { answerLength: data.answer.length })
+        setStreamingAnswer(current => current || data.answer)
       }),
       processingService.onChatStreamError(error => {
-        if (chatLoadingRef.current) setError(error)
+        if (!chatLoadingRef.current) return
+        devLog("history", "chat stream error", { error })
+        setError(error)
       }),
     ]
 
@@ -109,18 +130,38 @@ const History: React.FC = () => {
   useEffect(() => {
     if (!selectedIndexItem) {
       setSelectedSession(null)
+      setSessionLoading(false)
       return
     }
     if (chatLoadingRef.current) return
+    const cached = cachedSessions.get(selectedIndexItem.id)
+    if (cached) setSelectedSession(cached)
+    setSessionLoading(!cached)
+    const done = devMeasure("history", "load selected session")
     historyService
       .getSession(selectedIndexItem.id)
-      .then(setSelectedSession)
-      .catch(error => setError(String(error)))
+      .then(session => {
+        if (session) cachedSessions.set(session.id, session)
+        setSelectedSession(session)
+        done({
+          id: selectedIndexItem.id,
+          cached: Boolean(cached),
+          messageCount: session?.messages.length ?? 0,
+        })
+      })
+      .catch(error => {
+        setError(String(error))
+        done({ id: selectedIndexItem.id, error: String(error) })
+      })
+      .finally(() => setSessionLoading(false))
   }, [selectedIndexItem])
 
   const reloadSelectedSession = async (sessionId: string) => {
+    const done = devMeasure("history", "reload selected session")
     const session = await historyService.getSession(sessionId)
+    if (session) cachedSessions.set(session.id, session)
     setSelectedSession(session)
+    done({ sessionId, messageCount: session?.messages.length ?? 0 })
     return session
   }
 
@@ -136,6 +177,7 @@ const History: React.FC = () => {
       const deletedId = selectedSession.id
       const result = await historyService.deleteSession(deletedId)
       if (!result.success) throw new Error("Selected session could not be deleted.")
+      cachedSessions.delete(deletedId)
       setSelectedSession(null)
       setSelectedId(current => (current === deletedId ? null : current))
       await load()
@@ -156,6 +198,8 @@ const History: React.FC = () => {
       const result = await processingService.clearChatSessions()
       if (!result.success) throw new Error("Sessions could not be cleared.")
       setItems([])
+      cachedHistoryItems = []
+      cachedSessions.clear()
       setSelectedId(null)
       setSelectedSession(null)
     } catch (error) {
@@ -168,9 +212,12 @@ const History: React.FC = () => {
 
     setError("")
     try {
+      const done = devMeasure("history", "activate selected session")
       const activated = await historyService.activateSession(selectedSession.id)
       if (!activated) throw new Error("Selected session could not be loaded.")
+      cachedSessions.set(activated.id, activated)
       setSelectedSession(activated)
+      done({ sessionId: activated.id, messageCount: activated.messages.length })
       requestAnimationFrame(() => chatInputRef.current?.focus())
     } catch (error) {
       setError(String(error))
@@ -203,9 +250,15 @@ const History: React.FC = () => {
         : current
     )
     try {
+      const activateDone = devMeasure("history", "activate before chat")
       const activated = await historyService.activateSession(sessionId)
       if (!activated) throw new Error("Selected session could not be loaded.")
+      cachedSessions.set(activated.id, activated)
+      activateDone({ sessionId, messageCount: activated.messages.length })
+      const chatDone = devMeasure("history", "chat request")
       await processingService.chat(message)
+      chatDone({ messageLength: message.length })
+      setStreamingAnswer("")
       await reloadSelectedSession(sessionId)
       await load()
     } catch (error) {
@@ -287,12 +340,12 @@ const History: React.FC = () => {
           {items.length === 0 ? (
             <div className="flex h-full min-h-56 flex-col items-center justify-center gap-2 p-6 text-center">
               <div className="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
-                <MessageSquareText className="size-5" />
+                {loading ? <Loader2 className="size-5 animate-spin" /> : <MessageSquareText className="size-5" />}
               </div>
               <div className="space-y-1">
-                <div className="text-sm font-medium">No history yet</div>
+                <div className="text-sm font-medium">{loading ? "Loading history" : "No history yet"}</div>
                 <div className="max-w-56 text-xs leading-relaxed text-muted-foreground">
-                  Toolbar sessions will appear here after the first answer.
+                  {loading ? "Reading saved sessions..." : "Toolbar sessions will appear here after the first answer."}
                 </div>
               </div>
             </div>
@@ -322,7 +375,12 @@ const History: React.FC = () => {
         </div>
 
         <div className="flex min-h-0 flex-col bg-background">
-          {selectedSession ? (
+          {sessionLoading && !selectedSession ? (
+            <div className="flex h-full min-h-56 items-center justify-center p-6 text-sm text-muted-foreground">
+              <Loader2 className="mr-2 size-4 animate-spin" />
+              Loading session...
+            </div>
+          ) : selectedSession ? (
             <>
               <div className="min-h-0 flex-1 overflow-y-auto">
                 <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-6 py-5">

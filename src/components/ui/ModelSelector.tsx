@@ -82,7 +82,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onChatOpen }) => {
 
       <div className="flex items-center justify-between text-xs">
         <span className="text-white/55">OpenAI</span>
-        <span className="font-mono text-white/85">{config?.model ?? 'gpt-5.4'}</span>
+        <span className="font-mono text-white/85">{config?.model ?? 'gpt-5.5'}</span>
       </div>
 
       <button

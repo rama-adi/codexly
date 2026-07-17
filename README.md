@@ -121,8 +121,9 @@ codex login
 codex --version
 ```
 
-Codexly talks to `codex app-server` over stdio. If `codex` is installed in a
-non-standard location, start the app with `CODEX_BIN` set to that binary.
+Codexly talks to Codex through the AI SDK `ai-sdk-provider-codex-cli` package.
+The provider uses your `codex login` credentials and manages the local Codex
+app-server process for streaming chat.
 
 ### App does not start
 

@@ -47,7 +47,7 @@ const Home: React.FC = () => {
       setReadyStatus({
         state: "error",
         key: "__direct__",
-        model: "gpt-5.4",
+        model: "gpt-5.5",
         threadId: null,
         error: error?.message ?? String(error),
       })

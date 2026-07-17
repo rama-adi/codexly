@@ -1,14 +1,14 @@
 import { ToastProvider } from "./components/ui/toast"
 import Queue from "./_pages/toolbar/Queue"
 import { ToastViewport } from "@radix-ui/react-toast"
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 import Solutions from "./_pages/toolbar/Solutions"
 import Home from "./_pages/main-activity/Home"
 import Settings from "./_pages/main-activity/Settings"
 import Personalization from "./_pages/main-activity/Personalization"
 import History from "./_pages/main-activity/History"
 import MainActivityLayout from "./_pages/main-activity/MainActivityLayout"
-import { layoutService, processingService, screenshotService } from "./services/desktop"
+import { historyService, layoutService, processingService, screenshotService } from "./services/desktop"
 import { QueryClient, QueryClientProvider } from "react-query"
 import {
   Navigate,
@@ -17,6 +17,7 @@ import {
   useLocation,
   useNavigate
 } from "react-router-dom"
+import { devLog, devMeasure } from "./utils/devLog"
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -61,6 +62,20 @@ const getViewFromPath = (pathname: string): AppView => {
   return "queue"
 }
 
+const runBootWarmup = async () => {
+  const done = devMeasure("boot", "runBootWarmup")
+  try {
+    await Promise.all([
+      processingService.prepareCodex(),
+      historyService.getIndex(),
+    ])
+    done()
+  } catch (error) {
+    done({ error: error instanceof Error ? error.message : String(error) })
+    throw error
+  }
+}
+
 const App: React.FC = () => {
   const location = useLocation()
   const navigate = useNavigate()
@@ -70,6 +85,8 @@ const App: React.FC = () => {
     windowParams.get("settings") === "1"
   const view = getViewFromPath(location.pathname)
   const containerRef = useRef<HTMLDivElement>(null)
+  const [bootLoading, setBootLoading] = useState(() => !isSettingsWindow)
+  const [bootError, setBootError] = useState("")
 
   const setView: React.Dispatch<React.SetStateAction<AppView>> = (nextView) => {
     const resolvedView =
@@ -115,6 +132,31 @@ const App: React.FC = () => {
     }
   }, [isSettingsWindow, navigate, view])
 
+  useEffect(() => {
+    if (isSettingsWindow) return
+
+    let cancelled = false
+    const boot = async () => {
+      const done = devMeasure("boot", "App boot")
+      setBootError("")
+      setBootLoading(true)
+      try {
+        await runBootWarmup()
+        done({ cancelled: false })
+      } catch (error) {
+        if (!cancelled) setBootError(error instanceof Error ? error.message : String(error))
+        done({ error: error instanceof Error ? error.message : String(error), cancelled })
+      } finally {
+        if (!cancelled) setBootLoading(false)
+      }
+    }
+
+    boot()
+    return () => {
+      cancelled = true
+    }
+  }, [isSettingsWindow])
+
   // Effect for height monitoring
   useEffect(() => {
     const cleanup = processingService.onResetView(() => {
@@ -123,7 +165,6 @@ const App: React.FC = () => {
       queryClient.invalidateQueries(["problem_statement"])
       queryClient.invalidateQueries(["solution"])
       queryClient.invalidateQueries(["new_solution"])
-      processingService.clearChatHistory()
       navigate(viewToPath.queue)
     })
 
@@ -175,7 +216,7 @@ const App: React.FC = () => {
     const cleanupFunctions = [
       processingService.onSolutionStreamStart(() => {
         navigate(viewToPath.solutions)
-        console.log("starting processing")
+        devLog("renderer", "solution stream start")
       }),
 
       processingService.onUnauthorized(() => {
@@ -184,7 +225,7 @@ const App: React.FC = () => {
         queryClient.removeQueries(["problem_statement"])
         processingService.clearChatHistory()
         navigate(viewToPath.queue)
-        console.log("Unauthorized")
+        devLog("renderer", "unauthorized")
       }),
       // Update this reset handler
       processingService.onResetView(() => {
@@ -194,7 +235,7 @@ const App: React.FC = () => {
         queryClient.removeQueries(["solution"])
         queryClient.removeQueries(["problem_statement"])
         navigate(viewToPath.queue)
-        console.log("View reset to 'queue' via Command+R shortcut")
+        devLog("renderer", "view reset to queue")
       }),
       processingService.onShowAnswerPreview(() => {
         navigate(viewToPath.solutions)
@@ -207,32 +248,71 @@ const App: React.FC = () => {
     return () => cleanupFunctions.forEach((cleanup) => cleanup())
   }, [navigate, view])
 
+  const bootScreen = bootLoading ? (
+    <div
+      data-clickable-root
+      className="flex min-h-[260px] w-[520px] max-w-[calc(100vw-24px)] flex-col items-center justify-center gap-5 rounded-xl border border-black/15 bg-white px-8 py-12 text-black shadow-[0_18px_70px_rgba(0,0,0,0.16)]"
+    >
+      <div className="h-16 w-16 animate-spin rounded-full border-[3px] border-black/15 border-t-black" />
+      <div className="text-sm font-medium tracking-normal text-black/70">loading...</div>
+    </div>
+  ) : bootError ? (
+    <div
+      data-clickable-root
+      className="flex min-h-[260px] w-[520px] max-w-[calc(100vw-24px)] flex-col items-center justify-center gap-4 rounded-xl border border-red-200 bg-white px-8 py-12 text-center text-black shadow-[0_18px_70px_rgba(0,0,0,0.16)]"
+    >
+      <div className="text-sm font-semibold text-red-700">Codex failed to warm up</div>
+      <div className="max-w-sm text-xs leading-relaxed text-black/60">{bootError}</div>
+      <button
+        type="button"
+        className="rounded-md border border-black/15 px-3 py-1.5 text-xs font-medium text-black/75 hover:bg-black/5"
+        onClick={() => {
+          const done = devMeasure("boot", "retry warmup")
+          setBootError("")
+          setBootLoading(true)
+          runBootWarmup()
+            .then(() => done())
+            .catch(error => {
+              const message = error instanceof Error ? error.message : String(error)
+              setBootError(message)
+              done({ error: message })
+            })
+            .finally(() => setBootLoading(false))
+        }}
+      >
+        Retry
+      </button>
+    </div>
+  ) : null
+
   return (
     <div ref={containerRef} className="min-h-0">
       <QueryClientProvider client={queryClient}>
         <ToastProvider>
-          <Routes>
-            <Route
-              path="/"
-              element={
-                <Navigate to={isSettingsWindow ? "/home" : "/queue"} replace />
-              }
-            />
-            <Route path="/queue" element={<Queue setView={setToolbarView} />} />
-            <Route path="/solutions" element={<Solutions setView={setToolbarView} />} />
-            <Route element={<MainActivityLayout />}>
-              <Route path="/home" element={<Home />} />
-              <Route path="/personalization" element={<Personalization />} />
-              <Route path="/history" element={<History />} />
-              <Route path="/settings" element={<Settings />} />
-            </Route>
-            <Route
-              path="*"
-              element={
-                <Navigate to={isSettingsWindow ? "/home" : "/queue"} replace />
-              }
-            />
-          </Routes>
+          {bootScreen ?? (
+            <Routes>
+              <Route
+                path="/"
+                element={
+                  <Navigate to={isSettingsWindow ? "/home" : "/queue"} replace />
+                }
+              />
+              <Route path="/queue" element={<Queue setView={setToolbarView} />} />
+              <Route path="/solutions" element={<Solutions setView={setToolbarView} />} />
+              <Route element={<MainActivityLayout />}>
+                <Route path="/home" element={<Home />} />
+                <Route path="/personalization" element={<Personalization />} />
+                <Route path="/history" element={<History />} />
+                <Route path="/settings" element={<Settings />} />
+              </Route>
+              <Route
+                path="*"
+                element={
+                  <Navigate to={isSettingsWindow ? "/home" : "/queue"} replace />
+                }
+              />
+            </Routes>
+          )}
           <ToastViewport />
         </ToastProvider>
       </QueryClientProvider>

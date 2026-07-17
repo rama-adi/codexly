@@ -5,6 +5,7 @@ import { ScreenshotCaptureMode, ScreenshotHelper } from "./shell/ScreenshotHelpe
 import { ShortcutsHelper } from "./shell/shortcuts"
 import { CodexReadyStatus, ProcessingHelper } from "./services/ProcessingHelper"
 import { getAppSettings, updateAppSettings } from "./stores/AppSettings"
+import { devLog, devMeasure } from "./utils/devLog"
 
 export class AppState {
   private static instance: AppState | null = null
@@ -75,6 +76,7 @@ export class AppState {
   }
 
   public setView(view: "queue" | "solutions"): void {
+    devLog("app", "setView", { previous: this.view, next: view })
     this.view = view
     this.screenshotHelper.setView(view)
   }
@@ -115,6 +117,7 @@ export class AppState {
   }
 
   public showMainWindow(): void {
+    devLog("window", "showMainWindow")
     this.windowHelper.showMainWindow()
     this.shortcutsHelper.setToolbarShortcutsEnabled(true)
   }
@@ -164,12 +167,11 @@ export class AppState {
   }
 
   public toggleMainWindow(): void {
-    console.log(
-      "Screenshots: ",
-      this.screenshotHelper.getScreenshotQueue().length,
-      "Extra screenshots: ",
-      this.screenshotHelper.getExtraScreenshotQueue().length
-    )
+    devLog("window", "toggleMainWindow", {
+      screenshotCount: this.screenshotHelper.getScreenshotQueue().length,
+      extraScreenshotCount: this.screenshotHelper.getExtraScreenshotQueue().length,
+      visible: this.windowHelper.isVisible(),
+    })
     this.windowHelper.toggleMainWindow()
     this.shortcutsHelper.setToolbarShortcutsEnabled(this.windowHelper.isVisible())
   }
@@ -235,18 +237,28 @@ export class AppState {
   }
 
   public async startToolbarSession(): Promise<CodexReadyStatus> {
+    const done = devMeasure("toolbar", "startToolbarSession")
     this.getScreenshotHelper().clearQueues()
     this.setView("queue")
     this.processingHelper.resetSession()
-    await this.processingHelper.prepareForLaunch()
-    const history = await this.processingHelper.getLLMHelper().listChatSessions()
+    const cachedHistory = this.processingHelper.getLLMHelper().getCachedChatSessions()
+    devLog("toolbar", "startToolbarSession cached history", {
+      cachedHistoryCount: cachedHistory.length,
+      windowCount: BrowserWindow.getAllWindows().length,
+    })
     for (const window of BrowserWindow.getAllWindows()) {
       window.webContents.send("screenshots-cleared")
-      window.webContents.send("history-changed", history)
+      window.webContents.send("history-changed", cachedHistory)
       window.webContents.send("reset-view")
     }
     this.showMainWindow()
-    return this.processingHelper.getReadyStatus()
+    this.processingHelper.prepareForLaunch().catch(error => {
+      console.warn("Codex prelaunch failed after toolbar launch:", error)
+    })
+    this.processingHelper.getLLMHelper().refreshChatSessionsInBackground()
+    const status = this.processingHelper.getReadyStatus()
+    done({ readyState: status.state, key: status.key })
+    return status
   }
 
   public createTray(): void {
@@ -378,20 +390,24 @@ async function initializeApp() {
   initializeIpcHandlers(appState)
 
   app.whenReady().then(async () => {
-    console.log("App is ready")
+    const readyDone = devMeasure("app", "app.whenReady")
+    devLog("app", "App is ready")
     await ensureScreenCaptureAccess()
+    const windowDone = devMeasure("app", "create initial windows")
     appState.createWindow()
+    appState.openSettingsWindow()
+    windowDone({ windowCount: BrowserWindow.getAllWindows().length })
     appState.processingHelper.prepareForLaunch().catch(error => {
       console.warn("Codex prelaunch failed:", error)
     })
-    appState.openSettingsWindow()
     appState.createTray()
     // Register global shortcuts using ShortcutsHelper
     appState.shortcutsHelper.registerGlobalShortcuts()
+    readyDone({ windowCount: BrowserWindow.getAllWindows().length })
   })
 
   app.on("activate", () => {
-    console.log("App activated")
+    devLog("app", "App activated")
     if (appState.getMainWindow() === null) {
       appState.createWindow()
     }
