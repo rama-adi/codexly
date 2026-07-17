@@ -1,8 +1,15 @@
 import { _electron as electron } from '@playwright/test'
+import { mkdtemp, rm } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url))
-const app = await electron.launch({ args: [projectRoot] })
+const userDataPath = await mkdtemp(path.join(os.tmpdir(), 'codexly-verify-'))
+const app = await electron.launch({
+  args: [projectRoot],
+  env: { ...process.env, CODEXLY_USER_DATA_DIR: userDataPath },
+})
 
 try {
   await app.evaluate(async ({ BrowserWindow }) => {
@@ -59,10 +66,8 @@ try {
   }))
 
   const bootstrap = await homepage.evaluate(() => window.codexly.v1.bootstrap())
-  await homepage.getByText('Secure desktop bridge: connected').waitFor()
-  const bridgeStatusText = await homepage
-    .getByText('Secure desktop bridge: connected')
-    .textContent()
+  const runtimeStatus = await homepage.evaluate(() => window.codexly.v1.runtimeStatus())
+  await homepage.getByText('Good to see you.').waitFor()
   const popupDenied = await homepage.evaluate(
     () => window.open('https://example.com') === null,
   )
@@ -91,7 +96,7 @@ try {
         windowsBefore,
         homepageSecurity,
         overlaySecurity,
-        bridgeStatusText,
+        runtimeStatus,
         bootstrap: {
           version: bootstrap.version,
           windowRoles: bootstrap.windows.map((window) => window.role),
@@ -110,4 +115,5 @@ try {
   )
 } finally {
   await app.close()
+  await rm(userDataPath, { recursive: true, force: true })
 }

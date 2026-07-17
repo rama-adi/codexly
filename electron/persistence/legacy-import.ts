@@ -123,8 +123,8 @@ export class LegacyImporter {
 }
 
 function sanitizeSettings(settings: z.infer<typeof LegacySettingsSchema>): ImportedLegacySettings {
-  const { directoryProfiles: _profiles, workingDirectory: _workingDirectory, ...safeSettings } = settings
-  // Destructure only explicitly approved fields; passthrough fields such as API keys never escape this function.
+  const safeSettings = settings
+  // Copy only explicitly approved fields; profile paths and passthrough secrets never escape this function.
   return Object.fromEntries(
     Object.entries({
       model: safeSettings.model,

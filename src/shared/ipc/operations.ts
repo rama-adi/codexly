@@ -3,9 +3,16 @@ import { z } from 'zod'
 export const IPC_CHANNELS = {
   request: 'codexly:request',
   event: 'codexly:event',
+  product: 'codexly:product',
+  productEvent: 'codexly:product-event',
 } as const
 
-export const IpcChannelSchema = z.enum([IPC_CHANNELS.request, IPC_CHANNELS.event])
+export const IpcChannelSchema = z.enum([
+  IPC_CHANNELS.request,
+  IPC_CHANNELS.event,
+  IPC_CHANNELS.product,
+  IPC_CHANNELS.productEvent,
+])
 
 export const IPC_OPERATIONS = [
   'auth.begin',

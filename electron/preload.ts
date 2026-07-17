@@ -14,11 +14,18 @@ import {
 } from '../src/shared/ipc/events'
 import { createResponseEnvelopeSchema } from '../src/shared/ipc/envelopes'
 import { IPC_CHANNELS } from '../src/shared/ipc/operations'
+import {
+  ProductEventSchema,
+  ProductResponseSchema,
+  type ProductCommand,
+  type ProductEvent,
+} from '../src/shared/ipc/product'
 import type {
   CodexlyDesktopBridgeV1,
   DesktopSubscriptionListener,
 } from '../src/types/desktop-bridge'
 import type { SubscriptionTopic } from '../src/shared/ipc/events'
+import type { CanonicalSettings } from '../src/shared/schemas/settings'
 
 const EmptyResultSchema = z.object({}).strict()
 const UnsubscribeResponseSchema = createResponseEnvelopeSchema(
@@ -36,6 +43,7 @@ const subscriptionListeners = new Map<
 const pendingSubscriptionEvents = new Map<string, SubscriptionEvent[]>()
 const MAX_PENDING_SUBSCRIPTIONS = 32
 const MAX_PENDING_EVENTS_PER_SUBSCRIPTION = 32
+const productListeners = new Set<(event: ProductEvent) => void>()
 
 ipcRenderer.on(IPC_CHANNELS.event, (_electronEvent, rawEnvelope: unknown) => {
   const parsed = SubscriptionEventEnvelopeSchema.safeParse(rawEnvelope)
@@ -62,6 +70,12 @@ ipcRenderer.on(IPC_CHANNELS.event, (_electronEvent, rawEnvelope: unknown) => {
   }
 })
 
+ipcRenderer.on(IPC_CHANNELS.productEvent, (_electronEvent, rawEvent: unknown) => {
+  const parsed = ProductEventSchema.safeParse(rawEvent)
+  if (!parsed.success) return
+  for (const listener of productListeners) listener(parsed.data)
+})
+
 const requestBootstrap = async () => {
   const request = BootstrapRequestSchema.parse({
     version: 1,
@@ -76,6 +90,14 @@ const requestBootstrap = async () => {
   if (!response.ok) {
     throw createBridgeError(response.error)
   }
+  return response.data
+}
+
+const invokeProduct = async (command: ProductCommand): Promise<unknown> => {
+  const response = ProductResponseSchema.parse(
+    await ipcRenderer.invoke(IPC_CHANNELS.product, command),
+  )
+  if (!response.ok) throw new Error(response.error.message)
   return response.data
 }
 
@@ -134,6 +156,41 @@ const bridge: CodexlyDesktopBridgeV1 = Object.freeze({
       subscriptionListeners.delete(subscriptionId)
       pendingSubscriptionEvents.delete(subscriptionId)
     }
+  },
+  runtimeStatus: () => invokeProduct({ type: 'runtime.status' }),
+  useChatGpt: () => invokeProduct({ type: 'auth.useChatGpt' }),
+  setApiKey: (apiKey: string, persist: boolean) =>
+    invokeProduct({ type: 'auth.setApiKey', apiKey, persist }),
+  getSettings: () =>
+    invokeProduct({ type: 'settings.get' }) as Promise<CanonicalSettings>,
+  updateSettings: (settings: CanonicalSettings) =>
+    invokeProduct({ type: 'settings.update', settings }) as Promise<CanonicalSettings>,
+  listSessions: () => invokeProduct({ type: 'sessions.list' }),
+  getSession: (sessionId: string) => invokeProduct({ type: 'sessions.get', sessionId }),
+  createSession: () => invokeProduct({ type: 'sessions.create' }),
+  deleteSession: (sessionId: string) =>
+    invokeProduct({ type: 'sessions.delete', sessionId }) as Promise<boolean>,
+  reactivateSession: (sessionId: string) =>
+    invokeProduct({ type: 'sessions.reactivate', sessionId }),
+  listWorkspaces: () => invokeProduct({ type: 'workspaces.list' }),
+  pickWorkspace: () => invokeProduct({ type: 'workspaces.pick' }),
+  selectWorkspace: (workspaceId: string) =>
+    invokeProduct({ type: 'workspaces.select', workspaceId }),
+  removeWorkspace: (workspaceId: string) =>
+    invokeProduct({ type: 'workspaces.remove', workspaceId }) as Promise<boolean>,
+  sendMessage: (input: Parameters<CodexlyDesktopBridgeV1['sendMessage']>[0]) => invokeProduct({ type: 'conversation.send', ...input }),
+  stopTurn: (turnId: string) =>
+    invokeProduct({ type: 'conversation.stop', turnId }) as Promise<boolean>,
+  capture: () => invokeProduct({ type: 'attachments.capture' }),
+  openHome: async () => {
+    await invokeProduct({ type: 'window.openHome' })
+  },
+  toggleOverlay: async () => {
+    await invokeProduct({ type: 'window.toggleOverlay' })
+  },
+  onProductEvent(listener: (event: ProductEvent) => void) {
+    productListeners.add(listener)
+    return () => productListeners.delete(listener)
   },
 })
 

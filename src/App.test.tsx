@@ -24,13 +24,13 @@ describe('application shells', () => {
     const markup = renderToStaticMarkup(<App search="" />)
 
     expect(markup).toContain('data-renderer-role="homepage"')
-    expect(markup).toContain('Start from the work in front of you.')
+    expect(markup).toContain('Ask about the work in front of you.')
   })
 
   it('renders the overlay surface for the explicit role', () => {
     const markup = renderToStaticMarkup(<App search="?role=overlay" />)
 
     expect(markup).toContain('data-renderer-role="overlay"')
-    expect(markup).toContain('Listening for context')
+    expect(markup).toContain('Ask about your work')
   })
 })

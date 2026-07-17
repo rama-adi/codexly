@@ -2,6 +2,7 @@ import { app, screen } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { ProductController } from './app/product-controller'
 import { registerIpc, type IpcRegistration } from './ipc/register-ipc'
 import { DEFAULT_SETTINGS, SettingsStore } from './persistence/settings-store'
 import type { Bootstrap } from '../src/shared/schemas/bootstrap'
@@ -19,6 +20,9 @@ const devServerUrl = process.env['VITE_DEV_SERVER_URL']
 
 process.env.APP_ROOT = appRoot
 process.env.VITE_PUBLIC = devServerUrl ? path.join(appRoot, 'public') : rendererDist
+if (process.env['CODEXLY_USER_DATA_DIR']) {
+  app.setPath('userData', process.env['CODEXLY_USER_DATA_DIR'])
+}
 
 const windowManager = new WindowManager({
   mainDist,
@@ -27,6 +31,7 @@ const windowManager = new WindowManager({
 })
 
 let ipcRegistration: IpcRegistration | null = null
+let productController: ProductController | null = null
 let unsubscribeSnapshots: (() => void) | null = null
 
 app.on('window-all-closed', () => {
@@ -40,17 +45,27 @@ app.on('activate', () => {
 app.on('before-quit', () => {
   unsubscribeSnapshots?.()
   ipcRegistration?.dispose()
+  void productController?.dispose()
   windowManager.destroy()
 })
 
-void app.whenReady().then(() => {
-  const settingsStore = new SettingsStore({ userDataPath: app.getPath('userData') })
+void app.whenReady().then(async () => {
+  const userDataPath = app.getPath('userData')
+  const settingsStore = new SettingsStore({ userDataPath })
+  productController = await ProductController.create({
+    userDataPath,
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    windowManager,
+    publish: (event, roles) => ipcRegistration?.publishProduct(event, roles),
+  })
   ipcRegistration = registerIpc({
     rendererFilePath: path.join(rendererDist, 'index.html'),
     devServerUrl,
     resolveWindowRole: (webContentsId) =>
       windowManager.getRoleForWebContentsId(webContentsId),
     getBootstrap: async (role) => createBootstrap(settingsStore, role),
+    handleProduct: (command, role) => productController!.handle(command, role),
   })
   unsubscribeSnapshots = windowManager.subscribeToSnapshots((snapshot) => {
     const window = toContractWindow(snapshot)

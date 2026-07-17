@@ -16,6 +16,13 @@ import {
 } from '../../src/shared/ipc/events'
 import { createResponseEnvelopeSchema } from '../../src/shared/ipc/envelopes'
 import { IPC_CHANNELS, type IpcOperation } from '../../src/shared/ipc/operations'
+import {
+  ProductCommandSchema,
+  ProductEventSchema,
+  ProductResponseSchema,
+  type ProductCommand,
+  type ProductEvent,
+} from '../../src/shared/ipc/product'
 import { BootstrapSchema, type Bootstrap } from '../../src/shared/schemas/bootstrap'
 import type { WindowRole } from '../windows/window-options'
 import {
@@ -46,10 +53,12 @@ interface SubscriptionRecord {
 export interface RegisterIpcOptions extends SenderUrlPolicy {
   resolveWindowRole(webContentsId: number): WindowRole | null
   getBootstrap(role: WindowRole): Promise<Bootstrap> | Bootstrap
+  handleProduct(command: ProductCommand, role: WindowRole): Promise<unknown>
 }
 
 export interface IpcRegistration {
   publish(event: SubscriptionEvent): void
+  publishProduct(event: ProductEvent, roles?: readonly WindowRole[]): void
   dispose(): void
 }
 
@@ -85,6 +94,26 @@ export function registerIpc(options: RegisterIpcOptions): IpcRegistration {
         receivedAt,
         ok: false,
         error: serializeError(error, requestId),
+      })
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.product, async (event, rawCommand: unknown) => {
+    try {
+      const role = validateManagedSender(event, options)
+      const command = ProductCommandSchema.parse(rawCommand)
+      authorizeProductCommand(role, command)
+      return ProductResponseSchema.parse({
+        ok: true,
+        data: await options.handleProduct(command, role),
+      })
+    } catch (error) {
+      return ProductResponseSchema.parse({
+        ok: false,
+        error: {
+          code: error instanceof BridgeAccessError ? error.code : 'internal',
+          message: error instanceof Error ? error.message : 'The command failed.',
+        },
       })
     }
   })
@@ -125,6 +154,16 @@ export function registerIpc(options: RegisterIpcOptions): IpcRegistration {
         target.send(IPC_CHANNELS.event, envelope)
       }
     },
+    publishProduct(event, roles = ['homepage', 'overlay']) {
+      if (disposed) return
+      const parsed = ProductEventSchema.parse(event)
+      for (const target of webContents.getAllWebContents()) {
+        const role = options.resolveWindowRole(target.id)
+        if (role && roles.includes(role) && !target.isDestroyed()) {
+          target.send(IPC_CHANNELS.productEvent, parsed)
+        }
+      }
+    },
     dispose() {
       if (disposed) {
         return
@@ -133,6 +172,7 @@ export function registerIpc(options: RegisterIpcOptions): IpcRegistration {
       subscriptions.clear()
       ownersWithCleanup.clear()
       ipcMain.removeHandler(IPC_CHANNELS.request)
+      ipcMain.removeHandler(IPC_CHANNELS.product)
     },
   }
 }
@@ -277,6 +317,23 @@ function serializeError(error: unknown, requestId: string): SerializedError {
     message: 'The desktop bridge request could not be completed.',
     retryable: false,
     requestId,
+  }
+}
+
+function authorizeProductCommand(role: WindowRole, command: ProductCommand): void {
+  if (role === 'homepage') return
+  const allowed = new Set<ProductCommand['type']>([
+    'runtime.status',
+    'sessions.get',
+    'sessions.create',
+    'conversation.send',
+    'conversation.stop',
+    'attachments.capture',
+    'window.openHome',
+    'window.toggleOverlay',
+  ])
+  if (!allowed.has(command.type)) {
+    throw new BridgeAccessError('forbidden', 'The overlay cannot perform this action.')
   }
 }
 
