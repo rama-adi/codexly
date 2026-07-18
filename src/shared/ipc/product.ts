@@ -6,6 +6,8 @@ const IdSchema = z.string().trim().min(1).max(256)
 
 export const ProductCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('runtime.status') }).strict(),
+  z.object({ type: z.literal('runtime.testConnection') }).strict(),
+  z.object({ type: z.literal('models.list') }).strict(),
   z.object({ type: z.literal('auth.useChatGpt') }).strict(),
   z
     .object({
@@ -39,6 +41,7 @@ export const ProductCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('conversation.stop'), turnId: IdSchema }).strict(),
   z.object({ type: z.literal('conversation.solvePending'), modelId: z.string().trim().min(1).max(128) }).strict(),
   z.object({ type: z.literal('attachments.capture') }).strict(),
+  z.object({ type: z.literal('attachments.captureSelection') }).strict(),
   z.object({ type: z.literal('attachments.list') }).strict(),
   z.object({ type: z.literal('attachments.discard'), attachmentId: IdSchema }).strict(),
   z.object({ type: z.literal('attachments.clear') }).strict(),
@@ -57,12 +60,24 @@ export const ProductResponseSchema = z.discriminatedUnion('ok', [
     .strict(),
 ])
 
+const TurnOriginSchema = z.enum(['overlay', 'homepage'])
+
 export const ProductEventSchema = z.discriminatedUnion('type', [
   z
     .object({
       type: z.literal('transcript.delta'),
       sessionId: IdSchema,
       turnId: IdSchema,
+      origin: TurnOriginSchema,
+      text: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('transcript.reasoning'),
+      sessionId: IdSchema,
+      turnId: IdSchema,
+      origin: TurnOriginSchema,
       text: z.string(),
     })
     .strict(),
@@ -71,6 +86,7 @@ export const ProductEventSchema = z.discriminatedUnion('type', [
       type: z.literal('transcript.complete'),
       sessionId: IdSchema,
       turnId: IdSchema,
+      origin: TurnOriginSchema,
     })
     .strict(),
   z
@@ -78,6 +94,7 @@ export const ProductEventSchema = z.discriminatedUnion('type', [
       type: z.literal('transcript.failed'),
       sessionId: IdSchema,
       turnId: IdSchema,
+      origin: TurnOriginSchema,
       message: z.string(),
     })
     .strict(),
@@ -85,17 +102,33 @@ export const ProductEventSchema = z.discriminatedUnion('type', [
     .object({
       type: z.literal('tool.status'),
       sessionId: IdSchema,
+      origin: TurnOriginSchema,
+      activityId: z.string().min(1).max(256).optional(),
       name: z.string().min(1).max(256),
       state: z.enum(['running', 'complete', 'error']),
       detail: z.string().optional(),
     })
     .strict(),
+  z
+    .object({
+      type: z.literal('tool.output'),
+      sessionId: IdSchema,
+      origin: TurnOriginSchema,
+      activityId: z.string().min(1).max(256),
+      text: z.string(),
+      preliminary: z.boolean(),
+    })
+    .strict(),
   z.object({ type: z.literal('sessions.changed') }).strict(),
+  z
+    .object({ type: z.literal('settings.changed'), settings: CanonicalSettingsSchema })
+    .strict(),
   z.object({ type: z.literal('runtime.status'), status: z.unknown() }).strict(),
   z.object({ type: z.literal('attachment.captured'), attachment: z.unknown() }).strict(),
   z.object({ type: z.literal('attachments.cleared') }).strict(),
 ])
 
+export type TurnOrigin = z.infer<typeof TurnOriginSchema>
 export type ProductCommand = z.infer<typeof ProductCommandSchema>
 export type ProductResponse = z.infer<typeof ProductResponseSchema>
 export type ProductEvent = z.infer<typeof ProductEventSchema>

@@ -1,0 +1,82 @@
+/* Homepage-only styles. Overlay styling lives in src/index.css and is untouched. */
+
+.hp-root {
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Roboto,
+    Arial, "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Draggable window regions for the frameless desktop shell. */
+.hp-drag {
+  -webkit-app-region: drag;
+}
+.hp-nodrag,
+.hp-root button,
+.hp-root input,
+.hp-root select,
+.hp-root textarea,
+.hp-root a,
+.hp-root label {
+  -webkit-app-region: no-drag;
+}
+
+/* 52px titlebar rhythm (Tailwind has no h-13 by default). */
+.hp-root .h-13 {
+  height: 52px;
+}
+
+/* Keyboard hint chips. */
+.hp-kbd {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--muted-fg);
+}
+
+/* Overview hero backdrop: soft layered wash built from theme tokens. */
+.hp-hero {
+  background:
+    radial-gradient(120% 120% at 100% 0%, color-mix(in srgb, var(--accent) 65%, transparent) 0%, transparent 55%),
+    linear-gradient(135deg, var(--card), color-mix(in srgb, var(--accent) 40%, var(--card)));
+}
+
+/* Refined thin scrollbars inside the shell. */
+.hp-root ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.hp-root ::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted-fg) 35%, transparent);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+.hp-root ::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--muted-fg) 55%, transparent);
+  background-clip: padding-box;
+}
+
+.hp-toast {
+  animation: hp-toast-in 160ms ease-out;
+}
+@keyframes hp-toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+.reduce-motion .hp-toast {
+  animation: none;
+}

@@ -24,6 +24,7 @@ export interface WindowManagerOptions {
 export class WindowManager {
   private homepageWindow: BrowserWindow | null = null
   private overlayWindow: BrowserWindow | null = null
+  private overlayContentProtection = true
   private overlayState: OverlayState = 'hidden'
   private overlayStreaming = false
   private overlayTransitionQueue: Promise<void> = Promise.resolve()
@@ -259,15 +260,38 @@ export class WindowManager {
     window.on('move', publishSnapshot)
   }
 
+  /**
+   * Applies the stealth (content protection) preference to the live overlay and
+   * remembers it for windows created later. When enabled the overlay is excluded
+   * from screen capture and recordings.
+   */
+  setOverlayContentProtection(enabled: boolean): void {
+    this.overlayContentProtection = enabled
+    const window = this.getWindow('overlay')
+    if (!window) {
+      return
+    }
+    try {
+      window.setContentProtection(enabled)
+    } catch {
+      // Content protection is best-effort on unsupported window managers.
+    }
+  }
+
   private configureOverlayProtection(window: BrowserWindow): void {
     try {
-      window.setContentProtection(true)
+      window.setContentProtection(this.overlayContentProtection)
     } catch {
       // Content protection is best-effort on unsupported window managers.
     }
 
+    window.setSkipTaskbar(true)
+    window.webContents.setBackgroundThrottling(false)
+
     if (process.platform === 'darwin') {
       window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+      window.setHiddenInMissionControl(true)
+      window.setAlwaysOnTop(true, 'screen-saver', 1)
     }
   }
 

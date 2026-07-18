@@ -19,7 +19,19 @@ export default defineConfig({
         entry: 'electron/main.ts',
       },
       preload: {
-        input: fileURLToPath(new URL('./electron/preload.ts', import.meta.url)),
+        input: {
+          preload: fileURLToPath(new URL('./electron/preload.ts', import.meta.url)),
+          'selection-preload': fileURLToPath(
+            new URL('./electron/capture/selection-preload.ts', import.meta.url),
+          ),
+        },
+        vite: {
+          build: {
+            rollupOptions: {
+              output: { inlineDynamicImports: false },
+            },
+          },
+        },
       },
     }),
   ],

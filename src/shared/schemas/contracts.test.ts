@@ -6,10 +6,10 @@ import { JsonValueSchema } from './common'
 import { CanonicalSettingsSchema } from './settings'
 
 const settings = {
-  version: 1,
-  appearance: { theme: 'system', reducedMotion: false },
+  version: 2,
+  appearance: { theme: 'system', reducedMotion: false, answerHeight: 600 },
   application: { launchAtLogin: false, showDockIcon: true, startMinimized: false },
-  privacy: { persistConversations: true, shareDiagnostics: false },
+  privacy: { persistConversations: true, shareDiagnostics: false, stealthMode: true },
   capture: {
     includeMicrophone: false,
     includeSystemAudio: true,
@@ -19,6 +19,12 @@ const settings = {
     model: 'codex-default',
     reasoningEffort: 'medium',
     responseLanguage: 'en-US',
+    webSearchEnabled: false,
+    mode: 'question',
+    verbosity: 'concise',
+    codingLanguage: 'javascript',
+    customInstructionsEnabled: false,
+    customInstructions: '',
   },
 } as const
 

@@ -141,6 +141,40 @@ describe('CodexProviderManager', () => {
     await authChanged.release()
   })
 
+  it('bakes web search into the config overrides and rotates the provider when it changes', async () => {
+    const settings: CodexAppServerProviderSettings[] = []
+    const providers = [fakeProvider(), fakeProvider()]
+    let index = 0
+    const manager = new CodexProviderManager({
+      credentials: createCredentials(),
+      onToolRequestUserInput: async () => ({ answers: {} }),
+      codexPath: '/codex',
+      createProvider: (value) => {
+        settings.push(value)
+        return providers[index++]
+      },
+    })
+    const input = { workspacePath: '/workspace', workspaceRevision: 1, configRevision: 1 }
+
+    const first = await manager.getProvider({ ...input, webSearch: false })
+    const reused = await manager.getProvider({ ...input, webSearch: false })
+    expect(reused.provider).toBe(first.provider)
+    expect(settings[0].defaultSettings?.configOverrides).toEqual({
+      'tools.web_search': false,
+      'tools.image_generation': false,
+    })
+
+    const searchEnabled = await manager.getProvider({ ...input, webSearch: true })
+    expect(searchEnabled.provider).toBe(providers[1])
+    expect(settings[1].defaultSettings?.configOverrides).toMatchObject({
+      'tools.web_search': true,
+    })
+
+    await first.release()
+    await reused.release()
+    await searchEnabled.release()
+  })
+
   it('uses explicit declining approval handlers', async () => {
     let captured: CodexAppServerProviderSettings | undefined
     const manager = new CodexProviderManager({

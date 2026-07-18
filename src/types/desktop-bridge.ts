@@ -1,5 +1,9 @@
 import type { Bootstrap } from '../shared/schemas/bootstrap'
 import type { CanonicalSettings } from '../shared/schemas/settings'
+import type {
+  ConnectionTestResult,
+  ModelOption,
+} from '../shared/schemas/models'
 import type { ProductEvent } from '../shared/ipc/product'
 import type {
   SubscriptionEvent,
@@ -17,6 +21,8 @@ export interface CodexlyDesktopBridgeV1 {
     listener: DesktopSubscriptionListener,
   ): Promise<DesktopSubscriptionCleanup>
   runtimeStatus(): Promise<unknown>
+  testConnection(): Promise<ConnectionTestResult>
+  listModels(): Promise<ModelOption[]>
   useChatGpt(): Promise<unknown>
   setApiKey(apiKey: string, persist: boolean): Promise<unknown>
   getSettings(): Promise<CanonicalSettings>
@@ -39,6 +45,7 @@ export interface CodexlyDesktopBridgeV1 {
   stopTurn(turnId: string): Promise<boolean>
   solvePending(modelId: string): Promise<unknown>
   capture(): Promise<unknown>
+  captureSelection(): Promise<unknown>
   listAttachments(): Promise<unknown>
   discardAttachment(attachmentId: string): Promise<boolean>
   clearAttachments(): Promise<void>

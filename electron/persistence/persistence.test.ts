@@ -100,4 +100,35 @@ describe('SettingsStore', () => {
       application: { ...DEFAULT_SETTINGS.application, launchAtLogin: false },
     })
   })
+
+  it('migrates a stored v1 settings.json to v2 with defaults for new fields', async () => {
+    const directory = await temporaryDirectory()
+    const legacyStored = {
+      version: 1,
+      appearance: { theme: 'dark', reducedMotion: true },
+      application: { launchAtLogin: true, showDockIcon: false, startMinimized: false },
+      privacy: { persistConversations: false, shareDiagnostics: true },
+      capture: { includeMicrophone: false, includeSystemAudio: false, screenshotFormat: 'jpeg' },
+      assistant: { model: 'gpt-old', reasoningEffort: 'high', responseLanguage: 'en' },
+    }
+    await writeFile(path.join(directory, 'settings.json'), JSON.stringify(legacyStored), 'utf8')
+
+    const store = new SettingsStore({ userDataPath: directory })
+    const loaded = await store.load()
+
+    expect(loaded.version).toBe(2)
+    // Preserved values survive the upgrade.
+    expect(loaded.appearance.theme).toBe('dark')
+    expect(loaded.assistant.model).toBe('gpt-old')
+    expect(loaded.assistant.reasoningEffort).toBe('high')
+    // New fields receive documented defaults.
+    expect(loaded.appearance.answerHeight).toBe(600)
+    expect(loaded.privacy.stealthMode).toBe(true)
+    expect(loaded.assistant.mode).toBe('question')
+    expect(loaded.assistant.verbosity).toBe('concise')
+    expect(loaded.assistant.webSearchEnabled).toBe(false)
+    expect(loaded.assistant.codingLanguage).toBe('javascript')
+    expect(loaded.assistant.customInstructionsEnabled).toBe(false)
+    expect(loaded.assistant.customInstructions).toBe('')
+  })
 })

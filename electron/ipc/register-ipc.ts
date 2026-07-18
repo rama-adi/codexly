@@ -324,12 +324,16 @@ function authorizeProductCommand(role: WindowRole, command: ProductCommand): voi
   if (role === 'homepage') return
   const allowed = new Set<ProductCommand['type']>([
     'runtime.status',
+    'runtime.testConnection',
+    'models.list',
+    'settings.get',
     'sessions.get',
     'sessions.create',
     'conversation.send',
     'conversation.stop',
     'conversation.solvePending',
     'attachments.capture',
+    'attachments.captureSelection',
     'attachments.list',
     'attachments.discard',
     'attachments.clear',

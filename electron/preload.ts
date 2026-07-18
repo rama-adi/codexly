@@ -158,6 +158,14 @@ const bridge: CodexlyDesktopBridgeV1 = Object.freeze({
     }
   },
   runtimeStatus: () => invokeProduct({ type: 'runtime.status' }),
+  testConnection: () =>
+    invokeProduct({ type: 'runtime.testConnection' }) as ReturnType<
+      CodexlyDesktopBridgeV1['testConnection']
+    >,
+  listModels: () =>
+    invokeProduct({ type: 'models.list' }) as ReturnType<
+      CodexlyDesktopBridgeV1['listModels']
+    >,
   useChatGpt: () => invokeProduct({ type: 'auth.useChatGpt' }),
   setApiKey: (apiKey: string, persist: boolean) =>
     invokeProduct({ type: 'auth.setApiKey', apiKey, persist }),
@@ -184,6 +192,7 @@ const bridge: CodexlyDesktopBridgeV1 = Object.freeze({
   solvePending: (modelId: string) =>
     invokeProduct({ type: 'conversation.solvePending', modelId }),
   capture: () => invokeProduct({ type: 'attachments.capture' }),
+  captureSelection: () => invokeProduct({ type: 'attachments.captureSelection' }),
   listAttachments: () => invokeProduct({ type: 'attachments.list' }),
   discardAttachment: (attachmentId: string) =>
     invokeProduct({ type: 'attachments.discard', attachmentId }) as Promise<boolean>,

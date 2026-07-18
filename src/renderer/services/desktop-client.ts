@@ -1,6 +1,10 @@
 import { SubscriptionEventSchema } from '../../shared/ipc/events'
 import type { ProductEvent } from '../../shared/ipc/product'
 import { BootstrapSchema } from '../../shared/schemas/bootstrap'
+import {
+  ConnectionTestResultSchema,
+  ModelOptionsSchema,
+} from '../../shared/schemas/models'
 import { CanonicalSettingsSchema } from '../../shared/schemas/settings'
 import type { CodexlyDesktopBridgeV1 } from '../../types/desktop-bridge'
 
@@ -63,6 +67,12 @@ export const desktopClient = {
     )
   },
   runtimeStatus: () => requireBridge().runtimeStatus() as Promise<RuntimeStatus>,
+  async testConnection() {
+    return ConnectionTestResultSchema.parse(await requireBridge().testConnection())
+  },
+  async listModels() {
+    return ModelOptionsSchema.parse(await requireBridge().listModels())
+  },
   useChatGpt: () => requireBridge().useChatGpt() as Promise<RuntimeStatus>,
   setApiKey: (apiKey: string, persist = true) =>
     requireBridge().setApiKey(apiKey, persist) as Promise<RuntimeStatus>,
@@ -89,6 +99,7 @@ export const desktopClient = {
   stopTurn: (turnId: string) => requireBridge().stopTurn(turnId),
   solvePending: (modelId: string) => requireBridge().solvePending(modelId) as Promise<{ sessionId: string; turnId: string }>,
   capture: () => requireBridge().capture() as Promise<unknown>,
+  captureSelection: () => requireBridge().captureSelection() as Promise<unknown>,
   listAttachments: () => requireBridge().listAttachments() as Promise<Array<{ id: string; name: string; preview: string }>>,
   discardAttachment: (attachmentId: string) => requireBridge().discardAttachment(attachmentId),
   clearAttachments: () => requireBridge().clearAttachments(),

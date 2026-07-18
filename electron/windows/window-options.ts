@@ -23,6 +23,27 @@ export function sanitizeWindowRole(value: unknown): WindowRole {
   return value === 'overlay' ? 'overlay' : 'homepage'
 }
 
+/** Height, in pixels, reserved for the renderer-drawn titlebar overlay. */
+const HOMEPAGE_TITLEBAR_HEIGHT = 52
+
+function homepageTitleBarOptions(): BrowserWindowConstructorOptions {
+  if (process.platform === 'darwin') {
+    return {
+      titleBarStyle: 'hiddenInset',
+      trafficLightPosition: { x: 16, y: 18 },
+    }
+  }
+
+  return {
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#0b0b0f',
+      symbolColor: '#e5e7eb',
+      height: HOMEPAGE_TITLEBAR_HEIGHT,
+    },
+  }
+}
+
 export function createHomepageWindowOptions(
   preloadPath: string,
 ): BrowserWindowConstructorOptions {
@@ -34,6 +55,7 @@ export function createHomepageWindowOptions(
     resizable: true,
     show: true,
     title: 'Codexly',
+    ...homepageTitleBarOptions(),
     webPreferences: secureWebPreferences(preloadPath),
   }
 }
@@ -49,10 +71,15 @@ export function createOverlayWindowOptions(
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
+    // macOS draws a jagged shadow/outline around a transparent window's alpha
+    // shape that goes stale on resize; the renderer paints its own shadows.
+    hasShadow: false,
     resizable: false,
     skipTaskbar: true,
     alwaysOnTop: true,
     show: false,
+    // A macOS panel floats above full-screen spaces without stealing focus.
+    ...(process.platform === 'darwin' ? { type: 'panel' as const } : {}),
     webPreferences: secureWebPreferences(preloadPath),
   }
 }

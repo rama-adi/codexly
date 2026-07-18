@@ -96,6 +96,12 @@ export interface ProviderRevisionInput {
   workspacePath: string
   workspaceRevision: number
   configRevision: number
+  /**
+   * Whether the Codex `tools.web_search` capability is enabled for this
+   * provider. Because it is baked into the provider config, changing it must
+   * rotate the provider — it is therefore part of the provider key.
+   */
+  webSearch?: boolean
 }
 
 export interface CodexProviderLease {
@@ -163,11 +169,13 @@ export class CodexProviderManager {
     const acquired: { value: ManagedProvider | null } = { value: null }
     await this.#serialize(async () => {
       const credentials = await this.#credentials.getProviderSnapshot()
+      const webSearch = input.webSearch ?? false
       const key = JSON.stringify({
         auth: credentials.revision,
         workspace: input.workspaceRevision,
         config: input.configRevision,
         cwd: input.workspacePath,
+        webSearch,
       })
       if (this.#current?.key === key) {
         acquired.value = this.#current
@@ -193,6 +201,10 @@ export class CodexProviderManager {
           threadMode: 'persistent',
           persistExtendedHistory: true,
           includeRawChunks: true,
+          configOverrides: {
+            'tools.web_search': webSearch,
+            'tools.image_generation': false,
+          },
           serverRequests: this.#requestHandlers,
           logger: false,
           ...this.#timeouts,

@@ -1,8 +1,9 @@
-import { app, screen } from 'electron'
+import { app, screen, type Tray } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { ProductController } from './app/product-controller'
+import { createCodexlyTray } from './app/tray'
 import { registerIpc, type IpcRegistration } from './ipc/register-ipc'
 import { DEFAULT_SETTINGS, SettingsStore } from './persistence/settings-store'
 import type { Bootstrap } from '../src/shared/schemas/bootstrap'
@@ -33,6 +34,7 @@ const windowManager = new WindowManager({
 let ipcRegistration: IpcRegistration | null = null
 let productController: ProductController | null = null
 let unsubscribeSnapshots: (() => void) | null = null
+let tray: Tray | null = null
 
 app.on('window-all-closed', () => {
   // The process intentionally remains alive for tray-resident operation.
@@ -46,6 +48,8 @@ app.on('before-quit', () => {
   unsubscribeSnapshots?.()
   ipcRegistration?.dispose()
   void productController?.dispose()
+  tray?.destroy()
+  tray = null
   windowManager.destroy()
 })
 
@@ -74,6 +78,13 @@ void app.whenReady().then(async () => {
     }
   })
   windowManager.start()
+
+  tray = createCodexlyTray({
+    launchOverlay: () => windowManager.showOverlay(),
+    openHome: () => windowManager.showHomepage(),
+    captureDisplay: () => productController?.captureActiveDisplay(),
+    quit: () => app.quit(),
+  })
 })
 
 async function createBootstrap(

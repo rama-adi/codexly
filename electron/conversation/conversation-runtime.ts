@@ -1,7 +1,15 @@
 import { streamText, type LanguageModel } from 'ai'
-import type { CodexAppServerSession } from 'ai-sdk-provider-codex-cli'
+import type {
+  CodexAppServerSession,
+  ReasoningEffort,
+} from 'ai-sdk-provider-codex-cli'
 import { randomUUID } from 'node:crypto'
 
+import type {
+  ConnectionTestResult,
+  ModelOption,
+  ReasoningEffortOption,
+} from '../../src/shared/schemas/models'
 import type {
   CodexProviderLease,
   ProviderRevisionInput,
@@ -11,6 +19,7 @@ import {
   buildPromptAttachments,
   type PromptAttachment,
   type PromptContextBlock,
+  type PromptSettings,
 } from './prompt-builder'
 import {
   TurnController,
@@ -33,6 +42,10 @@ export interface StartConversationTurnInput extends ProviderRevisionInput {
   message: string
   context?: PromptContextBlock[]
   attachments?: PromptAttachment[]
+  /** Resolved per-turn Codex reasoning effort; falls back to the provider default when omitted. */
+  reasoningEffort?: string
+  /** Assistant preferences that shape the developer instructions for this turn. */
+  settings?: PromptSettings
 }
 
 export interface ConversationTurnHandle {
@@ -173,6 +186,35 @@ export class ConversationRuntime {
     return (await this.#activeByTurn.get(turnId)?.controller.abort(reason)) ?? false
   }
 
+  /** Lists the models the current Codex provider exposes, normalized for the renderer. */
+  async listModels(input: ProviderRevisionInput): Promise<ModelOption[]> {
+    const lease = await this.#providers.getProvider(input)
+    try {
+      const result = await lease.provider.listModels()
+      const models = Array.isArray(result?.models) ? result.models : []
+      return models
+        .map((model) => normalizeModelOption(model))
+        .filter((model): model is ModelOption => model !== null)
+    } finally {
+      await lease.release()
+    }
+  }
+
+  /** Confirms the Codex provider can be created and answer a lightweight request. */
+  async testConnection(input: ProviderRevisionInput): Promise<ConnectionTestResult> {
+    try {
+      const lease = await this.#providers.getProvider(input)
+      try {
+        await lease.provider.listModels().catch((): undefined => undefined)
+        return { success: true }
+      } finally {
+        await lease.release()
+      }
+    } catch (error) {
+      return { success: false, error: errorMessage(error) }
+    }
+  }
+
   async dispose(): Promise<void> {
     await Promise.all(
       [...this.#activeByTurn.values()].map((turn) =>
@@ -211,10 +253,16 @@ export class ConversationRuntime {
       }
 
       const built = buildPrompt(input)
-      for (let attempt = 0; attempt < 2; attempt += 1) {
+      let effort = input.reasoningEffort as ReasoningEffort | undefined
+      let staleRetried = false
+      let minimalEffortRetried = false
+      // At most three attempts: initial, one stale-thread retry, one minimal→low
+      // effort retry. Every iteration returns, continues on a retry, or throws.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
           const model = lease.provider(input.modelId, {
             ...(existingThreadId ? { resume: existingThreadId } : {}),
+            ...(effort ? { effort } : {}),
             developerInstructions: built.developerInstructions,
             onSessionCreated: this.#getSessionCallback(input.conversationId),
           }) as LanguageModel
@@ -247,10 +295,22 @@ export class ConversationRuntime {
           }
           return
         } catch (error) {
-          if (attempt === 0 && existingThreadId && isStaleThreadError(error)) {
+          if (!staleRetried && existingThreadId && isStaleThreadError(error)) {
+            staleRetried = true
             existingThreadId = null
             this.#sessions.delete(input.conversationId)
             await this.#threads.setThreadId(input.conversationId, null)
+            continue
+          }
+          // Some models reject 'minimal' reasoning effort when tools are active.
+          // Retry once at 'low' effort, matching the legacy behavior.
+          if (
+            !minimalEffortRetried &&
+            effort === 'minimal' &&
+            isMinimalToolIncompatibilityError(error)
+          ) {
+            minimalEffortRetried = true
+            effort = 'low'
             continue
           }
           throw error
@@ -318,6 +378,54 @@ export class ConversationRuntime {
 
 function isStaleThreadError(value: unknown): boolean {
   return /thread ['"]?.+['"]? not found/i.test(errorMessage(value))
+}
+
+function isMinimalToolIncompatibilityError(value: unknown): boolean {
+  return /reasoning\.effort ['"]minimal['"]|cannot be used with reasoning\.effort/i.test(
+    errorMessage(value),
+  )
+}
+
+function normalizeModelOption(model: Record<string, unknown>): ModelOption | null {
+  const id = String(model.id ?? model.model ?? '').trim()
+  if (!id) {
+    return null
+  }
+  const inputModalities = Array.isArray(model.inputModalities)
+    ? model.inputModalities.map((modality) => String(modality)).filter(Boolean)
+    : ['text', 'image']
+  const supportedReasoningEfforts: ReasoningEffortOption[] = Array.isArray(
+    model.supportedReasoningEfforts,
+  )
+    ? model.supportedReasoningEfforts
+        .map((effort): ReasoningEffortOption => {
+          const record =
+            effort !== null && typeof effort === 'object'
+              ? (effort as Record<string, unknown>)
+              : {}
+          return {
+            reasoningEffort: String(
+              record.reasoningEffort ?? record.id ?? effort ?? '',
+            ).trim(),
+            ...(typeof record.description === 'string'
+              ? { description: record.description }
+              : {}),
+          }
+        })
+        .filter((effort) => effort.reasoningEffort)
+    : []
+  const displayName = String(
+    model.displayName ?? model.name ?? model.model ?? id,
+  ).trim()
+
+  return {
+    id,
+    displayName: displayName || id,
+    supportedReasoningEfforts,
+    inputModalities,
+    isDefault: Boolean(model.isDefault),
+    hidden: Boolean(model.hidden),
+  }
 }
 
 function errorMessage(value: unknown): string {

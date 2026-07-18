@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildDeveloperInstructions,
   buildPrompt,
   buildPromptAttachments,
   DEVELOPER_INSTRUCTIONS,
@@ -39,5 +40,38 @@ describe('buildPrompt', () => {
 
   it('rejects an empty message', () => {
     expect(() => buildPrompt({ message: '   ' })).toThrow(/required/i)
+  })
+
+  it('preserves the security posture while layering assistant preferences', () => {
+    const instructions = buildDeveloperInstructions({
+      mode: 'coding',
+      verbosity: 'verbose',
+      codingLanguage: 'python',
+      responseLanguage: 'Spanish',
+      customInstructionsEnabled: true,
+      customInstructions: 'Prefer functional style.',
+    })
+
+    expect(instructions.startsWith(DEVELOPER_INSTRUCTIONS)).toBe(true)
+    expect(instructions).toContain('read-only')
+    expect(instructions).toContain('Use python')
+    expect(instructions).toContain('step-by-step')
+    expect(instructions).toContain('Respond in Spanish')
+    expect(instructions).toContain('Prefer functional style.')
+  })
+
+  it('omits disabled custom instructions and empty response language', () => {
+    const instructions = buildDeveloperInstructions({
+      mode: 'question',
+      verbosity: 'concise',
+      codingLanguage: 'javascript',
+      responseLanguage: '',
+      customInstructionsEnabled: false,
+      customInstructions: 'ignored',
+    })
+
+    expect(instructions).toContain('answer only what was asked')
+    expect(instructions).not.toContain('Respond in')
+    expect(instructions).not.toContain('ignored')
   })
 })

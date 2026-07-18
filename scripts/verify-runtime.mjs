@@ -67,7 +67,7 @@ try {
 
   const bootstrap = await homepage.evaluate(() => window.codexly.v1.bootstrap())
   const runtimeStatus = await homepage.evaluate(() => window.codexly.v1.runtimeStatus())
-  await homepage.getByText('Good to see you.').waitFor()
+  await homepage.getByText('Ask about the work in front of you.').waitFor()
   const popupDenied = await homepage.evaluate(
     () => window.open('https://example.com') === null,
   )
@@ -99,6 +99,33 @@ try {
   } catch (error) {
     captureProbe = `blocked: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`
   }
+  let selectionProbe = 'not-run'
+  if (captureProbe === 'captured') {
+    try {
+      const selectionWindowPromise = app.waitForEvent('window', {
+        predicate: (page) => page.url().startsWith('data:text/html'),
+        timeout: 10_000,
+      })
+      const selectionInvocation = overlay.evaluate(() => window.codexly.v1.captureSelection())
+      const selectionWindow = await selectionWindowPromise
+      await selectionWindow.getByText('Drag to select · Esc to cancel').waitFor()
+      await selectionWindow.locator('body[data-port-ready="true"]').waitFor()
+      await selectionWindow.mouse.move(80, 80)
+      await selectionWindow.mouse.down()
+      await selectionWindow.mouse.move(360, 260, { steps: 8 })
+      await selectionWindow.mouse.up()
+      const result = await selectionInvocation
+      selectionProbe = `result: ${JSON.stringify(result)}`
+      try {
+        await overlay.locator('img[alt^="Screenshot"]').nth(1).waitFor({ timeout: 5_000 })
+        selectionProbe += '; queue-updated'
+      } catch {
+        selectionProbe += '; queue-not-updated'
+      }
+    } catch (error) {
+      selectionProbe = `blocked: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`
+    }
+  }
   await overlay.screenshot({ path: 'runtime-verification-overlay.png' })
   const overlayText = await overlay.locator('body').innerText()
   await homepage.evaluate(() => window.codexly.v1.toggleOverlay())
@@ -122,6 +149,7 @@ try {
         runtimeStatus,
         overlayText,
         captureProbe,
+        selectionProbe,
         bootstrap: {
           version: bootstrap.version,
           windowRoles: bootstrap.windows.map((window) => window.role),

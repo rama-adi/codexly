@@ -351,4 +351,140 @@ describe('ConversationRuntime', () => {
     expect(settings[0].onSessionCreated).toBe(settings[1].onSessionCreated)
     expect(settings[2].onSessionCreated).not.toBe(settings[0].onSessionCreated)
   })
+
+  it('threads per-turn reasoning effort into the model factory settings', async () => {
+    const { provider, settings } = createProvider()
+    const stores = createStores()
+    const runtime = new ConversationRuntime({
+      providers: createManager(provider),
+      threads: stores.threads,
+      events: stores.eventStore,
+      stream: (() => ({
+        stream: asyncParts([]),
+        finishReason: Promise.resolve('stop'),
+      })) as unknown as typeof import('ai').streamText,
+      generateTurnId: () => 'turn-1',
+    })
+
+    await (await runtime.startTurn({ ...baseInput, reasoningEffort: 'medium' })).completion
+
+    expect(settings[0].effort).toBe('medium')
+  })
+
+  it('retries a minimal-effort turn at low effort on a tool-incompatibility error', async () => {
+    const { provider, settings } = createProvider()
+    const stores = createStores()
+    let calls = 0
+    const stream = vi.fn(() => {
+      calls += 1
+      if (calls === 1) {
+        return {
+          stream: {
+            [Symbol.asyncIterator]() {
+              return {
+                next: () =>
+                  Promise.reject(
+                    new Error(
+                      "reasoning.effort 'minimal' cannot be used with the web_search tool",
+                    ),
+                  ),
+              }
+            },
+          },
+          finishReason: Promise.resolve('error'),
+        }
+      }
+      return { stream: asyncParts([]), finishReason: Promise.resolve('stop') }
+    })
+    const runtime = new ConversationRuntime({
+      providers: createManager(provider),
+      threads: stores.threads,
+      events: stores.eventStore,
+      stream: stream as unknown as typeof import('ai').streamText,
+      generateTurnId: () => 'turn-1',
+    })
+
+    const handle = await runtime.startTurn({ ...baseInput, reasoningEffort: 'minimal' })
+    expect(await handle.completion).toBe('completed')
+    expect(stream).toHaveBeenCalledTimes(2)
+    expect(settings[0].effort).toBe('minimal')
+    expect(settings[1].effort).toBe('low')
+  })
+
+  it('lists and normalizes Codex models', async () => {
+    const { provider } = createProvider()
+    ;(provider.listModels as ReturnType<typeof vi.fn>).mockResolvedValue({
+      models: [
+        {
+          id: 'gpt-5.5',
+          displayName: 'GPT-5.5',
+          isDefault: true,
+          hidden: false,
+          inputModalities: ['text', 'image'],
+          supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { id: 'high' }],
+        },
+        { model: 'legacy', name: 'Legacy' },
+        { notAModel: true },
+      ],
+    })
+    const stores = createStores()
+    const runtime = new ConversationRuntime({
+      providers: createManager(provider),
+      threads: stores.threads,
+      events: stores.eventStore,
+    })
+
+    const models = await runtime.listModels(baseInput)
+
+    expect(models).toEqual([
+      {
+        id: 'gpt-5.5',
+        displayName: 'GPT-5.5',
+        isDefault: true,
+        hidden: false,
+        inputModalities: ['text', 'image'],
+        supportedReasoningEfforts: [
+          { reasoningEffort: 'low' },
+          { reasoningEffort: 'high' },
+        ],
+      },
+      {
+        id: 'legacy',
+        displayName: 'Legacy',
+        isDefault: false,
+        hidden: false,
+        inputModalities: ['text', 'image'],
+        supportedReasoningEfforts: [],
+      },
+    ])
+  })
+
+  it('reports connection success and failure', async () => {
+    const { provider } = createProvider()
+    const stores = createStores()
+    const runtime = new ConversationRuntime({
+      providers: createManager(provider),
+      threads: stores.threads,
+      events: stores.eventStore,
+    })
+
+    ;(provider.listModels as ReturnType<typeof vi.fn>).mockResolvedValue({ models: [] })
+    expect(await runtime.testConnection(baseInput)).toEqual({ success: true })
+
+    const failing: ConversationProviderManager = {
+      getProvider: vi.fn(async () => {
+        throw new Error('codex offline')
+      }),
+      dispose: vi.fn(async () => undefined),
+    }
+    const offline = new ConversationRuntime({
+      providers: failing,
+      threads: stores.threads,
+      events: stores.eventStore,
+    })
+    expect(await offline.testConnection(baseInput)).toEqual({
+      success: false,
+      error: 'codex offline',
+    })
+  })
 })
