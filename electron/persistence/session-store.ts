@@ -183,6 +183,15 @@ export class SessionStore {
     })
   }
 
+  /** Detaches the active-session pointer so the next send starts a fresh session. */
+  async clearActive(): Promise<void> {
+    return this.#enqueue(async () => {
+      const index = await this.#loadIndex()
+      if (index.activeSessionId === null) return
+      await this.#writeIndex({ ...index, activeSessionId: null })
+    })
+  }
+
   async update(sessionId: string, update: (current: SessionRecord) => SessionRecord): Promise<SessionRecord> {
     assertSessionId(sessionId)
     return this.#enqueue(async () => {

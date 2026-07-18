@@ -70,6 +70,40 @@ export function Overlay() {
       // Turns started from the homepage (e.g. the history composer) stream
       // into that window; the overlay must not hijack them.
       if ('origin' in event && event.origin === 'homepage') return
+      if (event.type === 'overlay.opened') {
+        if (!event.fresh && event.sessionId === sessionId) return
+        answerRef.current = ''
+        reasoningRef.current = ''
+        setAnswer('')
+        setReasoning('')
+        setStreaming(false)
+        setActivities([])
+        setMessages([])
+        setTurnId(undefined)
+        setSessionId(event.sessionId ?? undefined)
+        if (event.sessionId) {
+          // Continuing a session from history: preload its conversation.
+          const continuedId = event.sessionId
+          setView('chat')
+          void desktopClient
+            .getSession(continuedId)
+            .then((session) => {
+              if (!session) return
+              setMessages(
+                session.messages
+                  .filter((message) => message.role === 'user' || message.role === 'assistant')
+                  .map((message) => ({
+                    role: message.role as 'user' | 'assistant',
+                    content: message.content,
+                  })),
+              )
+            })
+            .catch(() => undefined)
+        } else {
+          setView('queue')
+        }
+        return
+      }
       if (event.type === 'attachment.captured') {
         const attachment = event.attachment as Attachment
         setAttachments((current) =>

@@ -104,7 +104,7 @@ export const desktopClient = {
   discardAttachment: (attachmentId: string) => requireBridge().discardAttachment(attachmentId),
   clearAttachments: () => requireBridge().clearAttachments(),
   openHome: () => requireBridge().openHome(),
-  toggleOverlay: () => requireBridge().toggleOverlay(),
+  toggleOverlay: (preserveSession?: boolean) => requireBridge().toggleOverlay(preserveSession),
   resizeOverlay: (width: number, height: number) => requireBridge().resizeOverlay(width, height),
   onProductEvent(listener: (event: ProductEvent) => void) {
     return requireBridge().onProductEvent(listener)

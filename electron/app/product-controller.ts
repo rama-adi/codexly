@@ -215,9 +215,7 @@ export class ProductController {
     this.#shortcuts.configure({
       summonOverlay: {
         accelerator: 'CommandOrControl+Shift+Space',
-        callback: async () => {
-          await this.#windowManager.showOverlay()
-        },
+        callback: () => this.openOverlay(),
       },
       toggleOverlay: {
         accelerator: 'CommandOrControl+B',
@@ -331,7 +329,7 @@ export class ProductController {
         this.#windowManager.showHomepage()
         return null
       case 'window.toggleOverlay':
-        await this.#toggleOverlay()
+        await this.#toggleOverlay(command.preserveSession ?? false)
         return null
       case 'window.resizeOverlay': {
         const overlay = this.#windowManager.getWindow('overlay')
@@ -585,10 +583,24 @@ export class ProductController {
     }
   }
 
-  async #toggleOverlay(): Promise<void> {
+  async #toggleOverlay(preserveSession = false): Promise<void> {
     const overlay = this.#windowManager.getWindow('overlay')
     if (overlay?.isVisible()) await this.#windowManager.hideOverlay()
-    else await this.#windowManager.showOverlay()
+    else await this.openOverlay(preserveSession)
+  }
+
+  /**
+   * Shows the overlay on user intent (shortcut, tray, toggle). Each open
+   * starts a fresh conversation — the next send creates a new session instead
+   * of resuming the last active one — except while a turn is still streaming
+   * or when the caller explicitly continues a session (history "Continue").
+   */
+  async openOverlay(preserveSession = false): Promise<void> {
+    const fresh = !preserveSession && this.#activeTurns.size === 0
+    if (fresh) await this.#sessions.clearActive()
+    await this.#windowManager.showOverlay()
+    const active = fresh ? null : await this.#sessions.getActive()
+    this.#publish({ type: 'overlay.opened', fresh, sessionId: active?.id ?? null }, ['overlay'])
   }
 
   #moveOverlay(deltaX: number, deltaY: number): void {

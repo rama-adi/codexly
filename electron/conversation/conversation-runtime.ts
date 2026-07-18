@@ -377,7 +377,10 @@ export class ConversationRuntime {
 }
 
 function isStaleThreadError(value: unknown): boolean {
-  return /thread ['"]?.+['"]? not found/i.test(errorMessage(value))
+  // Codex has phrased this differently across releases:
+  //   "thread '<id>' not found"  (≤0.13x)
+  //   "no rollout found for thread id <id>"  (0.14x)
+  return /thread ['"]?.+['"]? not found|no rollout found for thread/i.test(errorMessage(value))
 }
 
 function isMinimalToolIncompatibilityError(value: unknown): boolean {

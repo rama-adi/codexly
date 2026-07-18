@@ -129,16 +129,14 @@ try {
   await overlay.screenshot({ path: 'runtime-verification-overlay.png' })
   const overlayText = await overlay.locator('body').innerText()
   await homepage.evaluate(() => window.codexly.v1.toggleOverlay())
-  await homepage.close()
-  await new Promise((resolve) => setTimeout(resolve, 500))
 
-  const windowsAfterHomepageClose = await app.evaluate(({ BrowserWindow }) =>
-    BrowserWindow.getAllWindows().map((window) => ({
-      url: window.webContents.getURL(),
-      visible: window.isVisible(),
-      destroyed: window.isDestroyed(),
-    })),
-  )
+  // Closing the homepage window must quit the entire app.
+  const appClosed = new Promise((resolve) => {
+    app.on('close', () => resolve(true))
+    setTimeout(() => resolve(false), 10_000)
+  })
+  await homepage.close()
+  const quitsOnHomepageClose = await appClosed
 
   console.log(
     JSON.stringify(
@@ -160,13 +158,13 @@ try {
         navigationDenied: urlBeforeNavigation === urlAfterNavigation,
         urlBeforeNavigation,
         urlAfterNavigation,
-        windowsAfterHomepageClose,
+        quitsOnHomepageClose,
       },
       null,
       2,
     ),
   )
 } finally {
-  await app.close()
+  await app.close().catch(() => undefined)
   await rm(userDataPath, { recursive: true, force: true })
 }

@@ -63,6 +63,19 @@ describe('DisplayCapture', () => {
     expect(result.pixelSize).toEqual({ width: 300, height: 150 })
   })
 
+  it('falls back to positional matching when macOS omits every display_id', async () => {
+    const second = { ...display, id: '8', bounds: { ...display.bounds, x: 0 } }
+    const capture = new DisplayCapture(adapter({
+      getAllDisplays: () => [display, second],
+      getSources: async () => [
+        { id: 'screen:0', displayId: null, name: 'Display 1', image: image() },
+        { id: 'screen:1', displayId: null, name: 'Display 2', image: image() },
+      ],
+    }))
+    const result = await capture.capture({ kind: 'display', displayId: '8' })
+    expect(result.display.id).toBe('8')
+  })
+
   it('does not guess among sources on multiple displays', async () => {
     const capture = new DisplayCapture(adapter({
       getAllDisplays: () => [display, { ...display, id: '8' }],

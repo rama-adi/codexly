@@ -29,6 +29,9 @@ const windowManager = new WindowManager({
   mainDist,
   rendererDist,
   devServerUrl,
+  // Closing the main window exits the whole app (old-app behavior); the tray
+  // alone is not a reason to keep running once the user dismisses the app.
+  onHomepageClosed: () => app.quit(),
 })
 
 let ipcRegistration: IpcRegistration | null = null
@@ -44,13 +47,24 @@ app.on('activate', () => {
   windowManager.showHomepage()
 })
 
-app.on('before-quit', () => {
+let quitting = false
+
+app.on('before-quit', (event) => {
+  if (quitting) return
+  quitting = true
+  // Hold the quit until subsystems tear down (notably the Codex child
+  // process), but never longer than a short deadline.
+  event.preventDefault()
   unsubscribeSnapshots?.()
   ipcRegistration?.dispose()
-  void productController?.dispose()
   tray?.destroy()
   tray = null
-  windowManager.destroy()
+  const dispose = productController?.dispose() ?? Promise.resolve()
+  const deadline = new Promise((resolve) => setTimeout(resolve, 3000))
+  void Promise.race([dispose.catch(() => undefined), deadline]).finally(() => {
+    windowManager.destroy()
+    app.exit(0)
+  })
 })
 
 void app.whenReady().then(async () => {
@@ -80,7 +94,7 @@ void app.whenReady().then(async () => {
   windowManager.start()
 
   tray = createCodexlyTray({
-    launchOverlay: () => windowManager.showOverlay(),
+    launchOverlay: () => productController?.openOverlay() ?? windowManager.showOverlay(),
     openHome: () => windowManager.showHomepage(),
     captureDisplay: () => productController?.captureActiveDisplay(),
     quit: () => app.quit(),

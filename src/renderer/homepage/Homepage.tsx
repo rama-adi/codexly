@@ -138,7 +138,7 @@ export function Homepage() {
               onReactivate={(id) =>
                 void run(async () => {
                   await desktopClient.reactivateSession(id)
-                  await desktopClient.toggleOverlay()
+                  await desktopClient.toggleOverlay(true)
                 }, 'Session reactivated in the overlay.')
               }
               onDelete={(id) =>

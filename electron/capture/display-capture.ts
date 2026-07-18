@@ -47,6 +47,7 @@ export class DisplayCaptureError extends Error {
   constructor(
     readonly code:
       | 'display-not-found'
+      | 'no-sources'
       | 'source-not-found'
       | 'source-ambiguous'
       | 'empty-image',
@@ -106,6 +107,14 @@ export class DisplayCapture {
 
     const sources = await this.adapter.getSources(display.physicalSize)
     throwIfAborted(signal)
+    if (sources.length === 0) {
+      // macOS reports 'granted' yet returns no sources when the Screen
+      // Recording permission has gone stale; only re-granting fixes it.
+      throw new DisplayCaptureError(
+        'no-sources',
+        'Screen capture returned no displays. Re-enable Screen Recording for this app in System Settings → Privacy & Security, then relaunch.',
+      )
+    }
     const source = matchSource(display, displays, sources)
     let image = source.image
 
@@ -206,6 +215,18 @@ function matchSource(
   }
   if (displays.length === 1 && sources.length === 1) {
     return sources[0]
+  }
+  // Newer macOS releases often report screen sources with an empty display_id
+  // (Electron #41585). Screen source order mirrors screen.getAllDisplays(), so
+  // fall back to positional matching when no source carries an id.
+  if (
+    sources.length === displays.length &&
+    sources.every((source) => source.displayId === null)
+  ) {
+    const index = displays.findIndex((candidate) => candidate.id === display.id)
+    if (index >= 0) {
+      return sources[index]
+    }
   }
   throw new DisplayCaptureError('source-not-found', `No source matches display ${display.id}.`)
 }

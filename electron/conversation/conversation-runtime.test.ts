@@ -295,6 +295,40 @@ describe('ConversationRuntime', () => {
     expect(stores.savedThreads).toContain(null)
   })
 
+  it('recovers from the codex 0.14x "no rollout found" stale-thread wording', async () => {
+    const { provider, settings } = createProvider()
+    const stores = createStores('thr-rollout')
+    let calls = 0
+    const runtime = new ConversationRuntime({
+      providers: createManager(provider),
+      threads: stores.threads,
+      events: stores.eventStore,
+      stream: (() => {
+        calls += 1
+        return {
+          stream: {
+            async *[Symbol.asyncIterator]() {
+              if (calls === 1) {
+                throw new Error(
+                  'JSON-RPC error -32600: no rollout found for thread id thr-rollout',
+                )
+              }
+              yield { type: 'text-delta', text: 'recovered' }
+            },
+          },
+          finishReason: Promise.resolve('stop'),
+        }
+      }) as unknown as typeof import('ai').streamText,
+      generateTurnId: () => 'turn-rollout-retry',
+    })
+
+    const handle = await runtime.startTurn(baseInput)
+    expect(await handle.completion).toBe('completed')
+    expect(calls).toBe(2)
+    expect(settings[1].resume).toBeUndefined()
+    expect(stores.savedThreads).toContain(null)
+  })
+
   it('settles completion even when terminal event persistence fails', async () => {
     const { provider } = createProvider()
     const stores = createStores()

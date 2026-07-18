@@ -19,6 +19,8 @@ export interface WindowManagerOptions {
   mainDist: string
   rendererDist: string
   devServerUrl?: string
+  /** Invoked when the user closes the homepage window (not on teardown). */
+  onHomepageClosed?: () => void
 }
 
 export class WindowManager {
@@ -194,6 +196,9 @@ export class WindowManager {
         this.homepageWindow = null
       }
       this.rememberDestroyedSnapshot('homepage')
+      if (!this.destroyed) {
+        this.options.onHomepageClosed?.()
+      }
     })
 
     return window

@@ -202,8 +202,11 @@ const bridge: CodexlyDesktopBridgeV1 = Object.freeze({
   openHome: async () => {
     await invokeProduct({ type: 'window.openHome' })
   },
-  toggleOverlay: async () => {
-    await invokeProduct({ type: 'window.toggleOverlay' })
+  toggleOverlay: async (preserveSession?: boolean) => {
+    await invokeProduct({
+      type: 'window.toggleOverlay',
+      ...(preserveSession === undefined ? {} : { preserveSession }),
+    })
   },
   resizeOverlay: async (width: number, height: number) => {
     await invokeProduct({ type: 'window.resizeOverlay', width, height })

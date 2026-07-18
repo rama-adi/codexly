@@ -46,7 +46,12 @@ export const ProductCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('attachments.discard'), attachmentId: IdSchema }).strict(),
   z.object({ type: z.literal('attachments.clear') }).strict(),
   z.object({ type: z.literal('window.openHome') }).strict(),
-  z.object({ type: z.literal('window.toggleOverlay') }).strict(),
+  z
+    .object({
+      type: z.literal('window.toggleOverlay'),
+      preserveSession: z.boolean().optional(),
+    })
+    .strict(),
   z.object({ type: z.literal('window.resizeOverlay'), width: z.number().int().min(320).max(1200), height: z.number().int().min(48).max(1200) }).strict(),
 ])
 
@@ -117,6 +122,13 @@ export const ProductEventSchema = z.discriminatedUnion('type', [
       activityId: z.string().min(1).max(256),
       text: z.string(),
       preliminary: z.boolean(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('overlay.opened'),
+      fresh: z.boolean(),
+      sessionId: IdSchema.nullable(),
     })
     .strict(),
   z.object({ type: z.literal('sessions.changed') }).strict(),

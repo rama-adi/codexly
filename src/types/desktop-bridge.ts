@@ -50,7 +50,7 @@ export interface CodexlyDesktopBridgeV1 {
   discardAttachment(attachmentId: string): Promise<boolean>
   clearAttachments(): Promise<void>
   openHome(): Promise<void>
-  toggleOverlay(): Promise<void>
+  toggleOverlay(preserveSession?: boolean): Promise<void>
   resizeOverlay(width: number, height: number): Promise<void>
   onProductEvent(listener: (event: ProductEvent) => void): () => void
 }
