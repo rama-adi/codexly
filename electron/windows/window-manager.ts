@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron'
+import { app, BrowserWindow } from 'electron'
 import path from 'node:path'
 
 import { logger } from '../shared/logger'
@@ -85,6 +85,10 @@ export class WindowManager {
     // one always dismisses the other so they can never be displayed together.
     void this.hideOverlay()
 
+    // The homepage is a normal app window, so the dock icon belongs on screen
+    // while it is the active surface.
+    this.setDockVisible(true)
+
     if (window.isMinimized()) {
       window.restore()
     }
@@ -115,6 +119,11 @@ export class WindowManager {
       if (homepage?.isVisible()) {
         homepage.hide()
       }
+
+      // The overlay is a floating HUD, not a regular app: drop the dock icon
+      // (and the menu bar) while it is the active surface so it reads as an
+      // accessory rather than a windowed application.
+      this.setDockVisible(false)
 
       if (window.isVisible()) {
         this.applyOverlayTransition({ type: 'shown' }, window)
@@ -464,6 +473,28 @@ export class WindowManager {
     )
     this.overlayTransitionQueue = queuedTransition.catch(() => undefined)
     return queuedTransition
+  }
+
+  /**
+   * Shows or hides the macOS dock icon. Hiding it switches the app to the
+   * "accessory" activation policy, which also removes the menu bar — so the
+   * overlay presents as a floating HUD while the homepage keeps a normal
+   * windowed-app presence. No-op off macOS, where there is no dock.
+   */
+  private setDockVisible(visible: boolean): void {
+    if (process.platform !== 'darwin' || !app.dock) {
+      return
+    }
+    const isVisible = app.dock.isVisible()
+    if (visible === isVisible) {
+      return
+    }
+    log.info('setDockVisible', { visible })
+    if (visible) {
+      void app.dock.show()
+    } else {
+      app.dock.hide()
+    }
   }
 
   private get preloadPath(): string {

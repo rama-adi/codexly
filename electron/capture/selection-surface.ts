@@ -15,6 +15,9 @@ import {
   type CaptureTarget,
   type Point,
 } from './selection-models'
+import { logger } from '../shared/logger'
+
+const log = logger.child('selection')
 
 // Bundled into dist-electron alongside selection-preload.mjs.
 const selectionPreloadPath = path.join(
@@ -94,6 +97,11 @@ export class SelectionSurfaceController {
     displays: readonly CaptureDisplay[],
     signal: AbortSignal,
   ): Promise<SelectionSurfaceResult> {
+    log.info('select requested', {
+      displays: displays.length,
+      aborted: signal.aborted,
+      busy: Boolean(this.#active),
+    })
     if (signal.aborted || displays.length === 0 || this.#active) {
       return Promise.resolve('cancelled')
     }
@@ -177,6 +185,11 @@ export class SelectionSurfaceController {
       maximizable: false,
       fullscreenable: false,
       show: false,
+      // A macOS non-activating panel can be focused (to receive the drag and the
+      // Esc key) without activating the Electron app. Without this, focusing the
+      // selector makes Codexly the active app and macOS never returns focus to
+      // the app the user was working in once the selector closes.
+      ...(process.platform === 'darwin' ? { type: 'panel' as const } : {}),
       webPreferences: {
         backgroundThrottling: false,
         contextIsolation: true,
@@ -273,7 +286,14 @@ export class SelectionSurfaceController {
       active.pending.delete(entry.display.id)
       active.ready.add(entry.display.id)
       entry.window.showInactive()
-      if (entry.display.id === active.focusDisplayId) entry.window.focus()
+      const takesFocus = entry.display.id === active.focusDisplayId
+      log.debug('activated selector window', {
+        displayId: entry.display.id,
+        takesFocus,
+        ready: active.ready.size,
+        pending: active.pending.size,
+      })
+      if (takesFocus) entry.window.focus()
     } catch {
       active.pending.delete(entry.display.id)
       active.ready.delete(entry.display.id)
@@ -305,11 +325,18 @@ export class SelectionSurfaceController {
 
   #finish(active: ActiveSelection, result: SelectionSurfaceResult): void {
     if (active.settled || this.#active !== active) return
+    log.info('select finished', {
+      result: result === 'cancelled' ? 'cancelled' : 'selection',
+      windows: this.#windows.size,
+    })
     active.settled = true
     this.#active = null
     active.signal.removeEventListener('abort', active.cancel)
     for (const port of active.ports) port.close()
     active.ports.clear()
+    // Blur before hiding so a macOS panel yields key status; because the
+    // selector is a non-activating panel it never activated the Electron app,
+    // so key focus falls back to the app the user was working in.
     for (const entry of this.#windows.values()) {
       if (!entry.window.isDestroyed()) {
         entry.window.blur()

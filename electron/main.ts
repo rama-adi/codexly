@@ -1,4 +1,4 @@
-import { app, screen, type Tray } from 'electron'
+import { app, Menu, screen, type Tray } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -87,6 +87,9 @@ app.on('before-quit', (event) => {
 
 void app.whenReady().then(async () => {
   log.info('App ready — bootstrapping', { platform: process.platform, packaged: app.isPackaged })
+  // No application menu: the app is driven entirely by the overlay HUD, the
+  // homepage window, and the tray. This removes the default Electron menu bar.
+  Menu.setApplicationMenu(null)
   const userDataPath = app.getPath('userData')
   const settingsStore = new SettingsStore({ userDataPath })
   productController = await ProductController.create({
