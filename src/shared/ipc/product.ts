@@ -107,6 +107,7 @@ export const ProductEventSchema = z.discriminatedUnion('type', [
     .object({
       type: z.literal('tool.status'),
       sessionId: IdSchema,
+      turnId: IdSchema,
       origin: TurnOriginSchema,
       activityId: z.string().min(1).max(256).optional(),
       name: z.string().min(1).max(256),
@@ -118,6 +119,7 @@ export const ProductEventSchema = z.discriminatedUnion('type', [
     .object({
       type: z.literal('tool.output'),
       sessionId: IdSchema,
+      turnId: IdSchema,
       origin: TurnOriginSchema,
       activityId: z.string().min(1).max(256),
       text: z.string(),

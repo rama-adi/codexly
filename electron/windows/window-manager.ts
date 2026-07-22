@@ -115,8 +115,22 @@ export class WindowManager {
       }
 
       this.applyOverlayTransition({ type: 'hide-requested' }, window)
+      // A focusable macOS panel can become the key window after the user types
+      // into it even though it was initially shown with showInactive(). Yield
+      // that key focus before hiding so the previously used app becomes key
+      // again instead of being left with an inactive-looking title bar.
+      if (window.isFocused()) {
+        window.blur()
+      }
       window.hide()
     })
+  }
+
+  releaseOverlayFocus(): void {
+    const window = this.getWindow('overlay')
+    if (window?.isFocused()) {
+      window.blur()
+    }
   }
 
   setOverlayStreaming(streaming: boolean): Promise<void> {
@@ -341,6 +355,10 @@ export class WindowManager {
     }
 
     const snapshot = this.readSnapshot(role, window)
+    const previous = this.latestSnapshots.get(role)
+    if (previous && snapshotsEqual(previous, snapshot)) {
+      return
+    }
     this.latestSnapshots.set(role, snapshot)
     for (const listener of this.snapshotListeners) {
       listener(snapshot)
@@ -403,4 +421,23 @@ export class WindowManager {
       throw new Error('WindowManager has been destroyed')
     }
   }
+}
+
+function snapshotsEqual(left: WindowSnapshot, right: WindowSnapshot): boolean {
+  const leftBounds = left.bounds
+  const rightBounds = right.bounds
+  return (
+    left.role === right.role &&
+    left.visible === right.visible &&
+    left.focused === right.focused &&
+    left.minimized === right.minimized &&
+    left.maximized === right.maximized &&
+    left.fullScreen === right.fullScreen &&
+    left.destroyed === right.destroyed &&
+    left.overlayState === right.overlayState &&
+    leftBounds?.x === rightBounds?.x &&
+    leftBounds?.y === rightBounds?.y &&
+    leftBounds?.width === rightBounds?.width &&
+    leftBounds?.height === rightBounds?.height
+  )
 }

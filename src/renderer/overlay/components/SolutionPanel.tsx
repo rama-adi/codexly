@@ -2,6 +2,7 @@ import { Copy, X } from 'lucide-react'
 import { useState } from 'react'
 
 import type { ToolActivity } from '../types'
+import { LoadingIndicator } from './LoadingIndicator'
 import { ThinkingBlock } from './ThinkingBlock'
 import { ToolActivityCard } from './ToolActivityCard'
 
@@ -58,11 +59,14 @@ export function SolutionPanel({
         <ThinkingBlock text={reasoning} active={streaming && !answer} />
 
         {isEmpty ? (
-          <div className="ov-shimmer-block" aria-hidden>
-            <span className="ov-shimmer-line" style={{ width: '82%' }} />
-            <span className="ov-shimmer-line" style={{ width: '64%' }} />
-            <span className="ov-shimmer-line" style={{ width: '71%' }} />
-          </div>
+          <>
+            <LoadingIndicator label={`${modelLabel} is thinking…`} />
+            <div className="ov-shimmer-block" aria-hidden>
+              <span className="ov-shimmer-line" style={{ width: '82%' }} />
+              <span className="ov-shimmer-line" style={{ width: '64%' }} />
+              <span className="ov-shimmer-line" style={{ width: '71%' }} />
+            </div>
+          </>
         ) : (
           <div className="ov-answer">
             {answer || 'No answer received.'}

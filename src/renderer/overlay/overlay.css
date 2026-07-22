@@ -638,7 +638,19 @@
   border-radius: var(--ov-radius-sm);
   background: rgba(0, 0, 0, 0.28);
   overflow-y: auto;
-  scroll-behavior: smooth;
+}
+
+.ov-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ov-text-dim);
+  font-size: 11px;
+}
+
+.ov-loading svg {
+  width: 13px;
+  height: 13px;
 }
 
 .ov-chat-empty {

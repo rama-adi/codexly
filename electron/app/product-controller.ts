@@ -90,6 +90,7 @@ export class ProductController {
   readonly #userDataPath: string
   #runtimeError: string | null = null
   #screenAccessEnsured = false
+  #warmup: { key: string; promise: Promise<void> } | null = null
 
   static async create(options: ProductControllerOptions): Promise<ProductController> {
     const controller = new ProductController(options)
@@ -260,6 +261,10 @@ export class ProductController {
         },
       },
     })
+
+    // Spawn and initialize the shared app-server in the background so the
+    // first user turn normally arrives on an already-warm connection.
+    void this.#warmRuntime()
   }
 
   async handle(command: ProductCommand, role: WindowRole): Promise<unknown> {
@@ -272,9 +277,11 @@ export class ProductController {
         return this.#listModels()
       case 'auth.useChatGpt':
         await this.#credentials.useChatGptLocalLogin()
+        void this.#warmRuntime()
         return this.#runtimeStatus()
       case 'auth.setApiKey':
         await this.#credentials.setApiKey(command.apiKey, { persist: command.persist })
+        void this.#warmRuntime()
         return this.#runtimeStatus()
       case 'settings.get':
         return this.#settings.load()
@@ -298,12 +305,20 @@ export class ProductController {
         this.#requireHomepage(role)
         const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
         if (result.canceled || !result.filePaths[0]) return null
-        return this.#workspaces.registerApprovedPath(result.filePaths[0])
+        const workspace = await this.#workspaces.registerApprovedPath(result.filePaths[0])
+        void this.#warmRuntime()
+        return workspace
       }
-      case 'workspaces.select':
-        return this.#workspaces.select(command.workspaceId)
-      case 'workspaces.remove':
-        return this.#workspaces.remove(command.workspaceId)
+      case 'workspaces.select': {
+        const workspace = await this.#workspaces.select(command.workspaceId)
+        void this.#warmRuntime()
+        return workspace
+      }
+      case 'workspaces.remove': {
+        const removed = await this.#workspaces.remove(command.workspaceId)
+        if (removed) void this.#warmRuntime()
+        return removed
+      }
       case 'conversation.send':
         return this.#send(command, role === 'homepage' ? 'homepage' : 'overlay')
       case 'conversation.stop':
@@ -333,7 +348,12 @@ export class ProductController {
         return null
       case 'window.resizeOverlay': {
         const overlay = this.#windowManager.getWindow('overlay')
-        if (overlay) overlay.setContentSize(command.width, command.height)
+        if (overlay) {
+          const [width, height] = overlay.getContentSize()
+          if (width !== command.width || height !== command.height) {
+            overlay.setContentSize(command.width, command.height)
+          }
+        }
         return null
       }
     }
@@ -356,6 +376,11 @@ export class ProductController {
     if (!this.#runtime) throw new Error(this.#runtimeError ?? 'Codex runtime is unavailable.')
     const workspace = await this.#workspaces.getSelected()
     if (!workspace) throw new Error('Select a workspace before sending a message.')
+    if (origin === 'overlay') {
+      // Once the prompt has crossed the bridge, the user no longer needs the
+      // overlay to own keyboard focus while the answer streams.
+      this.#windowManager.releaseOverlayFocus()
+    }
     const session = command.sessionId
       ? await this.#requireSession(command.sessionId)
       : (await this.#sessions.getActive()) ??
@@ -405,7 +430,15 @@ export class ProductController {
       settings: toPromptSettings(settings),
     })
     this.#activeTurns.set(handle.turnId, { sessionId: session.id, abort: handle.abort })
-    void handle.completion.finally(() => this.#activeTurns.delete(handle.turnId))
+    if (origin === 'overlay') {
+      await this.#windowManager.setOverlayStreaming(true)
+    }
+    void handle.completion.finally(() => {
+      this.#activeTurns.delete(handle.turnId)
+      if (origin === 'overlay') {
+        void this.#windowManager.setOverlayStreaming(false)
+      }
+    })
     return { sessionId: session.id, turnId: handle.turnId }
   }
 
@@ -451,14 +484,27 @@ export class ProductController {
     return this.#runtime.testConnection(await this.#providerRevisionInput())
   }
 
+  async #warmRuntime(): Promise<void> {
+    if (!this.#runtime) return
+    const input = await this.#providerRevisionInput()
+    const key = JSON.stringify({
+      workspacePath: input.workspacePath,
+      credentialRevision: this.#credentials.getStatus().revision,
+    })
+    if (this.#warmup?.key === key) {
+      return this.#warmup.promise
+    }
+    const promise = this.#runtime.warm(input).catch(() => undefined)
+    this.#warmup = { key, promise }
+    await promise
+  }
+
   async #providerRevisionInput() {
     const workspace = await this.#workspaces.getSelected()
-    const settings = await this.#settings.load().catch(() => null)
     return {
       workspacePath: workspace?.canonicalPath ?? os.homedir(),
       workspaceRevision: workspace ? Number(new Date(workspace.updatedAt)) : 0,
       configRevision: this.#credentials.getStatus().revision,
-      webSearch: settings?.assistant.webSearchEnabled ?? false,
     }
   }
 
@@ -666,6 +712,7 @@ export class ProductController {
       this.#publish({
         type: 'tool.status',
         sessionId,
+        turnId,
         origin,
         activityId: event.activity.id,
         name: event.activity.title ?? event.activity.kind,
@@ -678,6 +725,7 @@ export class ProductController {
       this.#publish({
         type: 'tool.output',
         sessionId,
+        turnId,
         origin,
         activityId: event.activityId,
         text: truncateOutput(event.text),

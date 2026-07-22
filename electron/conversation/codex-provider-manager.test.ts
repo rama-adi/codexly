@@ -87,13 +87,13 @@ describe('CodexProviderManager', () => {
       sandboxPolicy: 'read-only',
       threadMode: 'persistent',
       persistExtendedHistory: true,
-      includeRawChunks: true,
     })
+    expect(settings[0].defaultSettings).not.toHaveProperty('includeRawChunks')
   })
 
-  it('reuses a provider until auth, workspace, or config revision changes', async () => {
+  it('reuses a provider across metadata revisions and rotates for cwd or auth changes', async () => {
     const credentials = createCredentials()
-    const providers = [fakeProvider(), fakeProvider(), fakeProvider(), fakeProvider()]
+    const providers = [fakeProvider(), fakeProvider(), fakeProvider()]
     let index = 0
     const manager = new CodexProviderManager({
       credentials,
@@ -111,47 +111,52 @@ describe('CodexProviderManager', () => {
     const second = await manager.getProvider(input)
     expect(first.provider).toBe(providers[0])
     expect(second.provider).toBe(providers[0])
-    const workspaceChanged = await manager.getProvider({
+    const revisionsChanged = await manager.getProvider({
       ...input,
       workspaceRevision: 2,
+      configRevision: 2,
     })
-    expect(workspaceChanged.provider).toBe(providers[1])
+    expect(revisionsChanged.provider).toBe(providers[0])
+    expect(providers[0].close).not.toHaveBeenCalled()
+
+    const cwdChanged = await manager.getProvider({
+      ...input,
+      workspacePath: '/other-workspace',
+      workspaceRevision: 2,
+      configRevision: 2,
+    })
+    expect(cwdChanged.provider).toBe(providers[1])
     expect(providers[0].close).not.toHaveBeenCalled()
     await first.release()
     expect(providers[0].close).not.toHaveBeenCalled()
     await second.release()
+    expect(providers[0].close).not.toHaveBeenCalled()
+    await revisionsChanged.release()
     expect(providers[0].close).toHaveBeenCalledOnce()
 
-    const configChanged = await manager.getProvider({
-      ...input,
-      workspaceRevision: 2,
-      configRevision: 2,
-    })
-    expect(configChanged.provider).toBe(providers[2])
     await credentials.setApiKey('sk-revision', { persist: false })
     const authChanged = await manager.getProvider({
       ...input,
+      workspacePath: '/other-workspace',
       workspaceRevision: 2,
       configRevision: 2,
     })
-    expect(authChanged.provider).toBe(providers[3])
+    expect(authChanged.provider).toBe(providers[2])
 
-    await workspaceChanged.release()
-    await configChanged.release()
+    await cwdChanged.release()
     await authChanged.release()
   })
 
-  it('bakes web search into the config overrides and rotates the provider when it changes', async () => {
+  it('keeps web search turn-scoped without rotating the provider', async () => {
     const settings: CodexAppServerProviderSettings[] = []
-    const providers = [fakeProvider(), fakeProvider()]
-    let index = 0
+    const provider = fakeProvider()
     const manager = new CodexProviderManager({
       credentials: createCredentials(),
       onToolRequestUserInput: async () => ({ answers: {} }),
       codexPath: '/codex',
       createProvider: (value) => {
         settings.push(value)
-        return providers[index++]
+        return provider
       },
     })
     const input = { workspacePath: '/workspace', workspaceRevision: 1, configRevision: 1 }
@@ -160,15 +165,12 @@ describe('CodexProviderManager', () => {
     const reused = await manager.getProvider({ ...input, webSearch: false })
     expect(reused.provider).toBe(first.provider)
     expect(settings[0].defaultSettings?.configOverrides).toEqual({
-      'tools.web_search': false,
       'tools.image_generation': false,
     })
 
     const searchEnabled = await manager.getProvider({ ...input, webSearch: true })
-    expect(searchEnabled.provider).toBe(providers[1])
-    expect(settings[1].defaultSettings?.configOverrides).toMatchObject({
-      'tools.web_search': true,
-    })
+    expect(searchEnabled.provider).toBe(provider)
+    expect(settings).toHaveLength(1)
 
     await first.release()
     await reused.release()

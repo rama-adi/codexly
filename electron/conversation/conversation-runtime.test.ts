@@ -1,6 +1,7 @@
 import type { LanguageModel } from 'ai'
 import type {
   CodexAppServerProvider,
+  CodexAppServerProviderOptions,
   CodexAppServerSession,
   CodexAppServerSettings,
 } from 'ai-sdk-provider-codex-cli'
@@ -22,6 +23,17 @@ function asyncParts(parts: Array<Record<string, unknown>>) {
       }
     },
   }
+}
+
+function appServerOptions(
+  stream: ReturnType<typeof vi.fn>,
+  index = 0,
+): CodexAppServerProviderOptions {
+  const call = (stream.mock.calls as unknown as Array<[Record<string, unknown>]>)[index]?.[0]
+  const providerOptions = call?.providerOptions as
+    | Record<string, CodexAppServerProviderOptions>
+    | undefined
+  return providerOptions?.['codex-app-server'] ?? {}
 }
 
 function createProvider() {
@@ -90,16 +102,7 @@ describe('ConversationRuntime', () => {
     const { provider, settings } = createProvider()
     const stores = createStores('thr-existing')
     const stream = vi.fn(() => ({
-      stream: asyncParts([
-        {
-          type: 'raw',
-          rawValue: {
-            method: 'thread/started',
-            params: { thread: { id: 'thr-existing' } },
-          },
-        },
-        { type: 'text-delta', id: 'answer', text: 'Done.' },
-      ]),
+      stream: asyncParts([{ type: 'text-delta', id: 'answer', text: 'Done.' }]),
       finishReason: Promise.resolve('stop'),
     }))
     const runtime = new ConversationRuntime({
@@ -114,15 +117,26 @@ describe('ConversationRuntime', () => {
     const handle = await runtime.startTurn(baseInput)
     expect(await handle.completion).toBe('completed')
 
-    expect(settings[0]).toMatchObject({ resume: 'thr-existing' })
-    expect(settings[0].developerInstructions).toContain('read-only')
+    expect(settings[0].onSessionCreated).toEqual(expect.any(Function))
+    expect(settings[0]).not.toHaveProperty('resume')
+    expect(settings[0]).not.toHaveProperty('developerInstructions')
+    expect(appServerOptions(stream)).toMatchObject({
+      resume: 'thr-existing',
+      configOverrides: {
+        'tools.web_search': false,
+        'tools.image_generation': false,
+      },
+    })
+    expect(appServerOptions(stream).developerInstructions).toContain('read-only')
     expect(stream).toHaveBeenCalledWith(
       expect.objectContaining({
         maxRetries: 0,
-        include: { rawChunks: true },
       }),
     )
-    expect(stores.events.map((event) => event.sequence)).toEqual([1, 2, 3, 4])
+    const streamOptions = (stream.mock.calls as unknown as Array<[Record<string, unknown>]>)[0]?.[0]
+    expect(streamOptions).not.toHaveProperty('include')
+    expect(stores.savedThreads).toEqual([])
+    expect(stores.events.map((event) => event.sequence)).toEqual([1, 2, 3])
     expect(stores.events[stores.events.length - 1]?.event).toEqual({
       type: 'turn.completed',
       finishReason: 'stop',
@@ -159,6 +173,36 @@ describe('ConversationRuntime', () => {
     await handle.completion
 
     expect(stores.savedThreads).toEqual(['thr-new'])
+  })
+
+  it('does not rewrite a persisted thread id when a resumed session is created', async () => {
+    const { provider, settings } = createProvider()
+    const stores = createStores('thr-existing')
+    const runtime = new ConversationRuntime({
+      providers: createManager(provider),
+      threads: stores.threads,
+      events: stores.eventStore,
+      stream: (() => ({
+        stream: asyncParts([]),
+        finishReason: Promise.resolve('stop'),
+      })) as unknown as typeof import('ai').streamText,
+      generateTurnId: () => 'turn-1',
+    })
+
+    const handle = await runtime.startTurn(baseInput)
+    while (!settings[0]) {
+      await Promise.resolve()
+    }
+    await settings[0].onSessionCreated?.({
+      threadId: 'thr-existing',
+      turnId: null,
+      injectMessage: async () => undefined,
+      interrupt: async () => undefined,
+      isActive: () => false,
+    })
+    await handle.completion
+
+    expect(stores.savedThreads).toEqual([])
   })
 
   it('aborts through both AbortSignal and session interrupt and emits one terminal event', async () => {
@@ -263,69 +307,71 @@ describe('ConversationRuntime', () => {
   })
 
   it('clears a stale persisted thread and retries the same turn once', async () => {
-    const { provider, settings } = createProvider()
+    const { provider } = createProvider()
     const stores = createStores('thr-stale')
     let calls = 0
+    const stream = vi.fn(() => {
+      calls += 1
+      return {
+        stream: {
+          async *[Symbol.asyncIterator]() {
+            if (calls === 1) {
+              throw new Error("Thread 'thr-stale' not found after server restart")
+            }
+            yield { type: 'text-delta', text: 'recovered' }
+          },
+        },
+        finishReason: Promise.resolve('stop'),
+      }
+    })
     const runtime = new ConversationRuntime({
       providers: createManager(provider),
       threads: stores.threads,
       events: stores.eventStore,
-      stream: (() => {
-        calls += 1
-        return {
-          stream: {
-            async *[Symbol.asyncIterator]() {
-              if (calls === 1) {
-                throw new Error("Thread 'thr-stale' not found after server restart")
-              }
-              yield { type: 'text-delta', text: 'recovered' }
-            },
-          },
-          finishReason: Promise.resolve('stop'),
-        }
-      }) as unknown as typeof import('ai').streamText,
+      stream: stream as unknown as typeof import('ai').streamText,
       generateTurnId: () => 'turn-retry',
     })
 
     const handle = await runtime.startTurn(baseInput)
     expect(await handle.completion).toBe('completed')
     expect(calls).toBe(2)
-    expect(settings[0].resume).toBe('thr-stale')
-    expect(settings[1].resume).toBeUndefined()
+    expect(appServerOptions(stream, 0).resume).toBe('thr-stale')
+    expect(appServerOptions(stream, 1).resume).toBeUndefined()
     expect(stores.savedThreads).toContain(null)
   })
 
   it('recovers from the codex 0.14x "no rollout found" stale-thread wording', async () => {
-    const { provider, settings } = createProvider()
+    const { provider } = createProvider()
     const stores = createStores('thr-rollout')
     let calls = 0
+    const stream = vi.fn(() => {
+      calls += 1
+      return {
+        stream: {
+          async *[Symbol.asyncIterator]() {
+            if (calls === 1) {
+              throw new Error(
+                'JSON-RPC error -32600: no rollout found for thread id thr-rollout',
+              )
+            }
+            yield { type: 'text-delta', text: 'recovered' }
+          },
+        },
+        finishReason: Promise.resolve('stop'),
+      }
+    })
     const runtime = new ConversationRuntime({
       providers: createManager(provider),
       threads: stores.threads,
       events: stores.eventStore,
-      stream: (() => {
-        calls += 1
-        return {
-          stream: {
-            async *[Symbol.asyncIterator]() {
-              if (calls === 1) {
-                throw new Error(
-                  'JSON-RPC error -32600: no rollout found for thread id thr-rollout',
-                )
-              }
-              yield { type: 'text-delta', text: 'recovered' }
-            },
-          },
-          finishReason: Promise.resolve('stop'),
-        }
-      }) as unknown as typeof import('ai').streamText,
+      stream: stream as unknown as typeof import('ai').streamText,
       generateTurnId: () => 'turn-rollout-retry',
     })
 
     const handle = await runtime.startTurn(baseInput)
     expect(await handle.completion).toBe('completed')
     expect(calls).toBe(2)
-    expect(settings[1].resume).toBeUndefined()
+    expect(appServerOptions(stream, 1).resume).toBeUndefined()
     expect(stores.savedThreads).toContain(null)
   })
 
@@ -361,19 +407,22 @@ describe('ConversationRuntime', () => {
   it('uses one stable session callback per conversation', async () => {
     const { provider, settings } = createProvider()
     const stores = createStores()
+    const stream = vi.fn(() => ({
+      stream: asyncParts([]),
+      finishReason: Promise.resolve('stop'),
+    }))
     const runtime = new ConversationRuntime({
       providers: createManager(provider),
       threads: stores.threads,
       events: stores.eventStore,
-      stream: (() => ({
-        stream: asyncParts([]),
-        finishReason: Promise.resolve('stop'),
-      })) as unknown as typeof import('ai').streamText,
+      stream: stream as unknown as typeof import('ai').streamText,
       generateTurnId: () => `turn-${settings.length}`,
     })
 
     await (await runtime.startTurn(baseInput)).completion
-    await (await runtime.startTurn({ ...baseInput, message: 'again' })).completion
+    await (
+      await runtime.startTurn({ ...baseInput, message: 'again', webSearch: true })
+    ).completion
     await (
       await runtime.startTurn({
         ...baseInput,
@@ -384,29 +433,33 @@ describe('ConversationRuntime', () => {
 
     expect(settings[0].onSessionCreated).toBe(settings[1].onSessionCreated)
     expect(settings[2].onSessionCreated).not.toBe(settings[0].onSessionCreated)
+    expect(settings.every((value) => value.configOverrides === undefined)).toBe(true)
+    expect(appServerOptions(stream, 0).configOverrides?.['tools.web_search']).toBe(false)
+    expect(appServerOptions(stream, 1).configOverrides?.['tools.web_search']).toBe(true)
   })
 
-  it('threads per-turn reasoning effort into the model factory settings', async () => {
-    const { provider, settings } = createProvider()
+  it('threads per-turn reasoning effort through request-scoped provider options', async () => {
+    const { provider } = createProvider()
     const stores = createStores()
+    const stream = vi.fn(() => ({
+      stream: asyncParts([]),
+      finishReason: Promise.resolve('stop'),
+    }))
     const runtime = new ConversationRuntime({
       providers: createManager(provider),
       threads: stores.threads,
       events: stores.eventStore,
-      stream: (() => ({
-        stream: asyncParts([]),
-        finishReason: Promise.resolve('stop'),
-      })) as unknown as typeof import('ai').streamText,
+      stream: stream as unknown as typeof import('ai').streamText,
       generateTurnId: () => 'turn-1',
     })
 
     await (await runtime.startTurn({ ...baseInput, reasoningEffort: 'medium' })).completion
 
-    expect(settings[0].effort).toBe('medium')
+    expect(appServerOptions(stream).effort).toBe('medium')
   })
 
   it('retries a minimal-effort turn at low effort on a tool-incompatibility error', async () => {
-    const { provider, settings } = createProvider()
+    const { provider } = createProvider()
     const stores = createStores()
     let calls = 0
     const stream = vi.fn(() => {
@@ -441,8 +494,8 @@ describe('ConversationRuntime', () => {
     const handle = await runtime.startTurn({ ...baseInput, reasoningEffort: 'minimal' })
     expect(await handle.completion).toBe('completed')
     expect(stream).toHaveBeenCalledTimes(2)
-    expect(settings[0].effort).toBe('minimal')
-    expect(settings[1].effort).toBe('low')
+    expect(appServerOptions(stream, 0).effort).toBe('minimal')
+    expect(appServerOptions(stream, 1).effort).toBe('low')
   })
 
   it('lists and normalizes Codex models', async () => {
@@ -491,6 +544,28 @@ describe('ConversationRuntime', () => {
         supportedReasoningEfforts: [],
       },
     ])
+  })
+
+  it('warms the shared provider process and releases its lease', async () => {
+    const { provider } = createProvider()
+    const release = vi.fn(async () => undefined)
+    const manager: ConversationProviderManager = {
+      getProvider: vi.fn(async () => ({ provider, release })),
+      dispose: vi.fn(async () => undefined),
+    }
+    ;(provider.listModels as ReturnType<typeof vi.fn>).mockResolvedValue({ models: [] })
+    const stores = createStores()
+    const runtime = new ConversationRuntime({
+      providers: manager,
+      threads: stores.threads,
+      events: stores.eventStore,
+    })
+
+    await runtime.warm(baseInput)
+
+    expect(provider.listModels).toHaveBeenCalledOnce()
+    expect(release).toHaveBeenCalledOnce()
+    expect(manager.dispose).not.toHaveBeenCalled()
   })
 
   it('reports connection success and failure', async () => {

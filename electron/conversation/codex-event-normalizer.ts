@@ -63,7 +63,9 @@ export function normalizeCodexEvent(part: StreamPart): NormalizedCodexEvent[] {
             },
           ]
         : []
-    case 'tool-call':
+    case 'tool-call': {
+      const input = normalizeToolInput(part.input)
+      const title = toolTitle(input)
       return [
         {
           type: 'activity.started',
@@ -71,10 +73,12 @@ export function normalizeCodexEvent(part: StreamPart): NormalizedCodexEvent[] {
             id: stringValue(part.toolCallId, 'unknown-tool'),
             kind: stringValue(part.toolName, 'tool'),
             status: 'running',
-            details: toJsonValue(part.input),
+            ...(title ? { title } : {}),
+            details: toJsonValue(input),
           },
         },
       ]
+    }
     case 'tool-result': {
       const result = toRecord(part.output ?? part.result)
       if (result?.type === 'output-delta' && typeof result.delta === 'string') {
@@ -214,6 +218,34 @@ function normalizeTurnStatus(
 
 function stringValue(value: unknown, fallback: string): string {
   return typeof value === 'string' && value ? value : fallback
+}
+
+function normalizeToolInput(value: unknown): unknown {
+  if (typeof value !== 'string') {
+    return value
+  }
+  try {
+    return JSON.parse(value) as unknown
+  } catch {
+    return value
+  }
+}
+
+function toolTitle(input: unknown): string | undefined {
+  const record = toRecord(input)
+  if (!record) {
+    return undefined
+  }
+  if (typeof record.command === 'string' && record.command.trim()) {
+    return record.command
+  }
+  if (
+    Array.isArray(record.command) &&
+    record.command.every((part) => typeof part === 'string')
+  ) {
+    return record.command.join(' ')
+  }
+  return undefined
 }
 
 function toRecord(value: unknown): Record<string, unknown> | null {

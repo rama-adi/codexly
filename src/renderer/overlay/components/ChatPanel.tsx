@@ -2,6 +2,7 @@ import { Square, X } from 'lucide-react'
 import { type FormEvent, type RefObject, useEffect, useRef } from 'react'
 
 import type { ChatMessage, ToolActivity } from '../types'
+import { LoadingIndicator } from './LoadingIndicator'
 import { ThinkingBlock } from './ThinkingBlock'
 import { ToolActivityCard } from './ToolActivityCard'
 
@@ -15,6 +16,7 @@ export function ChatPanel({
   activities,
   answerHeight,
   chatInput,
+  canStop,
   inputRef,
   onChatInputChange,
   onSend,
@@ -30,6 +32,7 @@ export function ChatPanel({
   activities: ToolActivity[]
   answerHeight: number
   chatInput: string
+  canStop: boolean
   inputRef: RefObject<HTMLInputElement>
   onChatInputChange(value: string): void
   onSend(event: FormEvent): void
@@ -37,10 +40,22 @@ export function ChatPanel({
   onClose(): void
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
+  const scrollFrameRef = useRef<number>()
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
-  }, [messages.length, answer])
+    if (scrollFrameRef.current !== undefined) cancelAnimationFrame(scrollFrameRef.current)
+    scrollFrameRef.current = requestAnimationFrame(() => {
+      const element = scrollRef.current
+      if (element) element.scrollTop = element.scrollHeight
+      scrollFrameRef.current = undefined
+    })
+    return () => {
+      if (scrollFrameRef.current !== undefined) {
+        cancelAnimationFrame(scrollFrameRef.current)
+        scrollFrameRef.current = undefined
+      }
+    }
+  }, [messages.length, answer, reasoning, activities.length, streaming])
 
   const isEmpty = messages.length === 0 && !answer
 
@@ -81,8 +96,8 @@ export function ChatPanel({
         {streaming && (
           <div className="ov-bubble ov-bubble--assistant">
             <ThinkingBlock text={reasoning} active={streaming && !answer} />
-            {answer || (reasoning ? '' : `${modelLabel} is thinking…`)}
-            {(answer || !reasoning) && <span className="ov-cursor" />}
+            {answer || (reasoning ? '' : <LoadingIndicator label={`${modelLabel} is thinking…`} />)}
+            {answer && <span className="ov-cursor" />}
           </div>
         )}
       </div>
@@ -96,7 +111,13 @@ export function ChatPanel({
           disabled={streaming}
         />
         {streaming ? (
-          <button type="button" className="ov-stop" onClick={onStop} aria-label="Stop generating">
+          <button
+            type="button"
+            className="ov-stop"
+            onClick={onStop}
+            aria-label="Stop generating"
+            disabled={!canStop}
+          >
             <Square size={11} />
           </button>
         ) : (

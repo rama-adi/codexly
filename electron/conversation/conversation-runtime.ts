@@ -1,5 +1,6 @@
-import { streamText, type LanguageModel } from 'ai'
+import { streamText, type JSONValue, type LanguageModel } from 'ai'
 import type {
+  CodexAppServerProviderOptions,
   CodexAppServerSession,
   ReasoningEffort,
 } from 'ai-sdk-provider-codex-cli'
@@ -89,6 +90,7 @@ export class ConversationRuntime {
   readonly #startLocks = new Map<string, Promise<void>>()
   #nextGeneration = 0
   readonly #sessions = new Map<string, CodexAppServerSession>()
+  readonly #persistedThreadIds = new Map<string, string | null>()
   readonly #sessionCallbacks = new Map<
     string,
     (session: CodexAppServerSession) => Promise<void>
@@ -143,7 +145,10 @@ export class ConversationRuntime {
           if (!this.#isCurrent(input.conversationId, active)) {
             return
           }
-          await this.#threads.setThreadId(input.conversationId, threadId)
+          if (this.#persistedThreadIds.get(input.conversationId) !== threadId) {
+            await this.#threads.setThreadId(input.conversationId, threadId)
+            this.#persistedThreadIds.set(input.conversationId, threadId)
+          }
           const session = this.#sessions.get(input.conversationId)
           if (session?.threadId === threadId) {
             controller.attachSession(session, generation)
@@ -200,6 +205,20 @@ export class ConversationRuntime {
     }
   }
 
+  /**
+   * Starts and initializes the shared app-server process before the first turn.
+   * The provider keeps its current client alive after this short lease is
+   * released, so later threads avoid the process/handshake cold start.
+   */
+  async warm(input: ProviderRevisionInput): Promise<void> {
+    const lease = await this.#providers.getProvider(input)
+    try {
+      await lease.provider.listModels()
+    } finally {
+      await lease.release()
+    }
+  }
+
   /** Confirms the Codex provider can be created and answer a lightweight request. */
   async testConnection(input: ProviderRevisionInput): Promise<ConnectionTestResult> {
     try {
@@ -224,6 +243,7 @@ export class ConversationRuntime {
     await this.#providers.dispose()
     this.#listeners.clear()
     this.#sessions.clear()
+    this.#persistedThreadIds.clear()
     this.#sessionCallbacks.clear()
   }
 
@@ -240,6 +260,7 @@ export class ConversationRuntime {
       ])
       lease = resolved[0]
       let existingThreadId = resolved[1]
+      this.#persistedThreadIds.set(input.conversationId, existingThreadId)
       const attachmentParts = buildPromptAttachments(input.attachments)
       const existingSession = this.#sessions.get(input.conversationId)
       if (existingThreadId && existingSession?.threadId === existingThreadId) {
@@ -260,12 +281,21 @@ export class ConversationRuntime {
       // effort retry. Every iteration returns, continues on a retry, or throws.
       for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
+          // Keep model-construction settings stable per conversation. In
+          // persistent mode the provider then reuses one language-model/session
+          // wrapper while all wrappers share the provider's single RPC client.
           const model = lease.provider(input.modelId, {
+            onSessionCreated: this.#getSessionCallback(input.conversationId),
+          }) as LanguageModel
+          const providerOptions = {
             ...(existingThreadId ? { resume: existingThreadId } : {}),
             ...(effort ? { effort } : {}),
             developerInstructions: built.developerInstructions,
-            onSessionCreated: this.#getSessionCallback(input.conversationId),
-          }) as LanguageModel
+            configOverrides: {
+              'tools.web_search': input.webSearch ?? false,
+              'tools.image_generation': false,
+            },
+          } satisfies CodexAppServerProviderOptions
           const result = this.#stream({
             model,
             messages: [
@@ -279,7 +309,9 @@ export class ConversationRuntime {
             ],
             maxRetries: 0,
             abortSignal: abortController.signal,
-            include: { rawChunks: true },
+            providerOptions: {
+              'codex-app-server': providerOptions as unknown as Record<string, JSONValue>,
+            },
           })
 
           for await (const part of result.stream) {
@@ -300,6 +332,7 @@ export class ConversationRuntime {
             existingThreadId = null
             this.#sessions.delete(input.conversationId)
             await this.#threads.setThreadId(input.conversationId, null)
+            this.#persistedThreadIds.set(input.conversationId, null)
             continue
           }
           // Some models reject 'minimal' reasoning effort when tools are active.
@@ -343,7 +376,11 @@ export class ConversationRuntime {
         return
       }
       active.controller.attachSession(session, active.controller.generation)
+      if (this.#persistedThreadIds.get(conversationId) === session.threadId) {
+        return
+      }
       await this.#threads.setThreadId(conversationId, session.threadId)
+      this.#persistedThreadIds.set(conversationId, session.threadId)
     }
     this.#sessionCallbacks.set(conversationId, callback)
     return callback

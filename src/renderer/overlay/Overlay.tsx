@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useRef, useState } from 'react'
+import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 
 import { desktopClient } from '../desktop'
 import { CommandBar } from './components/CommandBar'
@@ -6,6 +6,7 @@ import { ChatPanel } from './components/ChatPanel'
 import { ScreenshotQueue } from './components/ScreenshotQueue'
 import { SolutionPanel } from './components/SolutionPanel'
 import './overlay.css'
+import { matchTurnScope, type TurnScope } from './stream-state'
 import type { Attachment, ChatMessage, ModelChoice, ToolActivity, View } from './types'
 
 const FALLBACK_MODELS: ModelChoice[] = [
@@ -19,6 +20,10 @@ export function Overlay() {
   const input = useRef<HTMLInputElement>(null)
   const answerRef = useRef('')
   const reasoningRef = useRef('')
+  const sessionIdRef = useRef<string>()
+  const activeTurnRef = useRef<TurnScope>()
+  const streamFrameRef = useRef<number>()
+  const requestSequenceRef = useRef(0)
 
   const [view, setView] = useState<View>('queue')
   const [attachments, setAttachments] = useState<Attachment[]>([])
@@ -35,6 +40,40 @@ export function Overlay() {
   const [modelId, setModelId] = useState(FALLBACK_MODELS[0].id)
   const [answerHeight, setAnswerHeight] = useState(DEFAULT_ANSWER_HEIGHT)
   const [notice, setNotice] = useState('Screenshot queue ready.')
+
+  const updateSessionId = useCallback((value: string | undefined) => {
+    sessionIdRef.current = value
+    setSessionId(value)
+  }, [])
+
+  const flushStreamRender = useCallback(() => {
+    if (streamFrameRef.current !== undefined) {
+      cancelAnimationFrame(streamFrameRef.current)
+      streamFrameRef.current = undefined
+    }
+    setAnswer(answerRef.current)
+    setReasoning(reasoningRef.current)
+  }, [])
+
+  const queueStreamRender = useCallback(() => {
+    if (streamFrameRef.current !== undefined) return
+    streamFrameRef.current = requestAnimationFrame(() => {
+      streamFrameRef.current = undefined
+      setAnswer(answerRef.current)
+      setReasoning(reasoningRef.current)
+    })
+  }, [])
+
+  const resetTranscript = useCallback(() => {
+    if (streamFrameRef.current !== undefined) {
+      cancelAnimationFrame(streamFrameRef.current)
+      streamFrameRef.current = undefined
+    }
+    answerRef.current = ''
+    reasoningRef.current = ''
+    setAnswer('')
+    setReasoning('')
+  }, [])
 
   // Load canonical settings + available models once on mount.
   useEffect(() => {
@@ -71,16 +110,16 @@ export function Overlay() {
       // into that window; the overlay must not hijack them.
       if ('origin' in event && event.origin === 'homepage') return
       if (event.type === 'overlay.opened') {
-        if (!event.fresh && event.sessionId === sessionId) return
-        answerRef.current = ''
-        reasoningRef.current = ''
-        setAnswer('')
-        setReasoning('')
+        if (!event.fresh && event.sessionId === sessionIdRef.current) return
+        requestSequenceRef.current += 1
+        activeTurnRef.current = undefined
+        resetTranscript()
         setStreaming(false)
+        setBusy(false)
         setActivities([])
         setMessages([])
         setTurnId(undefined)
-        setSessionId(event.sessionId ?? undefined)
+        updateSessionId(event.sessionId ?? undefined)
         if (event.sessionId) {
           // Continuing a session from history: preload its conversation.
           const continuedId = event.sessionId
@@ -88,7 +127,7 @@ export function Overlay() {
           void desktopClient
             .getSession(continuedId)
             .then((session) => {
-              if (!session) return
+              if (!session || sessionIdRef.current !== continuedId) return
               setMessages(
                 session.messages
                   .filter((message) => message.role === 'user' || message.role === 'assistant')
@@ -114,36 +153,51 @@ export function Overlay() {
         setNotice('Screenshot captured.')
       } else if (event.type === 'attachments.cleared') {
         setAttachments([])
-        answerRef.current = ''
-        setAnswer('')
-        reasoningRef.current = ''
-        setReasoning('')
+        requestSequenceRef.current += 1
+        activeTurnRef.current = undefined
+        resetTranscript()
         setStreaming(false)
+        setBusy(false)
         setActivities([])
         setView('queue')
       } else if (event.type === 'transcript.reasoning') {
-        if (sessionId && event.sessionId !== sessionId) return
-        setView((current) => (current === 'chat' ? 'chat' : 'solution'))
+        const scope = matchTurnScope(activeTurnRef.current, event)
+        if (!scope) return
+        activeTurnRef.current = scope
+        if (!sessionIdRef.current) updateSessionId(scope.sessionId)
         reasoningRef.current += event.text
-        setReasoning(reasoningRef.current)
-        setStreaming(true)
+        queueStreamRender()
       } else if (event.type === 'transcript.delta') {
-        if (sessionId && event.sessionId !== sessionId) return
-        setView((current) => (current === 'chat' ? 'chat' : 'solution'))
+        const scope = matchTurnScope(activeTurnRef.current, event)
+        if (!scope) return
+        activeTurnRef.current = scope
+        if (!sessionIdRef.current) updateSessionId(scope.sessionId)
         answerRef.current += event.text
-        setAnswer(answerRef.current)
-        setStreaming(true)
+        queueStreamRender()
       } else if (event.type === 'transcript.complete') {
-        if (sessionId && event.sessionId !== sessionId) return
+        const scope = matchTurnScope(activeTurnRef.current, event)
+        if (!scope) return
+        flushStreamRender()
+        activeTurnRef.current = undefined
+        setTurnId(undefined)
         setStreaming(false)
         setMessages((current) =>
           answerRef.current ? [...current, { role: 'assistant', content: answerRef.current }] : current,
         )
         setNotice('Response complete.')
       } else if (event.type === 'transcript.failed') {
+        const scope = matchTurnScope(activeTurnRef.current, event)
+        if (!scope) return
+        flushStreamRender()
+        activeTurnRef.current = undefined
+        setTurnId(undefined)
         setStreaming(false)
         setNotice(event.message)
       } else if (event.type === 'tool.status') {
+        const scope = matchTurnScope(activeTurnRef.current, event)
+        if (!scope) return
+        activeTurnRef.current = scope
+        if (!sessionIdRef.current) updateSessionId(scope.sessionId)
         const key = event.activityId ?? event.name
         setActivities((current) => {
           const index = current.findIndex((activity) => activity.key === key)
@@ -163,6 +217,10 @@ export function Overlay() {
           return [...current, next]
         })
       } else if (event.type === 'tool.output') {
+        const scope = matchTurnScope(activeTurnRef.current, event)
+        if (!scope) return
+        activeTurnRef.current = scope
+        if (!sessionIdRef.current) updateSessionId(scope.sessionId)
         setActivities((current) =>
           current.map((activity) =>
             activity.activityId === event.activityId ? { ...activity, output: event.text } : activity,
@@ -172,25 +230,41 @@ export function Overlay() {
         setAnswerHeight(event.settings.appearance.answerHeight)
       }
     })
-  }, [sessionId])
+  }, [flushStreamRender, queueStreamRender, resetTranscript, updateSessionId])
+
+  useEffect(
+    () => () => {
+      if (streamFrameRef.current !== undefined) cancelAnimationFrame(streamFrameRef.current)
+    },
+    [],
+  )
 
   useEffect(() => {
     if (!root.current || !desktopClient.available) return
+    let frame: number | undefined
+    let lastWidth = 0
+    let lastHeight = 0
     const resize = () => {
-      if (!root.current) return
-      const width = Math.ceil(Math.min(900, Math.max(360, root.current.scrollWidth)))
-      const height = Math.ceil(Math.min(1000, Math.max(48, root.current.scrollHeight)))
-      void desktopClient.resizeOverlay(width, height)
+      if (frame !== undefined) return
+      frame = requestAnimationFrame(() => {
+        frame = undefined
+        if (!root.current) return
+        const width = Math.ceil(Math.min(900, Math.max(360, root.current.scrollWidth)))
+        const height = Math.ceil(Math.min(1000, Math.max(48, root.current.scrollHeight)))
+        if (width === lastWidth && height === lastHeight) return
+        lastWidth = width
+        lastHeight = height
+        void desktopClient.resizeOverlay(width, height)
+      })
     }
     const observer = new ResizeObserver(resize)
     observer.observe(root.current)
     resize()
-    return () => observer.disconnect()
-  }, [view, attachments.length, answer, messages.length, activities.length])
-
-  useEffect(() => {
-    if (view === 'chat') requestAnimationFrame(() => input.current?.focus())
-  }, [view])
+    return () => {
+      observer.disconnect()
+      if (frame !== undefined) cancelAnimationFrame(frame)
+    }
+  }, [])
 
   const capture = async () => {
     try {
@@ -211,23 +285,29 @@ export function Overlay() {
   const solve = async () => {
     if (!attachments.length) return
     setView('solution')
-    answerRef.current = ''
-    setAnswer('')
-    reasoningRef.current = ''
-    setReasoning('')
+    const requestSequence = ++requestSequenceRef.current
+    activeTurnRef.current = { sessionId: sessionIdRef.current }
+    resetTranscript()
     setActivities([])
+    setTurnId(undefined)
     setStreaming(true)
     setBusy(true)
     try {
       const result = await desktopClient.solvePending(modelId)
-      setSessionId(result.sessionId)
-      setTurnId(result.turnId)
+      if (requestSequence !== requestSequenceRef.current) return
+      if (activeTurnRef.current) {
+        activeTurnRef.current = result
+        setTurnId(result.turnId)
+      }
+      updateSessionId(result.sessionId)
     } catch (error) {
+      if (requestSequence !== requestSequenceRef.current) return
+      activeTurnRef.current = undefined
       setStreaming(false)
       setNotice(error instanceof Error ? error.message : 'Unable to process screenshots.')
       setView('queue')
     } finally {
-      setBusy(false)
+      if (requestSequence === requestSequenceRef.current) setBusy(false)
     }
   }
 
@@ -237,22 +317,28 @@ export function Overlay() {
     if (!message || streaming) return
     setMessages((current) => [...current, { role: 'user', content: message }])
     setChatInput('')
-    answerRef.current = ''
-    setAnswer('')
-    reasoningRef.current = ''
-    setReasoning('')
+    const requestSequence = ++requestSequenceRef.current
+    activeTurnRef.current = { sessionId: sessionIdRef.current }
+    resetTranscript()
     setActivities([])
+    setTurnId(undefined)
     setStreaming(true)
     try {
       const result = await desktopClient.sendMessage({
-        ...(sessionId ? { sessionId } : {}),
+        ...(sessionIdRef.current ? { sessionId: sessionIdRef.current } : {}),
         message,
         modelId,
         attachmentIds: attachments.map((attachment) => attachment.id),
       })
-      setSessionId(result.sessionId)
-      setTurnId(result.turnId)
+      if (requestSequence !== requestSequenceRef.current) return
+      if (activeTurnRef.current) {
+        activeTurnRef.current = result
+        setTurnId(result.turnId)
+      }
+      updateSessionId(result.sessionId)
     } catch (error) {
+      if (requestSequence !== requestSequenceRef.current) return
+      activeTurnRef.current = undefined
       setStreaming(false)
       setNotice(error instanceof Error ? error.message : 'Unable to send message.')
     }
@@ -261,10 +347,9 @@ export function Overlay() {
   const clear = async () => {
     await desktopClient.clearAttachments()
     setAttachments([])
-    answerRef.current = ''
-    setAnswer('')
-    reasoningRef.current = ''
-    setReasoning('')
+    requestSequenceRef.current += 1
+    activeTurnRef.current = undefined
+    resetTranscript()
     setActivities([])
     setView('queue')
   }
@@ -272,7 +357,7 @@ export function Overlay() {
   const reset = async () => {
     await clear()
     const session = await desktopClient.createSession()
-    setSessionId(session.id)
+    updateSessionId(session.id)
     setTurnId(undefined)
     setMessages([])
     setNotice('New session ready.')
@@ -327,9 +412,10 @@ export function Overlay() {
           activities={activities}
           answerHeight={answerHeight}
           onClose={() => {
+            requestSequenceRef.current += 1
+            activeTurnRef.current = undefined
             setView('queue')
-            setAnswer('')
-            setReasoning('')
+            resetTranscript()
             setStreaming(false)
           }}
         />
@@ -346,6 +432,7 @@ export function Overlay() {
           activities={activities}
           answerHeight={answerHeight}
           chatInput={chatInput}
+          canStop={Boolean(turnId)}
           inputRef={input}
           onChatInputChange={setChatInput}
           onSend={sendChat}

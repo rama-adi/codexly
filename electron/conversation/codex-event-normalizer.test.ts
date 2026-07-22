@@ -77,6 +77,36 @@ describe('normalizeCodexEvent', () => {
     ])
   })
 
+  it('normalizes mapped tool-call JSON and derives its command title', () => {
+    expect(
+      normalizeCodexEvent({
+        type: 'tool-call',
+        toolCallId: 'cmd-1',
+        toolName: 'exec',
+        input: JSON.stringify({
+          id: 'cmd-1',
+          type: 'commandExecution',
+          command: ['git', 'status'],
+        }),
+      }),
+    ).toEqual([
+      {
+        type: 'activity.started',
+        activity: {
+          id: 'cmd-1',
+          kind: 'exec',
+          status: 'running',
+          title: 'git status',
+          details: {
+            id: 'cmd-1',
+            type: 'commandExecution',
+            command: ['git', 'status'],
+          },
+        },
+      },
+    ])
+  })
+
   it('surfaces approval requests for UI handling but never answers them', () => {
     expect(
       normalizeCodexEvent({

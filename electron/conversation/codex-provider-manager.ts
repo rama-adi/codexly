@@ -94,12 +94,20 @@ function readNativeManifest(nativeRoot: string): CodexNativeManifest {
 
 export interface ProviderRevisionInput {
   workspacePath: string
+  /**
+   * Retained for callers that still track workspace metadata revisions. The
+   * provider process is scoped by the canonical workspace path, so metadata
+   * changes must not discard an otherwise warm app-server connection.
+   */
   workspaceRevision: number
+  /**
+   * Retained for input compatibility. Authentication rotation is derived from
+   * the credential snapshot rather than this caller-supplied revision.
+   */
   configRevision: number
   /**
-   * Whether the Codex `tools.web_search` capability is enabled for this
-   * provider. Because it is baked into the provider config, changing it must
-   * rotate the provider — it is therefore part of the provider key.
+   * Turn-level web-search preference. ConversationRuntime applies this to the
+   * model call; it is intentionally not part of provider-process identity.
    */
   webSearch?: boolean
 }
@@ -169,13 +177,9 @@ export class CodexProviderManager {
     const acquired: { value: ManagedProvider | null } = { value: null }
     await this.#serialize(async () => {
       const credentials = await this.#credentials.getProviderSnapshot()
-      const webSearch = input.webSearch ?? false
       const key = JSON.stringify({
         auth: credentials.revision,
-        workspace: input.workspaceRevision,
-        config: input.configRevision,
         cwd: input.workspacePath,
-        webSearch,
       })
       if (this.#current?.key === key) {
         acquired.value = this.#current
@@ -200,9 +204,7 @@ export class CodexProviderManager {
           sandboxPolicy: 'read-only',
           threadMode: 'persistent',
           persistExtendedHistory: true,
-          includeRawChunks: true,
           configOverrides: {
-            'tools.web_search': webSearch,
             'tools.image_generation': false,
           },
           serverRequests: this.#requestHandlers,
