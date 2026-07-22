@@ -87,6 +87,62 @@ describe('AttachmentStore', () => {
     await associating
   })
 
+  it('associates a screenshot batch atomically when any requested ID is invalid', async () => {
+    const { store } = await createStore()
+    const first = await add(store, 'first.png')
+    const second = await add(store, 'second.png')
+    const association = { ownerType: 'session' as const, ownerId: 'session-1' }
+
+    await expect(
+      store.associateMany([first.id, '00000000-0000-0000-0000-000000000000', second.id], association),
+    ).rejects.toThrow(/does not exist/i)
+    expect(await store.list()).toEqual([
+      expect.objectContaining({ id: first.id, associations: [] }),
+      expect.objectContaining({ id: second.id, associations: [] }),
+    ])
+  })
+
+  it('atomically releases the last session owner and deletes its blob without pending overflow', async () => {
+    const { store, userDataPath } = await createStore()
+    const retained = await add(store, 'retained.png')
+    const association = { ownerType: 'session' as const, ownerId: 'session-1' }
+    await store.associate(retained.id, association)
+    for (let index = 0; index < 5; index += 1) await add(store, `pending-${index}.png`)
+
+    await expect(store.releaseAndDiscard(retained.id, association)).resolves.toBe(true)
+    const restarted = new AttachmentStore({ userDataPath })
+    await restarted.initialize()
+    expect((await restarted.list()).map((attachment) => attachment.id)).not.toContain(retained.id)
+    await expect(readdir(path.join(userDataPath, 'attachments', 'blobs'))).resolves.not.toContain(
+      `${retained.id}.image`,
+    )
+  })
+
+  it('rolls back the entire release batch when the second filesystem item fails', async () => {
+    const beforeReleaseDiscard = vi.fn(async (_id: string, index: number) => {
+      if (index === 1) throw new Error('injected second-item failure')
+    })
+    const { store, userDataPath } = await createStore({ beforeReleaseDiscard })
+    const first = await add(store, 'first.png')
+    const second = await add(store, 'second.png')
+    const association = { ownerType: 'session' as const, ownerId: 'session-1' }
+    await store.associateMany([first.id, second.id], association)
+
+    await expect(
+      store.releaseAndDiscardMany([first.id, second.id], association),
+    ).rejects.toThrow('injected second-item failure')
+
+    const restarted = new AttachmentStore({ userDataPath })
+    await restarted.initialize()
+    expect(await restarted.list()).toEqual([
+      expect.objectContaining({ id: first.id, associations: [association] }),
+      expect.objectContaining({ id: second.id, associations: [association] }),
+    ])
+    expect(await readdir(path.join(userDataPath, 'attachments', 'blobs'))).toEqual(
+      expect.arrayContaining([`${first.id}.image`, `${second.id}.image`]),
+    )
+  })
+
   it('enforces the pending limit when releasing retention', async () => {
     const released = vi.fn()
     const { store } = await createStore({ retentionHooks: { released } })

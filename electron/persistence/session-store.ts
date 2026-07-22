@@ -213,6 +213,18 @@ export class SessionStore {
     }))
   }
 
+  /** Removes one exact message during failed turn preparation without touching later writes. */
+  async removeMessage(sessionId: string, messageId: string): Promise<SessionRecord> {
+    return this.update(sessionId, (current) => {
+      const messages = current.messages.filter((message) => message.id !== messageId)
+      return {
+        ...current,
+        messages,
+        attachmentIds: unique(messages.flatMap((message) => message.attachmentIds)),
+      }
+    })
+  }
+
   async appendToolEvent(sessionId: string, event: SessionToolEvent): Promise<SessionRecord> {
     const validated = ToolEventSchema.parse(event)
     return this.update(sessionId, (current) => ({ ...current, toolEvents: [...current.toolEvents, validated] }))

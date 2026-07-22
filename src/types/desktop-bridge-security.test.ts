@@ -1,4 +1,5 @@
 import path from 'node:path'
+import fs from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
@@ -75,5 +76,20 @@ describe('strict request parsing', () => {
     expect(() => parseSupportedRequest(request)).toThrowError(
       /does not match a supported contract/i,
     )
+  })
+})
+
+describe('renderer document security policy', () => {
+  it('restricts executable content while allowing packaged assets and Vite HMR', () => {
+    const document = fs.readFileSync(
+      path.resolve(import.meta.dirname, '../../index.html'),
+      'utf8',
+    )
+    expect(document).toContain('http-equiv="Content-Security-Policy"')
+    expect(document).toContain("default-src 'self'")
+    expect(document).toContain("script-src 'self'")
+    expect(document).toContain("object-src 'none'")
+    expect(document).toContain("base-uri 'none'")
+    expect(document).not.toContain("script-src 'self' 'unsafe-inline'")
   })
 })

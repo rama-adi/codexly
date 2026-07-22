@@ -1,5 +1,5 @@
 import { SubscriptionEventSchema } from '../../shared/ipc/events'
-import type { ProductEvent } from '../../shared/ipc/product'
+import { ConversationTurnResultSchema, type ProductEvent } from '../../shared/ipc/product'
 import { BootstrapSchema } from '../../shared/schemas/bootstrap'
 import {
   ConnectionTestResultSchema,
@@ -94,10 +94,13 @@ export const desktopClient = {
   selectWorkspace: (workspaceId: string) =>
     requireBridge().selectWorkspace(workspaceId) as Promise<Workspace>,
   removeWorkspace: (workspaceId: string) => requireBridge().removeWorkspace(workspaceId),
-  sendMessage: (input: Parameters<CodexlyDesktopBridgeV1['sendMessage']>[0]) =>
-    requireBridge().sendMessage(input) as Promise<{ sessionId: string; turnId: string }>,
+  async sendMessage(input: Parameters<CodexlyDesktopBridgeV1['sendMessage']>[0]) {
+    return ConversationTurnResultSchema.parse(await requireBridge().sendMessage(input))
+  },
   stopTurn: (turnId: string) => requireBridge().stopTurn(turnId),
-  solvePending: (modelId: string) => requireBridge().solvePending(modelId) as Promise<{ sessionId: string; turnId: string }>,
+  async solvePending(modelId: string) {
+    return ConversationTurnResultSchema.parse(await requireBridge().solvePending(modelId))
+  },
   capture: () => requireBridge().capture() as Promise<unknown>,
   captureSelection: () => requireBridge().captureSelection() as Promise<unknown>,
   listAttachments: () => requireBridge().listAttachments() as Promise<Array<{ id: string; name: string; preview: string }>>,

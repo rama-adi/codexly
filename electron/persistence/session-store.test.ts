@@ -51,6 +51,34 @@ describe('SessionStore', () => {
     })
   })
 
+  it('rolls back only the failed message and rebuilds retained attachment IDs', async () => {
+    const userDataPath = await temporaryDirectory()
+    const store = new SessionStore({ userDataPath })
+    const session = await store.create()
+    const createdAt = new Date().toISOString()
+    await store.appendMessage(session.id, {
+      id: 'failed-setup',
+      role: 'user',
+      content: 'first',
+      attachmentIds: ['failed-shot', 'shared-shot'],
+      createdAt,
+    })
+    await store.appendMessage(session.id, {
+      id: 'concurrent-message',
+      role: 'user',
+      content: 'second',
+      attachmentIds: ['shared-shot', 'retained-shot'],
+      createdAt,
+    })
+
+    await store.removeMessage(session.id, 'failed-setup')
+    const restarted = new SessionStore({ userDataPath })
+    expect(await restarted.get(session.id)).toMatchObject({
+      messages: [expect.objectContaining({ id: 'concurrent-message' })],
+      attachmentIds: ['shared-shot', 'retained-shot'],
+    })
+  })
+
   it('marks a missing Codex thread for continue-as-new without treating its ID as an app ID', async () => {
     const store = new SessionStore({ userDataPath: await temporaryDirectory() })
     const session = await store.create({ codexThreadId: 'external-thread' })

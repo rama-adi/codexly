@@ -12,6 +12,7 @@ export function ChatPanel({
   messages,
   answer,
   reasoning,
+  error,
   streaming,
   activities,
   answerHeight,
@@ -28,6 +29,7 @@ export function ChatPanel({
   messages: ChatMessage[]
   answer: string
   reasoning: string
+  error?: string
   streaming: boolean
   activities: ToolActivity[]
   answerHeight: number
@@ -98,6 +100,12 @@ export function ChatPanel({
             <ThinkingBlock text={reasoning} active={streaming && !answer} />
             {answer || (reasoning ? '' : <LoadingIndicator label={`${modelLabel} is thinking…`} />)}
             {answer && <span className="ov-cursor" />}
+          </div>
+        )}
+
+        {error && (
+          <div className="ov-inline-error" role="alert">
+            {error}
           </div>
         )}
       </div>

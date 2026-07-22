@@ -8,8 +8,11 @@ export type ShortcutCallback = () => void | Promise<void>
 export interface ShortcutDefinition {
   accelerator: string
   callback: ShortcutCallback
-  /** Immediate dispatch is intended for cancellation actions that must interrupt a serialized action. */
-  dispatch?: 'serialized' | 'immediate'
+  /**
+   * Serialized preserves repeated presses in order, single-flight drops key
+   * repeat while work is active, and immediate is intended for cancellation.
+   */
+  dispatch?: 'serialized' | 'single-flight' | 'immediate'
 }
 
 export type ShortcutDefinitions = Readonly<Record<string, ShortcutDefinition>>
@@ -18,16 +21,29 @@ export interface ShortcutRegistrationStatus {
   accelerator: string
   registered: boolean
   conflicted: boolean
+  /** Present when Electron threw instead of returning a registration result. */
+  error?: string
+}
+
+export interface ShortcutManagerError {
+  phase: 'register' | 'unregister' | 'callback'
+  action: string
+  accelerator: string
+  error: unknown
 }
 
 export interface ShortcutManagerOptions {
   adapter: GlobalShortcutAdapter
   shortcuts?: ShortcutDefinitions
+  /** Observes native and callback failures without allowing them to break dispatch. */
+  onError?: (failure: ShortcutManagerError) => void
 }
 
 interface ShortcutRegistration {
   accelerator: string
   id: number
+  dispatchQueue: Promise<void>
+  running: boolean
 }
 
 /**
@@ -36,14 +52,15 @@ interface ShortcutRegistration {
  */
 export class ShortcutManager {
   private readonly adapter: GlobalShortcutAdapter
+  private readonly onError?: ShortcutManagerOptions['onError']
   private readonly registrations = new Map<string, ShortcutRegistration>()
   private readonly statuses = new Map<string, ShortcutRegistrationStatus>()
-  private dispatchQueue: Promise<void> = Promise.resolve()
   private nextRegistrationId = 0
   private disposed = false
 
-  constructor({ adapter, shortcuts = {} }: ShortcutManagerOptions) {
+  constructor({ adapter, shortcuts = {}, onError }: ShortcutManagerOptions) {
     this.adapter = adapter
+    this.onError = onError
     this.configure(shortcuts)
   }
 
@@ -70,21 +87,38 @@ export class ShortcutManager {
       const registration: ShortcutRegistration = {
         accelerator: shortcut.accelerator,
         id: this.nextRegistrationId,
+        dispatchQueue: Promise.resolve(),
+        running: false,
       }
       this.nextRegistrationId += 1
-      const registered = this.adapter.register(shortcut.accelerator, () => {
-        this.dispatch(
+      let registered = false
+      let registrationError: unknown
+      try {
+        registered = this.adapter.register(shortcut.accelerator, () => {
+          this.dispatch(
+            action,
+            registration,
+            shortcut.callback,
+            shortcut.dispatch ?? 'serialized',
+          )
+        })
+      } catch (error) {
+        registrationError = error
+        this.reportError({
+          phase: 'register',
           action,
-          registration,
-          shortcut.callback,
-          shortcut.dispatch ?? 'serialized',
-        )
-      })
+          accelerator: shortcut.accelerator,
+          error,
+        })
+      }
 
       this.statuses.set(action, {
         accelerator: shortcut.accelerator,
         registered,
         conflicted: !registered,
+        ...(registrationError === undefined
+          ? {}
+          : { error: errorMessage(registrationError) }),
       })
       if (registered) {
         this.registrations.set(action, registration)
@@ -123,29 +157,88 @@ export class ShortcutManager {
     action: string,
     registration: ShortcutRegistration,
     callback: ShortcutCallback,
-    mode: 'serialized' | 'immediate',
+    mode: 'serialized' | 'single-flight' | 'immediate',
   ): void {
     if (this.disposed || this.registrations.get(action)?.id !== registration.id) {
       return
     }
 
-    const invoke = (): Promise<void> => {
+    const invoke = async (): Promise<void> => {
       if (this.disposed || this.registrations.get(action)?.id !== registration.id) {
-        return Promise.resolve()
+        return
       }
-      return Promise.resolve(callback())
+      await callback()
     }
     if (mode === 'immediate') {
-      void invoke().catch(() => undefined)
+      void invoke().catch((error) => {
+        this.reportError({
+          phase: 'callback',
+          action,
+          accelerator: registration.accelerator,
+          error,
+        })
+      })
       return
     }
-    this.dispatchQueue = this.dispatchQueue.then(invoke, invoke).catch(() => undefined)
+    if (mode === 'single-flight') {
+      if (registration.running) return
+      registration.running = true
+      void invoke()
+        .catch((error) => {
+          this.reportError({
+            phase: 'callback',
+            action,
+            accelerator: registration.accelerator,
+            error,
+          })
+        })
+        .finally(() => {
+          registration.running = false
+        })
+      return
+    }
+    // Serialize repeated invocations of one action, without letting a slow
+    // action block unrelated global shortcuts.
+    registration.dispatchQueue = registration.dispatchQueue
+      .then(invoke, invoke)
+      .catch((error) => {
+        this.reportError({
+          phase: 'callback',
+          action,
+          accelerator: registration.accelerator,
+          error,
+        })
+      })
   }
 
   private unregisterOwned(): void {
-    for (const registration of this.registrations.values()) {
-      this.adapter.unregister(registration.accelerator)
-    }
+    const owned = [...this.registrations.entries()]
+    // Invalidate native callbacks before unregistering. Some adapters can
+    // still deliver a callback that was already queued by the operating system.
     this.registrations.clear()
+    for (const [action, registration] of owned) {
+      try {
+        this.adapter.unregister(registration.accelerator)
+      } catch (error) {
+        this.reportError({
+          phase: 'unregister',
+          action,
+          accelerator: registration.accelerator,
+          error,
+        })
+      }
+    }
   }
+
+  private reportError(failure: ShortcutManagerError): void {
+    try {
+      this.onError?.(failure)
+    } catch {
+      // Error observers are diagnostic and cannot control shortcut dispatch.
+    }
+  }
+}
+
+function errorMessage(value: unknown): string {
+  return value instanceof Error ? value.message : String(value)
 }

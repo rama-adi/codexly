@@ -55,12 +55,12 @@ export function CommandBar({
         <button onClick={onCapture} title="Capture display">
           <Camera size={13} />
           <span>Capture</span>
-          <Key>⌘H</Key>
+          <Key>⇧⌘1</Key>
         </button>
         <button onClick={onCaptureSelection} title="Capture a screen region">
           <Crop size={13} />
           <span>Select</span>
-          <Key>⇧⌘H</Key>
+          <Key>⇧⌘2</Key>
         </button>
       </div>
 
@@ -68,24 +68,22 @@ export function CommandBar({
         <button className="ov-solve" onClick={onSolve} disabled={busy}>
           <Sparkles size={13} />
           <span>Solve</span>
-          <Key>⌘⏎</Key>
+          <Key>⇧⌘⏎</Key>
         </button>
       )}
 
       <div className="ov-bar-group draggable-area">
-        <button onClick={onClear} title="Clear queue" disabled={!attachments}>
+        <button onClick={onClear} title="Clear queue" disabled={!attachments || busy}>
           <Trash2 size={13} />
-          <Key>⌘K</Key>
         </button>
-        <button onClick={onReset} title="Reset session">
+        <button onClick={onReset} title="Reset session" disabled={busy}>
           <RotateCcw size={13} />
-          <Key>⌘R</Key>
         </button>
       </div>
 
       <span className="ov-divider draggable-area" />
 
-      <ModelSelect models={models} value={modelId} onChange={onModelChange} />
+      <ModelSelect models={models} value={modelId} onChange={onModelChange} disabled={busy} />
 
       <button className={chatOpen ? 'active' : ''} onClick={onChat} title="Toggle chat">
         <MessageSquare size={13} />

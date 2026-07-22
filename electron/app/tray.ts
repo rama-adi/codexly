@@ -5,7 +5,7 @@ export interface TrayHandlers {
   launchOverlay(): void | Promise<void>
   /** Show the homepage window. */
   openHome(): void | Promise<void>
-  /** Capture the active display (⌘H). */
+  /** Capture the active display (⇧⌘1). */
   captureDisplay(): void | Promise<void>
   /** Quit the application. */
   quit(): void
@@ -35,7 +35,7 @@ export function createCodexlyTray(handlers: TrayHandlers): Tray {
     },
     { type: 'separator' },
     {
-      label: 'Take Screenshot (⌘H)',
+      label: 'Take Screenshot (⇧⌘1)',
       click: () => {
         void handlers.captureDisplay()
       },

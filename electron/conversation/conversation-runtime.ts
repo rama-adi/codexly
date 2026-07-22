@@ -39,6 +39,8 @@ export interface ConversationEventStore {
 
 export interface StartConversationTurnInput extends ProviderRevisionInput {
   conversationId: string
+  /** Caller-supplied identity when routing must be registered before startup emits events. */
+  turnId?: string
   modelId: string
   message: string
   context?: PromptContextBlock[]
@@ -113,13 +115,16 @@ export class ConversationRuntime {
 
   startTurn(input: StartConversationTurnInput): Promise<ConversationTurnHandle> {
     return this.#withConversationLock(input.conversationId, async () => {
+      const turnId = input.turnId ?? this.#generateTurnId()
+      if (this.#activeByTurn.has(turnId)) {
+        throw new Error(`Conversation turn ID is already active: ${turnId}`)
+      }
       const previous = this.#activeByConversation.get(input.conversationId)
       if (previous) {
         await previous.controller.abort('Superseded by a new turn')
       }
 
       const generation = ++this.#nextGeneration
-      const turnId = this.#generateTurnId()
       const abortController = new AbortController()
       let resolveCompletion: (state: TurnTerminalState) => void = () => undefined
       const completion = new Promise<TurnTerminalState>((resolve) => {
@@ -240,6 +245,9 @@ export class ConversationRuntime {
         turn.controller.abort('Conversation runtime disposed'),
       ),
     )
+    this.#activeByConversation.clear()
+    this.#activeByTurn.clear()
+    this.#startLocks.clear()
     await this.#providers.dispose()
     this.#listeners.clear()
     this.#sessions.clear()

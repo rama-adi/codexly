@@ -147,4 +147,51 @@ describe('TurnController', () => {
 
     expect(session.interrupt).not.toHaveBeenCalled()
   })
+
+  it('accepts mapped text after a provider completed notification but rejects it after failure', async () => {
+    const completedRun = setup()
+    await completedRun.controller.start()
+    await completedRun.controller.accept(
+      {
+        type: 'raw',
+        rawValue: {
+          method: 'turn/completed',
+          params: { turn: { status: 'completed' } },
+        },
+      },
+      3,
+    )
+    await completedRun.controller.accept(
+      { type: 'text-delta', id: 'answer', delta: 'mapped after raw terminal' },
+      3,
+    )
+    await completedRun.controller.completed('stop')
+    expect(completedRun.events.map((event) => event.event.type)).toContain(
+      'assistant.delta',
+    )
+
+    const failedRun = setup()
+    await failedRun.controller.start()
+    await failedRun.controller.accept(
+      {
+        type: 'raw',
+        rawValue: {
+          method: 'turn/completed',
+          params: { turn: { status: 'failed', error: { message: 'provider failed' } } },
+        },
+      },
+      3,
+    )
+    await failedRun.controller.accept(
+      { type: 'text-delta', id: 'late', delta: 'must be ignored' },
+      3,
+    )
+    expect(failedRun.controller.state).toBe('failed')
+    expect(
+      failedRun.events.some(
+        (event) =>
+          event.event.type === 'assistant.delta' && event.event.text === 'must be ignored',
+      ),
+    ).toBe(false)
+  })
 })

@@ -1,5 +1,5 @@
 import { Copy, X } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { ToolActivity } from '../types'
 import { LoadingIndicator } from './LoadingIndicator'
@@ -9,6 +9,7 @@ import { ToolActivityCard } from './ToolActivityCard'
 export function SolutionPanel({
   answer,
   reasoning,
+  error,
   streaming,
   modelLabel,
   activities,
@@ -17,6 +18,7 @@ export function SolutionPanel({
 }: {
   answer: string
   reasoning: string
+  error?: string
   streaming: boolean
   modelLabel: string
   activities: ToolActivity[]
@@ -24,12 +26,34 @@ export function SolutionPanel({
   onClose(): void
 }) {
   const [copied, setCopied] = useState(false)
+  const [copying, setCopying] = useState(false)
+  const [copyError, setCopyError] = useState<string>()
+  const copiedTimerRef = useRef<number>()
+
+  useEffect(
+    () => () => {
+      if (copiedTimerRef.current !== undefined) window.clearTimeout(copiedTimerRef.current)
+    },
+    [],
+  )
 
   const copy = async () => {
-    if (!answer) return
-    await navigator.clipboard.writeText(answer)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1400)
+    if (!answer || copying) return
+    setCopying(true)
+    setCopyError(undefined)
+    try {
+      await navigator.clipboard.writeText(answer)
+      setCopied(true)
+      if (copiedTimerRef.current !== undefined) window.clearTimeout(copiedTimerRef.current)
+      copiedTimerRef.current = window.setTimeout(() => {
+        copiedTimerRef.current = undefined
+        setCopied(false)
+      }, 1400)
+    } catch (error) {
+      setCopyError(error instanceof Error ? error.message : 'Could not copy the answer.')
+    } finally {
+      setCopying(false)
+    }
   }
 
   const isEmpty = !answer && streaming
@@ -38,7 +62,12 @@ export function SolutionPanel({
     <section className="ov-panel ov-solution">
       <div className="ov-solution-head draggable-area" aria-hidden />
       <div className="ov-panel-actions">
-        <button aria-label="Copy answer" onClick={() => void copy()} disabled={!answer} title="Copy answer">
+        <button
+          aria-label="Copy answer"
+          onClick={() => void copy()}
+          disabled={!answer || copying}
+          title="Copy answer"
+        >
           <Copy size={12} />
           {copied && <span className="ov-copied">Copied</span>}
         </button>
@@ -67,12 +96,16 @@ export function SolutionPanel({
               <span className="ov-shimmer-line" style={{ width: '71%' }} />
             </div>
           </>
+        ) : error && !answer ? (
+          <div className="ov-inline-error" role="alert">{error}</div>
         ) : (
           <div className="ov-answer">
-            {answer || 'No answer received.'}
+            {answer}
             {streaming && <span className="ov-cursor" />}
           </div>
         )}
+        {error && answer && <div className="ov-inline-error" role="alert">{error}</div>}
+        {copyError && <div className="ov-inline-error" role="alert">Copy failed: {copyError}</div>}
       </div>
 
       <footer className="ov-solution-foot">

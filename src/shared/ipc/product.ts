@@ -67,7 +67,26 @@ export const ProductResponseSchema = z.discriminatedUnion('ok', [
 
 const TurnOriginSchema = z.enum(['overlay', 'homepage'])
 
+export const ConversationTurnResultSchema = z
+  .object({
+    sessionId: IdSchema,
+    turnId: IdSchema,
+    consumedAttachmentIds: z.array(IdSchema).max(5),
+  })
+  .strict()
+
+export type ConversationTurnResult = z.infer<typeof ConversationTurnResultSchema>
+
 export const ProductEventSchema = z.discriminatedUnion('type', [
+  z
+    .object({
+      type: z.literal('conversation.started'),
+      sessionId: IdSchema,
+      turnId: IdSchema,
+      origin: TurnOriginSchema,
+      consumedAttachmentIds: z.array(IdSchema).max(5),
+    })
+    .strict(),
   z
     .object({
       type: z.literal('transcript.delta'),
@@ -140,6 +159,14 @@ export const ProductEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('runtime.status'), status: z.unknown() }).strict(),
   z.object({ type: z.literal('attachment.captured'), attachment: z.unknown() }).strict(),
   z.object({ type: z.literal('attachments.cleared') }).strict(),
+  z
+    .object({
+      type: z.literal('shortcut.error'),
+      action: IdSchema,
+      phase: z.enum(['register', 'unregister', 'callback']),
+      message: z.string(),
+    })
+    .strict(),
 ])
 
 export type TurnOrigin = z.infer<typeof TurnOriginSchema>

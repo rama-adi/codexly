@@ -11,7 +11,10 @@ export type ToolActivity = {
   output?: string
 }
 
-export type ChatMessage = { role: 'user' | 'assistant'; content: string }
+export type ChatMessage = {
+  role: 'user' | 'assistant'
+  content: string
+}
 
 export type ModelChoice = {
   id: string

@@ -64,6 +64,27 @@
   border: 0;
 }
 
+.ov-visible-notice {
+  width: min(760px, calc(100vw - 16px));
+  margin-top: 6px;
+  padding: 7px 10px;
+  border: 1px solid rgba(240, 137, 124, 0.35);
+  border-radius: var(--ov-radius-sm);
+  background: rgba(35, 17, 17, 0.94);
+  color: #f5aaa1;
+  box-shadow: var(--ov-shadow);
+}
+
+.ov-inline-error {
+  margin-top: 8px;
+  padding: 7px 9px;
+  border: 1px solid rgba(240, 137, 124, 0.32);
+  border-radius: var(--ov-radius-sm);
+  background: rgba(240, 137, 124, 0.08);
+  color: #f5aaa1;
+  white-space: pre-wrap;
+}
+
 @keyframes ov-rise {
   from {
     opacity: 0;
@@ -281,6 +302,10 @@
 }
 
 .ov-queue-item:hover button {
+  opacity: 1;
+}
+
+.ov-queue-item button:focus-visible {
   opacity: 1;
 }
 

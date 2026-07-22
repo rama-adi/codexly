@@ -2,6 +2,7 @@ import {
   desktopCapturer,
   dialog,
   globalShortcut,
+  nativeImage,
   safeStorage,
   screen,
   shell,
@@ -46,6 +47,7 @@ import {
   ConversationRuntime,
   type ConversationEventStore,
   type ConversationThreadStore,
+  type ConversationTurnHandle,
 } from '../conversation/conversation-runtime'
 import type { TurnEventEnvelope } from '../conversation/turn-controller'
 import { AtomicJsonStore } from '../persistence/atomic-json-store'
@@ -64,12 +66,162 @@ type RuntimeStatus = Readonly<{
   detail: string
 }>
 
+export const PRODUCT_SHORTCUT_ACCELERATORS = Object.freeze({
+  summonOverlay: 'CommandOrControl+Shift+Space',
+  toggleOverlay: 'CommandOrControl+Shift+B',
+  captureDisplay: 'CommandOrControl+Shift+1',
+  captureSelection: 'CommandOrControl+Shift+2',
+  solve: 'CommandOrControl+Shift+Enter',
+})
+
+type TurnContext = Readonly<{
+  origin: TurnOrigin
+  persistConversation: boolean
+}>
+
 export interface ProductControllerOptions {
   userDataPath: string
   isPackaged: boolean
   resourcesPath: string
   windowManager: WindowManager
   publish(event: ProductEvent, roles?: readonly WindowRole[]): void
+}
+
+export function consumePendingAttachmentSnapshot(
+  pendingIds: string[],
+  consumedIds: readonly string[],
+): void {
+  const consumed = new Set(consumedIds)
+  const remaining = pendingIds.filter((id) => !consumed.has(id))
+  pendingIds.splice(0, pendingIds.length, ...remaining)
+}
+
+export async function consumePendingAttachmentsAfter<T>(
+  pendingIds: string[],
+  operation: (snapshot: readonly string[]) => Promise<T>,
+): Promise<T> {
+  const snapshot = [...pendingIds]
+  const result = await operation(snapshot)
+  consumePendingAttachmentSnapshot(pendingIds, snapshot)
+  return result
+}
+
+export async function restoreCapturePresentation(
+  snapshot: CapturePresentationSnapshot,
+  homepage: BrowserWindow | null,
+  overlay: BrowserWindow | null,
+  showOverlay: () => Promise<void>,
+): Promise<void> {
+  if (homepage) {
+    homepage.setBounds(snapshot.homepage.bounds)
+    if (snapshot.homepage.visible) homepage.showInactive()
+  }
+  if (overlay) {
+    overlay.setBounds(snapshot.overlay.bounds)
+    overlay.setIgnoreMouseEvents(snapshot.overlay.clickThrough)
+    if (snapshot.overlay.visible) await showOverlay()
+  }
+  // Visibility restoration must not steal focus from an external application.
+  // Only a Codexly window that was key before capture is made key again.
+  if (snapshot.homepage.focused) homepage?.focus()
+  else if (snapshot.overlay.focused) overlay?.focus()
+}
+
+export async function announceTurnBeforeDeferredEvents(
+  announce: () => void,
+  deferred: TurnEventEnvelope[],
+  record: (event: TurnEventEnvelope) => Promise<void>,
+): Promise<void> {
+  announce()
+  while (deferred.length > 0) {
+    await record(deferred.shift()!)
+  }
+}
+
+export async function persistTurnSetupTransaction(options: Readonly<{
+  attachmentIds: readonly string[]
+  appendMessage: () => Promise<void>
+  associateAll: (attachmentIds: readonly string[]) => Promise<void>
+  removeMessage: () => Promise<void>
+}>): Promise<void> {
+  let messagePersisted = false
+  try {
+    await options.appendMessage()
+    messagePersisted = true
+    await options.associateAll(options.attachmentIds)
+  } catch (error) {
+    if (messagePersisted) await options.removeMessage().catch(() => undefined)
+    throw error
+  }
+}
+
+export async function persistTerminalBestEffort(
+  operations: readonly (() => Promise<unknown>)[],
+  publishTerminal: () => void,
+): Promise<void> {
+  for (const operation of operations) await operation().catch(() => undefined)
+  publishTerminal()
+}
+
+const MAX_FALLBACK_PREVIEW_BYTES = 128 * 1024
+const MAX_PREVIEW_DIMENSION = 128
+
+export function createBoundedAttachmentPreview(
+  bytes: Buffer,
+  createImage: (bytes: Buffer) => Pick<NativeImage, 'getSize' | 'resize' | 'toDataURL'> = (value) =>
+    nativeImage.createFromBuffer(value),
+): string {
+  try {
+    const image = createImage(bytes)
+    const size = image.getSize()
+    const scale = Math.min(
+      1,
+      MAX_PREVIEW_DIMENSION / Math.max(1, size.width),
+      MAX_PREVIEW_DIMENSION / Math.max(1, size.height),
+    )
+    return image.resize({
+      width: Math.max(1, Math.round(size.width * scale)),
+      height: Math.max(1, Math.round(size.height * scale)),
+      quality: 'good',
+    }).toDataURL()
+  } catch {
+    return bytes.byteLength <= MAX_FALLBACK_PREVIEW_BYTES
+      ? `data:image/png;base64,${bytes.toString('base64')}`
+      : ''
+  }
+}
+
+type TerminalTurnEvent = Extract<
+  TurnEventEnvelope['event'],
+  { type: 'turn.completed' | 'turn.interrupted' | 'turn.failed' }
+>
+
+export function resolveTurnTerminalPresentation(
+  event: TerminalTurnEvent,
+  content: string,
+): {
+  hasAnswer: boolean
+  state: 'completed' | 'cancelled' | 'failed'
+  failureMessage?: string
+} {
+  const hasAnswer = content.trim().length > 0
+  const failureMessage =
+    event.type === 'turn.failed'
+      ? event.message
+      : !hasAnswer && event.type === 'turn.completed'
+        ? 'Codex completed without returning an answer. Please try again.'
+        : !hasAnswer && event.type === 'turn.interrupted'
+          ? 'Response stopped before an answer was returned.'
+          : undefined
+  return {
+    hasAnswer,
+    state: failureMessage
+      ? 'failed'
+      : event.type === 'turn.completed'
+        ? 'completed'
+        : 'cancelled',
+    ...(failureMessage ? { failureMessage } : {}),
+  }
 }
 
 export class ProductController {
@@ -84,13 +236,19 @@ export class ProductController {
   readonly #capture: CaptureCoordinator
   readonly #shortcuts: ShortcutManager
   readonly #activeTurns = new Map<string, { sessionId: string; abort(reason?: string): Promise<boolean> }>()
-  readonly #turnOrigins = new Map<string, TurnOrigin>()
+  readonly #turnContexts = new Map<string, TurnContext>()
+  readonly #initializingTurns = new Set<string>()
+  readonly #deferredTurnEvents = new Map<string, TurnEventEnvelope[]>()
   readonly #assistantBuffers = new Map<string, string>()
   readonly #pendingAttachmentIds: string[] = []
+  readonly #reservedAttachmentIds = new Set<string>()
+  readonly #ephemeralSessions = new Map<string, SessionRecord>()
+  readonly #ephemeralThreadIds = new Map<string, string | null>()
   readonly #userDataPath: string
   #runtimeError: string | null = null
   #screenAccessEnsured = false
   #warmup: { key: string; promise: Promise<void> } | null = null
+  #activeEphemeralSessionId: string | null = null
 
   static async create(options: ProductControllerOptions): Promise<ProductController> {
     const controller = new ProductController(options)
@@ -186,7 +344,20 @@ export class ProductController {
       this.#attachments,
       this.#createPresentationAdapter(),
     )
-    this.#shortcuts = new ShortcutManager({ adapter: globalShortcut })
+    this.#shortcuts = new ShortcutManager({
+      adapter: globalShortcut,
+      onError: (failure) => {
+        this.#publish(
+          {
+            type: 'shortcut.error',
+            action: failure.action,
+            phase: failure.phase,
+            message: errorMessage(failure.error),
+          },
+          ['homepage', 'overlay'],
+        )
+      },
+    })
   }
 
   async #initialize(): Promise<void> {
@@ -215,50 +386,31 @@ export class ProductController {
     }
     this.#shortcuts.configure({
       summonOverlay: {
-        accelerator: 'CommandOrControl+Shift+Space',
+        accelerator: PRODUCT_SHORTCUT_ACCELERATORS.summonOverlay,
         callback: () => this.openOverlay(),
       },
       toggleOverlay: {
-        accelerator: 'CommandOrControl+B',
+        accelerator: PRODUCT_SHORTCUT_ACCELERATORS.toggleOverlay,
         callback: () => this.#toggleOverlay(),
       },
       captureDisplay: {
-        accelerator: 'CommandOrControl+H',
+        accelerator: PRODUCT_SHORTCUT_ACCELERATORS.captureDisplay,
         callback: capture,
+        dispatch: 'single-flight',
       },
       captureSelection: {
-        accelerator: 'CommandOrControl+Shift+H',
+        accelerator: PRODUCT_SHORTCUT_ACCELERATORS.captureSelection,
         callback: async () => {
           await this.#captureSelection()
         },
+        dispatch: 'single-flight',
       },
       solve: {
-        accelerator: 'CommandOrControl+Enter',
+        accelerator: PRODUCT_SHORTCUT_ACCELERATORS.solve,
         callback: async () => {
           await this.#solvePending(await this.#defaultModelId())
         },
-      },
-      clearBuffer: {
-        accelerator: 'CommandOrControl+K',
-        callback: () => this.#clearPendingAttachments(),
-      },
-      resetSession: {
-        accelerator: 'CommandOrControl+R',
-        callback: async () => {
-          await this.#clearPendingAttachments()
-          await this.#sessions.create({ workspaceId: (await this.#workspaces.getSelected())?.id ?? null })
-        },
-      },
-      moveLeft: { accelerator: 'CommandOrControl+Left', callback: () => this.#moveOverlay(-40, 0) },
-      moveRight: { accelerator: 'CommandOrControl+Right', callback: () => this.#moveOverlay(40, 0) },
-      moveUp: { accelerator: 'CommandOrControl+Up', callback: () => this.#moveOverlay(0, -40) },
-      moveDown: { accelerator: 'CommandOrControl+Down', callback: () => this.#moveOverlay(0, 40) },
-      cancelCapture: {
-        accelerator: 'Escape',
-        dispatch: 'immediate',
-        callback: () => {
-          this.#capture.cancel()
-        },
+        dispatch: 'single-flight',
       },
     })
 
@@ -290,14 +442,22 @@ export class ProductController {
       case 'sessions.list':
         return this.#sessions.list()
       case 'sessions.get':
-        return this.#sessions.get(command.sessionId)
+        return this.#ephemeralSessions.get(command.sessionId) ?? this.#sessions.get(command.sessionId)
       case 'sessions.create':
-        return this.#sessions.create({
-          workspaceId: (await this.#workspaces.getSelected())?.id ?? null,
-        })
+        if (role === 'overlay') {
+          await this.#abortOverlayTurns('Session reset by user')
+          await this.#clearPendingAttachments()
+        }
+        return this.#createSessionForCurrentPrivacy()
       case 'sessions.delete':
-        return this.#sessions.delete(command.sessionId)
+        return this.#deleteSession(command.sessionId)
       case 'sessions.reactivate':
+        await this.#abortOverlayTurns('Another session was opened')
+        if (!(await this.#settings.load()).privacy.persistConversations) {
+          const workspace = await this.#workspaces.getSelected()
+          if (!workspace) throw new Error('Select a workspace before starting a session.')
+          return this.#createEphemeralSession(workspace.id)
+        }
         return this.#sessions.reactivate(command.sessionId)
       case 'workspaces.list':
         return this.#workspaces.list()
@@ -320,7 +480,7 @@ export class ProductController {
         return removed
       }
       case 'conversation.send':
-        return this.#send(command, role === 'homepage' ? 'homepage' : 'overlay')
+        return this.#sendFromSurface(command, role === 'homepage' ? 'homepage' : 'overlay')
       case 'conversation.stop':
         return this.#stop(command.turnId)
       case 'conversation.solvePending':
@@ -332,12 +492,14 @@ export class ProductController {
       case 'attachments.list':
         return this.#listPendingAttachments()
       case 'attachments.discard': {
+        if (this.#reservedAttachmentIds.has(command.attachmentId)) return false
         const removed = await this.#attachments.discardPending(command.attachmentId)
         const index = this.#pendingAttachmentIds.indexOf(command.attachmentId)
         if (index >= 0) this.#pendingAttachmentIds.splice(index, 1)
         return removed
       }
       case 'attachments.clear':
+        await this.#abortOverlayTurns('Cleared by user')
         await this.#clearPendingAttachments()
         return null
       case 'window.openHome':
@@ -367,6 +529,16 @@ export class ProductController {
   async dispose(): Promise<void> {
     this.#shortcuts.dispose()
     await this.#runtime?.dispose()
+    this.#activeTurns.clear()
+    this.#turnContexts.clear()
+    this.#initializingTurns.clear()
+    this.#deferredTurnEvents.clear()
+    this.#assistantBuffers.clear()
+    this.#reservedAttachmentIds.clear()
+    this.#ephemeralSessions.clear()
+    this.#ephemeralThreadIds.clear()
+    this.#activeEphemeralSessionId = null
+    this.#warmup = null
   }
 
   async #send(
@@ -376,31 +548,23 @@ export class ProductController {
     if (!this.#runtime) throw new Error(this.#runtimeError ?? 'Codex runtime is unavailable.')
     const workspace = await this.#workspaces.getSelected()
     if (!workspace) throw new Error('Select a workspace before sending a message.')
-    if (origin === 'overlay') {
-      // Once the prompt has crossed the bridge, the user no longer needs the
-      // overlay to own keyboard focus while the answer streams.
-      this.#windowManager.releaseOverlayFocus()
-    }
-    const session = command.sessionId
-      ? await this.#requireSession(command.sessionId)
-      : (await this.#sessions.getActive()) ??
-        (await this.#sessions.create({ workspaceId: workspace.id }))
-    // Registered by session (before the turn starts) so streamed events can
-    // always resolve which surface initiated the turn.
-    this.#turnOrigins.set(session.id, origin)
-    const now = new Date().toISOString()
-    await this.#sessions.appendMessage(session.id, {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: command.message,
-      attachmentIds: command.attachmentIds,
-      createdAt: now,
-    })
-    await Promise.all(
-      command.attachmentIds.map((id) =>
-        this.#attachments.associate(id, { ownerType: 'session', ownerId: session.id }),
-      ),
-    )
+    const settings = await this.#settings.load()
+    const persistenceEnabled = settings.privacy.persistConversations
+    const activeSession = command.sessionId || !persistenceEnabled
+      ? null
+      : await this.#sessions.getActive()
+    const ephemeral = command.sessionId
+      ? this.#ephemeralSessions.get(command.sessionId) ?? null
+      : this.#activeEphemeralSessionId
+        ? this.#ephemeralSessions.get(this.#activeEphemeralSessionId) ?? null
+        : null
+    const createdSession = persistenceEnabled && !command.sessionId && !activeSession
+    const session = !persistenceEnabled
+      ? ephemeral ?? this.#createEphemeralSession(workspace.id)
+      : command.sessionId
+        ? ephemeral ?? (await this.#requireSession(command.sessionId))
+        : activeSession ?? (await this.#sessions.create({ workspaceId: workspace.id }))
+    const persistConversation = persistenceEnabled && !this.#ephemeralSessions.has(session.id)
     const attachments = await Promise.all(
       command.attachmentIds.map(async (id) => {
         const verified = await this.#attachments.resolveVerifiedBytes(id)
@@ -411,42 +575,149 @@ export class ProductController {
         }
       }),
     )
-    const settings = await this.#settings.load()
     // Text-only turns run at 'minimal' effort; image turns use the configured
     // effort and may enable web search when the user opted in.
     const textOnlyTurn = attachments.length === 0
     const reasoningEffort = textOnlyTurn ? 'minimal' : settings.assistant.reasoningEffort
     const webSearch = !textOnlyTurn && settings.assistant.webSearchEnabled
-    const handle = await this.#runtime.startTurn({
-      conversationId: session.id,
-      modelId: command.modelId,
-      message: command.message,
-      attachments,
-      workspacePath: workspace.canonicalPath,
-      workspaceRevision: Number(new Date(workspace.updatedAt)),
-      configRevision: this.#credentials.getStatus().revision,
-      webSearch,
-      reasoningEffort,
-      settings: toPromptSettings(settings),
-    })
-    this.#activeTurns.set(handle.turnId, { sessionId: session.id, abort: handle.abort })
+    const turnId = crypto.randomUUID()
+    const context: TurnContext = { origin, persistConversation }
+    const messageId = crypto.randomUUID()
+    const association = { ownerType: 'session' as const, ownerId: session.id }
+    let handle: ConversationTurnHandle | null = null
+    this.#turnContexts.set(turnId, context)
+    this.#initializingTurns.add(turnId)
+    try {
+      handle = await this.#runtime.startTurn({
+        conversationId: session.id,
+        turnId,
+        modelId: command.modelId,
+        message: command.message,
+        attachments,
+        workspacePath: workspace.canonicalPath,
+        workspaceRevision: Number(new Date(workspace.updatedAt)),
+        configRevision: this.#credentials.getStatus().revision,
+        webSearch,
+        reasoningEffort,
+        settings: toPromptSettings(settings),
+      })
+      if (persistConversation) {
+        await persistTurnSetupTransaction({
+          attachmentIds: command.attachmentIds,
+          appendMessage: async () => {
+            await this.#sessions.appendMessage(session.id, {
+              id: messageId,
+              role: 'user',
+              content: command.message,
+              attachmentIds: command.attachmentIds,
+              createdAt: new Date().toISOString(),
+            })
+          },
+          associateAll: async (ids) => {
+            await this.#attachments.associateMany(ids, association)
+          },
+          removeMessage: async () => {
+            await this.#sessions.removeMessage(session.id, messageId)
+          },
+        })
+      }
+    } catch (error) {
+      if (handle) await handle.abort('Turn setup failed').catch(() => false)
+      if (createdSession) {
+        await this.#sessions.delete(session.id).catch(() => false)
+      }
+      if (!persistConversation) this.#removeEphemeralSession(session.id)
+      this.#initializingTurns.delete(turnId)
+      this.#deferredTurnEvents.delete(turnId)
+      this.#turnContexts.delete(turnId)
+      this.#assistantBuffers.delete(turnId)
+      throw error
+    }
+
+    this.#activeTurns.set(turnId, { sessionId: session.id, abort: handle.abort })
     if (origin === 'overlay') {
-      await this.#windowManager.setOverlayStreaming(true)
+      // Release focus only after startup and local bookkeeping have succeeded.
+      this.#windowManager.releaseOverlayFocus()
+      await this.#windowManager.setOverlayStreaming(true).catch(() => undefined)
     }
     void handle.completion.finally(() => {
-      this.#activeTurns.delete(handle.turnId)
+      this.#activeTurns.delete(turnId)
       if (origin === 'overlay') {
         void this.#windowManager.setOverlayStreaming(false)
       }
     })
-    return { sessionId: session.id, turnId: handle.turnId }
+    return { sessionId: session.id, turnId, persistConversation }
+  }
+
+  async #sendFromSurface(
+    command: Extract<ProductCommand, { type: 'conversation.send' }>,
+    origin: TurnOrigin,
+  ) {
+    if (origin !== 'overlay') {
+      const result = await this.#send(command, origin)
+      const publicResult = {
+        sessionId: result.sessionId,
+        turnId: result.turnId,
+        consumedAttachmentIds: [] as string[],
+      }
+      await this.#announceAndActivateTurn(
+        { type: 'conversation.started', ...publicResult, origin },
+        ['homepage'],
+      )
+      return publicResult
+    }
+    const pending = new Set(this.#pendingAttachmentIds)
+    const consumedIds = command.attachmentIds.filter((id) => pending.has(id))
+    if (consumedIds.some((id) => this.#reservedAttachmentIds.has(id))) {
+      throw new Error('One or more screenshots are already being sent.')
+    }
+    consumedIds.forEach((id) => this.#reservedAttachmentIds.add(id))
+    try {
+      const result = await this.#send(command, origin)
+      consumePendingAttachmentSnapshot(this.#pendingAttachmentIds, consumedIds)
+      if (!result.persistConversation) {
+        await Promise.all(
+          consumedIds.map((id) => this.#attachments.discardPending(id).catch(() => false)),
+        )
+      }
+      const publicResult = {
+        sessionId: result.sessionId,
+        turnId: result.turnId,
+        consumedAttachmentIds: consumedIds,
+      }
+      await this.#announceAndActivateTurn(
+        { type: 'conversation.started', ...publicResult, origin },
+        ['overlay'],
+      )
+      return publicResult
+    } finally {
+      consumedIds.forEach((id) => this.#reservedAttachmentIds.delete(id))
+    }
+  }
+
+  async #announceAndActivateTurn(
+    event: Extract<ProductEvent, { type: 'conversation.started' }>,
+    roles: readonly WindowRole[],
+  ): Promise<void> {
+    const deferred = this.#deferredTurnEvents.get(event.turnId) ?? []
+    this.#deferredTurnEvents.set(event.turnId, deferred)
+    try {
+      await announceTurnBeforeDeferredEvents(
+        () => this.#publish(event, roles),
+        deferred,
+        (envelope) => this.#recordTurnEventNow(envelope),
+      )
+    } finally {
+      this.#deferredTurnEvents.delete(event.turnId)
+      this.#initializingTurns.delete(event.turnId)
+    }
   }
 
   async #solvePending(modelId: string) {
     if (this.#pendingAttachmentIds.length === 0) {
       throw new Error('There are no screenshots to process.')
     }
-    return this.#send(
+    return this.#sendFromSurface(
       {
         type: 'conversation.send',
         message: 'Analyze the attached screenshots and provide the most useful direct answer. If this is a coding problem, explain the approach and provide a complete solution.',
@@ -536,16 +807,49 @@ export class ProductController {
         const verified = await this.#attachments.resolveVerifiedBytes(attachment.id)
         return {
           ...attachment,
-          preview: `data:${attachment.mimeType};base64,${verified.bytes.toString('base64')}`,
+          preview: createBoundedAttachmentPreview(verified.bytes),
         }
       }),
     )
   }
 
   async #clearPendingAttachments(): Promise<void> {
-    const ids = this.#pendingAttachmentIds.splice(0)
+    const ids = this.#pendingAttachmentIds.filter(
+      (id) => !this.#reservedAttachmentIds.has(id),
+    )
+    consumePendingAttachmentSnapshot(this.#pendingAttachmentIds, ids)
     await Promise.all(ids.map((id) => this.#attachments.discardPending(id).catch(() => false)))
     this.#publish({ type: 'attachments.cleared' }, ['overlay'])
+  }
+
+  async #deleteSession(sessionId: string): Promise<boolean> {
+    if (this.#ephemeralSessions.has(sessionId)) {
+      await this.#abortTurnsForSession(sessionId, 'Session deleted by user')
+      this.#removeEphemeralSession(sessionId)
+      return true
+    }
+    const session = await this.#sessions.get(sessionId)
+    if (!session) return false
+    await this.#abortTurnsForSession(sessionId, 'Session deleted by user')
+    const association = { ownerType: 'session' as const, ownerId: sessionId }
+    await this.#attachments.releaseAndDiscardMany(session.attachmentIds, association)
+    return this.#sessions.delete(sessionId)
+  }
+
+  async #abortTurnsForSession(sessionId: string, reason: string): Promise<void> {
+    await Promise.all(
+      [...this.#activeTurns.values()]
+        .filter((turn) => turn.sessionId === sessionId)
+        .map((turn) => turn.abort(reason)),
+    )
+  }
+
+  async #abortOverlayTurns(reason: string): Promise<void> {
+    await Promise.all(
+      [...this.#activeTurns.entries()]
+        .filter(([turnId]) => this.#turnContexts.get(turnId)?.origin === 'overlay')
+        .map(([, turn]) => turn.abort(reason)),
+    )
   }
 
   async #stop(turnId: string): Promise<boolean> {
@@ -581,7 +885,7 @@ export class ProductController {
       const verified = await this.#attachments.resolveVerifiedBytes(outcome.attachment.id)
       const attachment = {
         ...outcome.attachment,
-        preview: `data:${outcome.attachment.mimeType};base64,${verified.bytes.toString('base64')}`,
+        preview: createBoundedAttachmentPreview(verified.bytes),
       }
       this.#publish({ type: 'attachment.captured', attachment }, ['overlay'])
       return { ...outcome, attachment }
@@ -627,6 +931,9 @@ export class ProductController {
         'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
       )
     }
+    throw new Error(
+      'Screen Recording permission is required. Enable Codexly in System Settings → Privacy & Security → Screen Recording, then relaunch the app.',
+    )
   }
 
   async #toggleOverlay(preserveSession = false): Promise<void> {
@@ -643,17 +950,19 @@ export class ProductController {
    */
   async openOverlay(preserveSession = false): Promise<void> {
     const fresh = !preserveSession && this.#activeTurns.size === 0
-    if (fresh) await this.#sessions.clearActive()
+    if (fresh) {
+      await this.#sessions.clearActive()
+      if (this.#activeEphemeralSessionId) {
+        this.#removeEphemeralSession(this.#activeEphemeralSessionId)
+      }
+    }
     await this.#windowManager.showOverlay()
-    const active = fresh ? null : await this.#sessions.getActive()
+    const active = fresh
+      ? null
+      : this.#activeEphemeralSessionId
+        ? this.#ephemeralSessions.get(this.#activeEphemeralSessionId) ?? null
+        : await this.#sessions.getActive()
     this.#publish({ type: 'overlay.opened', fresh, sessionId: active?.id ?? null }, ['overlay'])
-  }
-
-  #moveOverlay(deltaX: number, deltaY: number): void {
-    const overlay = this.#windowManager.getWindow('overlay')
-    if (!overlay) return
-    const bounds = overlay.getBounds()
-    overlay.setPosition(bounds.x + deltaX, bounds.y + deltaY)
   }
 
   #runtimeStatus(): RuntimeStatus {
@@ -667,9 +976,17 @@ export class ProductController {
 
   #createThreadStore(): ConversationThreadStore {
     return {
-      getThreadId: async (conversationId) =>
-        (await this.#sessions.get(conversationId))?.codexThreadId ?? null,
+      getThreadId: async (conversationId) => {
+        if (this.#ephemeralSessions.has(conversationId)) {
+          return this.#ephemeralThreadIds.get(conversationId) ?? null
+        }
+        return (await this.#sessions.get(conversationId))?.codexThreadId ?? null
+      },
       setThreadId: async (conversationId, threadId) => {
+        if (this.#ephemeralSessions.has(conversationId)) {
+          this.#ephemeralThreadIds.set(conversationId, threadId)
+          return
+        }
         await this.#sessions.update(conversationId, (current) => ({
           ...current,
           codexThreadId: threadId,
@@ -685,8 +1002,20 @@ export class ProductController {
   }
 
   async #recordTurnEvent(envelope: TurnEventEnvelope): Promise<void> {
+    if (this.#initializingTurns.has(envelope.turnId)) {
+      const deferred = this.#deferredTurnEvents.get(envelope.turnId) ?? []
+      deferred.push(envelope)
+      this.#deferredTurnEvents.set(envelope.turnId, deferred)
+      return
+    }
+    await this.#recordTurnEventNow(envelope)
+  }
+
+  async #recordTurnEventNow(envelope: TurnEventEnvelope): Promise<void> {
     const { conversationId: sessionId, turnId, event } = envelope
-    const origin = this.#turnOrigins.get(sessionId) ?? 'overlay'
+    const context = this.#turnContexts.get(turnId)
+    const origin = context?.origin ?? 'overlay'
+    const persistConversation = context?.persistConversation ?? true
     if (event.type === 'assistant.delta') {
       const text = (this.#assistantBuffers.get(turnId) ?? '') + event.text
       this.#assistantBuffers.set(turnId, text)
@@ -702,13 +1031,15 @@ export class ProductController {
       // transcript; only real tool work belongs in the activity feed.
       if (NON_TOOL_ACTIVITY_KINDS.has(event.activity.kind)) return
       const detail = describeActivityDetail(event.activity.details)
-      await this.#sessions.appendToolEvent(sessionId, {
-        id: `${turnId}-${event.activity.id}-${envelope.sequence}`,
-        name: event.activity.title ?? event.activity.kind,
-        state: event.type === 'activity.started' ? 'started' : event.activity.status === 'failed' ? 'failed' : 'completed',
-        input: event.activity.details,
-        createdAt: envelope.occurredAt,
-      })
+      if (persistConversation) {
+        await this.#sessions.appendToolEvent(sessionId, {
+          id: `${turnId}-${event.activity.id}-${envelope.sequence}`,
+          name: event.activity.title ?? event.activity.kind,
+          state: event.type === 'activity.started' ? 'started' : event.activity.status === 'failed' ? 'failed' : 'completed',
+          input: event.activity.details,
+          createdAt: envelope.occurredAt,
+        }).catch(() => undefined)
+      }
       this.#publish({
         type: 'tool.status',
         sessionId,
@@ -736,28 +1067,40 @@ export class ProductController {
     if (event.type === 'turn.completed' || event.type === 'turn.interrupted' || event.type === 'turn.failed') {
       const content = this.#assistantBuffers.get(turnId) ?? ''
       this.#assistantBuffers.delete(turnId)
-      if (content) {
-        await this.#sessions.appendMessage(sessionId, {
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          content,
-          attachmentIds: [],
-          createdAt: envelope.occurredAt,
-        })
-      }
-      await this.#sessions.setTerminalState(
-        sessionId,
-        event.type === 'turn.completed' ? 'completed' : event.type === 'turn.interrupted' ? 'cancelled' : 'failed',
+      const { hasAnswer, state, failureMessage } = resolveTurnTerminalPresentation(
+        event,
+        content,
       )
-      if (event.type === 'turn.completed') {
-        await this.#maybeTitleSession(sessionId)
+      try {
+        const persistenceOperations: (() => Promise<unknown>)[] = []
+        if (persistConversation && hasAnswer) {
+          persistenceOperations.push(() => this.#sessions.appendMessage(sessionId, {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content,
+            attachmentIds: [],
+            createdAt: envelope.occurredAt,
+          }))
+        }
+        if (persistConversation) {
+          persistenceOperations.push(() => this.#sessions.setTerminalState(sessionId, state))
+          if (event.type === 'turn.completed' && hasAnswer) {
+            persistenceOperations.push(() => this.#maybeTitleSession(sessionId))
+          }
+        }
+        await persistTerminalBestEffort(persistenceOperations, () => {
+          if (failureMessage) {
+            this.#publish({ type: 'transcript.failed', sessionId, turnId, origin, message: failureMessage })
+          } else {
+            this.#publish({ type: 'transcript.complete', sessionId, turnId, origin })
+          }
+        })
+      } finally {
+        if (persistConversation) this.#publish({ type: 'sessions.changed' }, ['homepage'])
+        this.#turnContexts.delete(turnId)
+        this.#assistantBuffers.delete(turnId)
+        this.#deferredTurnEvents.delete(turnId)
       }
-      if (event.type === 'turn.failed') {
-        this.#publish({ type: 'transcript.failed', sessionId, turnId, origin, message: event.message })
-      } else {
-        this.#publish({ type: 'transcript.complete', sessionId, turnId, origin })
-      }
-      this.#publish({ type: 'sessions.changed' }, ['homepage'])
     }
   }
 
@@ -796,24 +1139,60 @@ export class ProductController {
       restore: async (snapshot: CapturePresentationSnapshot) => {
         const homepage = this.#windowManager.getWindow('homepage')
         const overlay = this.#windowManager.getWindow('overlay')
-        if (homepage) {
-          homepage.setBounds(snapshot.homepage.bounds)
-          if (snapshot.homepage.visible) homepage.show()
-          if (snapshot.homepage.focused) homepage.focus()
-        }
-        if (overlay) {
-          overlay.setBounds(snapshot.overlay.bounds)
-          overlay.setIgnoreMouseEvents(snapshot.overlay.clickThrough)
-          if (snapshot.overlay.visible) await this.#windowManager.showOverlay()
-        }
+        await restoreCapturePresentation(
+          snapshot,
+          homepage,
+          overlay,
+          () => this.#windowManager.showOverlay(),
+        )
       },
     }
   }
 
   async #requireSession(sessionId: string): Promise<SessionRecord> {
+    const ephemeral = this.#ephemeralSessions.get(sessionId)
+    if (ephemeral) return ephemeral
     const session = await this.#sessions.get(sessionId)
     if (!session) throw new Error('The session does not exist.')
     return session
+  }
+
+  #createEphemeralSession(workspaceId: string): SessionRecord {
+    const now = new Date().toISOString()
+    const session: SessionRecord = {
+      version: 1,
+      id: `session_${crypto.randomUUID()}`,
+      title: TITLE_FALLBACK,
+      createdAt: now,
+      updatedAt: now,
+      workspaceId,
+      codexThreadId: null,
+      terminalState: 'active',
+      messages: [],
+      toolEvents: [],
+      attachmentIds: [],
+      checkpoints: [],
+      continuation: null,
+    }
+    this.#ephemeralSessions.set(session.id, session)
+    this.#ephemeralThreadIds.set(session.id, null)
+    this.#activeEphemeralSessionId = session.id
+    return session
+  }
+
+  async #createSessionForCurrentPrivacy(): Promise<SessionRecord> {
+    const workspaceId = (await this.#workspaces.getSelected())?.id ?? null
+    if ((await this.#settings.load()).privacy.persistConversations) {
+      return this.#sessions.create({ workspaceId })
+    }
+    if (!workspaceId) throw new Error('Select a workspace before starting a session.')
+    return this.#createEphemeralSession(workspaceId)
+  }
+
+  #removeEphemeralSession(sessionId: string): void {
+    this.#ephemeralSessions.delete(sessionId)
+    this.#ephemeralThreadIds.delete(sessionId)
+    if (this.#activeEphemeralSessionId === sessionId) this.#activeEphemeralSessionId = null
   }
 
   #requireHomepage(role: WindowRole): void {

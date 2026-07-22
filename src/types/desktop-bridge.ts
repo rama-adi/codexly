@@ -4,7 +4,7 @@ import type {
   ConnectionTestResult,
   ModelOption,
 } from '../shared/schemas/models'
-import type { ProductEvent } from '../shared/ipc/product'
+import type { ConversationTurnResult, ProductEvent } from '../shared/ipc/product'
 import type {
   SubscriptionEvent,
   SubscriptionTopic,
@@ -41,9 +41,9 @@ export interface CodexlyDesktopBridgeV1 {
     message: string
     modelId: string
     attachmentIds: string[]
-  }): Promise<unknown>
+  }): Promise<ConversationTurnResult>
   stopTurn(turnId: string): Promise<boolean>
-  solvePending(modelId: string): Promise<unknown>
+  solvePending(modelId: string): Promise<ConversationTurnResult>
   capture(): Promise<unknown>
   captureSelection(): Promise<unknown>
   listAttachments(): Promise<unknown>

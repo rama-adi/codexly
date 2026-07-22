@@ -66,6 +66,8 @@ export type AttachmentStoreOptions = Readonly<{
   createId?: () => string
   now?: () => Date
   retentionHooks?: AttachmentRetentionHooks
+  /** Deterministic fault/telemetry seam invoked for every item before the batch commit. */
+  beforeReleaseDiscard?: (attachmentId: string, index: number) => void | Promise<void>
 }>
 
 export class AttachmentLimitError extends Error {
@@ -89,6 +91,7 @@ export class AttachmentStore {
   private readonly createId: () => string
   private readonly now: () => Date
   private readonly retentionHooks: AttachmentRetentionHooks
+  private readonly beforeReleaseDiscard?: AttachmentStoreOptions['beforeReleaseDiscard']
   private queue: Promise<void> = Promise.resolve()
   private initialized = false
 
@@ -106,6 +109,7 @@ export class AttachmentStore {
     this.createId = options.createId ?? randomUUID
     this.now = options.now ?? (() => new Date())
     this.retentionHooks = options.retentionHooks ?? {}
+    this.beforeReleaseDiscard = options.beforeReleaseDiscard
   }
 
   initialize(): Promise<void> {
@@ -251,6 +255,116 @@ export class AttachmentStore {
       await this.retentionHooks.associated?.(result.attachment, parsed)
     }
     return result.attachment
+  }
+
+  async associateMany(
+    ids: readonly string[],
+    association: AttachmentAssociation,
+  ): Promise<readonly AttachmentRecord[]> {
+    const parsed = AssociationSchema.parse(association)
+    const uniqueIds = [...new Set(ids)]
+    const result = await this.enqueue(async () => {
+      await this.ensureInitialized()
+      const index = await this.readIndex()
+      const requested = new Set(uniqueIds)
+      const found = index.attachments.filter((attachment) => requested.has(attachment.id))
+      if (found.length !== uniqueIds.length) {
+        throw new AttachmentVerificationError('Attachment does not exist.')
+      }
+      const matches = (candidate: AttachmentAssociation) =>
+        candidate.ownerType === parsed.ownerType && candidate.ownerId === parsed.ownerId
+      const changed = found.filter((attachment) => !attachment.associations.some(matches))
+      if (changed.length === 0) return { attachments: found, changed: [] as AttachmentRecord[] }
+      const changedIds = new Set(changed.map((attachment) => attachment.id))
+      const attachments = index.attachments.map((attachment) =>
+        changedIds.has(attachment.id)
+          ? AttachmentRecordSchema.parse({
+              ...attachment,
+              associations: [...attachment.associations, parsed],
+            })
+          : attachment,
+      )
+      await this.metadataStore.write({ version: 1, attachments })
+      return {
+        attachments: uniqueIds.map((id) => attachments.find((item) => item.id === id)!),
+        changed: attachments.filter((attachment) => changedIds.has(attachment.id)),
+      }
+    })
+    for (const attachment of result.changed) {
+      await Promise.resolve(this.retentionHooks.associated?.(attachment, parsed)).catch(
+        () => undefined,
+      )
+    }
+    return result.attachments
+  }
+
+  /** Atomically drops one owner and destroys the blob when no owners remain. */
+  async releaseAndDiscard(
+    id: string,
+    association: AttachmentAssociation,
+  ): Promise<boolean> {
+    return (await this.releaseAndDiscardMany([id], association)).removedIds.includes(id)
+  }
+
+  /**
+   * Releases one owner across a batch with a single metadata commit. Final-owner
+   * blobs are removed only after that commit; an interrupted cleanup can leave
+   * only harmless orphan blobs that startup reconciliation removes, so retrying
+   * can never observe a half-released metadata batch.
+   */
+  async releaseAndDiscardMany(
+    ids: readonly string[],
+    association: AttachmentAssociation,
+  ): Promise<Readonly<{ releasedIds: readonly string[]; removedIds: readonly string[] }>> {
+    const parsed = AssociationSchema.parse(association)
+    const uniqueIds = [...new Set(ids)]
+    const result = await this.enqueue(async () => {
+      await this.ensureInitialized()
+      const index = await this.readIndex()
+      const matches = (candidate: AttachmentAssociation) =>
+        candidate.ownerType === parsed.ownerType && candidate.ownerId === parsed.ownerId
+      const requested = new Set(uniqueIds)
+      const released = index.attachments
+        .filter((attachment) => requested.has(attachment.id) && attachment.associations.some(matches))
+        .map((attachment) =>
+          AttachmentRecordSchema.parse({
+            ...attachment,
+            associations: attachment.associations.filter((candidate) => !matches(candidate)),
+          }),
+        )
+      const releasedById = new Map(released.map((attachment) => [attachment.id, attachment]))
+      const removed = released.filter((attachment) => attachment.associations.length === 0)
+      const removedIds = new Set(removed.map((attachment) => attachment.id))
+      // Validate every batch step before the one atomic metadata commit. A
+      // crash after that commit can leave only unreferenced blobs, which the
+      // existing startup reconciliation safely removes; it can never leave a
+      // retained metadata record pointing at a blob moved by a partial batch.
+      for (const [itemIndex, attachment] of removed.entries()) {
+        await this.beforeReleaseDiscard?.(attachment.id, itemIndex)
+      }
+      const attachments = index.attachments.flatMap((attachment) => {
+        if (removedIds.has(attachment.id)) return []
+        const updated = releasedById.get(attachment.id)
+        return [updated ?? attachment]
+      })
+      if (released.length > 0) {
+        await this.metadataStore.write({ version: 1, attachments })
+      }
+      await Promise.all(
+        removed.map((attachment) => unlink(this.pathForId(attachment.id)).catch(ignoreMissing)),
+      )
+      if (removed.length > 0) await syncDirectory(this.blobsPath).catch(() => undefined)
+      return { released, removedIds: [...removedIds] }
+    })
+    for (const attachment of result.released) {
+      await Promise.resolve(this.retentionHooks.released?.(attachment, parsed)).catch(
+        () => undefined,
+      )
+    }
+    return {
+      releasedIds: result.released.map((attachment) => attachment.id),
+      removedIds: result.removedIds,
+    }
   }
 
   async release(id: string, association: AttachmentAssociation): Promise<AttachmentRecord> {

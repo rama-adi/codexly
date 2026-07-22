@@ -5,6 +5,7 @@ import {
   CaptureBusyError,
   CaptureCancelledError,
   CaptureCoordinator,
+  CaptureRestorationError,
   type CapturePresentationAdapter,
   type CapturePresentationSnapshot,
 } from './capture-coordinator'
@@ -137,6 +138,59 @@ describe('CaptureCoordinator', () => {
     }))
     await expect(service.capture({ selectTarget: async () => target })).rejects.toBe(failure)
     expect(events).toEqual(['snapshot', 'prepare', 'capture', 'restore'])
+  })
+
+  it('surfaces restoration failure and preserves an earlier operation failure', async () => {
+    const events: string[] = []
+    const operationFailure = new Error('capture failed')
+    const restoreFailure = new Error('restore failed')
+    const presentationAdapter = presentation(events)
+    presentationAdapter.restore = async () => {
+      events.push('restore')
+      throw restoreFailure
+    }
+    const service = coordinator(
+      events,
+      vi.fn(async () => {
+        events.push('capture')
+        throw operationFailure
+      }),
+      undefined,
+      undefined,
+      presentationAdapter,
+    )
+
+    const error = await service
+      .capture({ selectTarget: async () => target })
+      .catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(CaptureRestorationError)
+    expect((error as CaptureRestorationError).errors).toEqual([
+      operationFailure,
+      restoreFailure,
+    ])
+    expect(service.capturing).toBe(false)
+    expect(events).toEqual(['snapshot', 'prepare', 'capture', 'restore'])
+  })
+
+  it('rejects with restoration failure after an otherwise successful capture', async () => {
+    const events: string[] = []
+    const restoreFailure = new Error('restore failed')
+    const presentationAdapter = presentation(events)
+    presentationAdapter.restore = async () => {
+      throw restoreFailure
+    }
+    const service = coordinator(
+      events,
+      undefined,
+      undefined,
+      undefined,
+      presentationAdapter,
+    )
+
+    await expect(
+      service.capture({ selectTarget: async () => target }),
+    ).rejects.toBe(restoreFailure)
+    expect(service.capturing).toBe(false)
   })
 
   it('returns a distinct cancellation outcome and restores presentation', async () => {

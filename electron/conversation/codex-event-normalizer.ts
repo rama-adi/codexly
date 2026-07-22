@@ -43,26 +43,30 @@ interface StreamPart {
 
 export function normalizeCodexEvent(part: StreamPart): NormalizedCodexEvent[] {
   switch (part.type) {
-    case 'text-delta':
-      return typeof part.text === 'string'
+    case 'text-delta': {
+      const text = deltaText(part)
+      return text !== undefined
         ? [
             {
               type: 'assistant.delta',
-              text: part.text,
+              text,
               ...(typeof part.id === 'string' ? { itemId: part.id } : {}),
             },
           ]
         : []
-    case 'reasoning-delta':
-      return typeof part.text === 'string'
+    }
+    case 'reasoning-delta': {
+      const text = deltaText(part)
+      return text !== undefined
         ? [
             {
               type: 'reasoning.delta',
-              text: part.text,
+              text,
               ...(typeof part.id === 'string' ? { itemId: part.id } : {}),
             },
           ]
         : []
+    }
     case 'tool-call': {
       const input = normalizeToolInput(part.input)
       const title = toolTitle(input)
@@ -127,6 +131,17 @@ export function normalizeCodexEvent(part: StreamPart): NormalizedCodexEvent[] {
     default:
       return []
   }
+}
+
+/**
+ * LanguageModelV4 providers emit `delta`; AI SDK's StreamTextResult emits the
+ * mapped form as `text`. Accept both because ConversationRuntime deliberately
+ * consumes the SDK stream boundary and tests may exercise either side.
+ */
+function deltaText(part: StreamPart): string | undefined {
+  if (typeof part.delta === 'string') return part.delta
+  if (typeof part.text === 'string') return part.text
+  return undefined
 }
 
 function normalizeRaw(rawValue: unknown): NormalizedCodexEvent[] {

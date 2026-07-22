@@ -98,6 +98,32 @@ const baseInput = {
 }
 
 describe('ConversationRuntime', () => {
+  it('preserves provider-native delta fields through the runtime event store', async () => {
+    const { provider } = createProvider()
+    const stores = createStores()
+    const runtime = new ConversationRuntime({
+      providers: createManager(provider),
+      threads: stores.threads,
+      events: stores.eventStore,
+      stream: (() => ({
+        stream: asyncParts([
+          { type: 'reasoning-delta', id: 'reasoning', delta: 'inspect image' },
+          { type: 'text-delta', id: 'answer', delta: 'visible answer' },
+        ]),
+        finishReason: Promise.resolve('stop'),
+      })) as unknown as typeof import('ai').streamText,
+      generateTurnId: () => 'turn-provider-shape',
+    })
+
+    expect(await (await runtime.startTurn(baseInput)).completion).toBe('completed')
+    expect(stores.events.map((event) => event.event)).toEqual(
+      expect.arrayContaining([
+        { type: 'reasoning.delta', itemId: 'reasoning', text: 'inspect image' },
+        { type: 'assistant.delta', itemId: 'answer', text: 'visible answer' },
+      ]),
+    )
+  })
+
   it('resumes a persisted thread with locked-down model settings and records events', async () => {
     const { provider, settings } = createProvider()
     const stores = createStores('thr-existing')
@@ -595,5 +621,25 @@ describe('ConversationRuntime', () => {
       success: false,
       error: 'codex offline',
     })
+  })
+
+  it('uses a caller-supplied turn ID so routing can be installed before startup events', async () => {
+    const { provider } = createProvider()
+    const stores = createStores()
+    const runtime = new ConversationRuntime({
+      providers: createManager(provider),
+      threads: stores.threads,
+      events: stores.eventStore,
+      stream: (() => ({
+        stream: asyncParts([]),
+        finishReason: Promise.resolve('stop'),
+      })) as unknown as typeof import('ai').streamText,
+      generateTurnId: () => 'generated-id-must-not-win',
+    })
+
+    const handle = await runtime.startTurn({ ...baseInput, turnId: 'routed-turn' })
+    expect(handle.turnId).toBe('routed-turn')
+    expect(stores.events[0]?.turnId).toBe('routed-turn')
+    await handle.completion
   })
 })

@@ -12,6 +12,32 @@ describe('normalizeCodexEvent', () => {
     ).toEqual([{ type: 'reasoning.delta', itemId: 'r1', text: 'think' }])
   })
 
+  it('normalizes the installed app-server provider delta shape', () => {
+    expect(
+      normalizeCodexEvent({ type: 'text-delta', id: 'a1', delta: 'provider answer' }),
+    ).toEqual([
+      { type: 'assistant.delta', itemId: 'a1', text: 'provider answer' },
+    ])
+    expect(
+      normalizeCodexEvent({ type: 'reasoning-delta', id: 'r1', delta: 'provider thought' }),
+    ).toEqual([
+      { type: 'reasoning.delta', itemId: 'r1', text: 'provider thought' },
+    ])
+  })
+
+  it.each([
+    { type: 'text-delta', id: 'empty', delta: '', text: 'legacy' },
+    { type: 'text-delta', id: 'missing' },
+    { type: 'reasoning-delta', id: 'wrong', delta: 12, text: null },
+  ])('handles malformed and empty delta parts deterministically: %o', (part) => {
+    const result = normalizeCodexEvent(part)
+    if (part.id === 'empty') {
+      expect(result).toEqual([{ type: 'assistant.delta', itemId: 'empty', text: '' }])
+    } else {
+      expect(result).toEqual([])
+    }
+  })
+
   it('discovers persistent thread and provider turn ids from raw chunks', () => {
     expect(
       normalizeCodexEvent({
