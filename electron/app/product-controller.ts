@@ -55,6 +55,9 @@ import { SessionStore, type SessionRecord } from '../persistence/session-store'
 import { SettingsStore } from '../persistence/settings-store'
 import { WorkspaceStore } from '../persistence/workspace-store'
 import { ShortcutManager } from '../shortcuts/shortcut-manager'
+import { logger } from '../shared/logger'
+
+const log = logger.child('product')
 
 const CredentialRecordSchema = z
   .object({ version: z.literal(1), encryptedApiKey: z.string().nullable() })
@@ -518,6 +521,9 @@ export class ProductController {
         }
         return null
       }
+      case 'window.setOverlayFocusable':
+        this.#windowManager.setOverlayFocusable(command.focusable)
+        return null
     }
   }
 
@@ -938,8 +944,20 @@ export class ProductController {
 
   async #toggleOverlay(preserveSession = false): Promise<void> {
     const overlay = this.#windowManager.getWindow('overlay')
-    if (overlay?.isVisible()) await this.#windowManager.hideOverlay()
-    else await this.openOverlay(preserveSession)
+    log.info('toggleOverlay', {
+      preserveSession,
+      overlayVisible: overlay?.isVisible() ?? false,
+      activeTurns: this.#activeTurns.size,
+    })
+    if (overlay?.isVisible()) {
+      // The overlay and homepage are exclusive surfaces: dismissing the HUD
+      // hands the screen back to the settings window rather than leaving the
+      // app with no visible window.
+      await this.#windowManager.hideOverlay()
+      this.#windowManager.showHomepage()
+    } else {
+      await this.openOverlay(preserveSession)
+    }
   }
 
   /**
@@ -950,6 +968,7 @@ export class ProductController {
    */
   async openOverlay(preserveSession = false): Promise<void> {
     const fresh = !preserveSession && this.#activeTurns.size === 0
+    log.info('openOverlay', { preserveSession, fresh, activeTurns: this.#activeTurns.size })
     if (fresh) {
       await this.#sessions.clearActive()
       if (this.#activeEphemeralSessionId) {
@@ -1196,7 +1215,10 @@ export class ProductController {
   }
 
   #requireHomepage(role: WindowRole): void {
-    if (role !== 'homepage') throw new Error('This action is available only from the homepage.')
+    if (role !== 'homepage') {
+      log.warn('Homepage-only action attempted from another surface', { role })
+      throw new Error('This action is available only from the homepage.')
+    }
   }
 }
 

@@ -115,7 +115,16 @@ const invokeProduct = async (command: ProductCommand): Promise<unknown> => {
   const response = ProductResponseSchema.parse(
     await ipcRenderer.invoke(IPC_CHANNELS.product, command),
   )
-  if (!response.ok) throw new Error(response.error.message)
+  if (!response.ok) {
+    console.error('[preload] product command failed', {
+      command: command.type,
+      code: response.error.code,
+      message: response.error.message,
+    })
+    const error = new Error(response.error.message)
+    ;(error as { code?: string }).code = response.error.code
+    throw error
+  }
   return response.data
 }
 
@@ -233,6 +242,9 @@ const bridge: CodexlyDesktopBridgeV1 = Object.freeze({
   },
   resizeOverlay: async (width: number, height: number) => {
     await invokeProduct({ type: 'window.resizeOverlay', width, height })
+  },
+  setOverlayFocusable: async (focusable: boolean) => {
+    await invokeProduct({ type: 'window.setOverlayFocusable', focusable })
   },
   onProductEvent(listener: (event: ProductEvent) => void) {
     productListeners.add(listener)

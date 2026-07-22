@@ -9,9 +9,19 @@ import { DEFAULT_SETTINGS, SettingsStore } from './persistence/settings-store'
 import type { Bootstrap } from '../src/shared/schemas/bootstrap'
 import type { Capability } from '../src/shared/schemas/capabilities'
 import type { WindowState } from '../src/shared/schemas/windows'
+import { logger } from './shared/logger'
 import { WindowManager } from './windows/window-manager'
 import type { WindowRole } from './windows/window-options'
 import type { WindowSnapshot } from './windows/window-state'
+
+const log = logger.child('main')
+
+process.on('uncaughtException', (error) => {
+  log.error('Uncaught exception in main process', error)
+})
+process.on('unhandledRejection', (reason) => {
+  log.error('Unhandled promise rejection in main process', reason)
+})
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const appRoot = path.join(__dirname, '..')
@@ -44,6 +54,14 @@ app.on('window-all-closed', () => {
 })
 
 app.on('activate', () => {
+  // macOS fires "activate" whenever the app comes to the foreground — including
+  // side effects of overlay actions (screen capture, the HUD taking keyboard
+  // focus). Surfacing the homepage here would break overlay/homepage
+  // exclusivity by popping settings on top of an active overlay, so only reveal
+  // the homepage when the overlay is not already the visible surface.
+  const overlayVisible = windowManager.getWindow('overlay')?.isVisible() ?? false
+  log.info('app.activate', { overlayVisible })
+  if (overlayVisible) return
   windowManager.showHomepage()
 })
 
@@ -68,6 +86,7 @@ app.on('before-quit', (event) => {
 })
 
 void app.whenReady().then(async () => {
+  log.info('App ready — bootstrapping', { platform: process.platform, packaged: app.isPackaged })
   const userDataPath = app.getPath('userData')
   const settingsStore = new SettingsStore({ userDataPath })
   productController = await ProductController.create({
@@ -92,6 +111,7 @@ void app.whenReady().then(async () => {
     }
   })
   windowManager.start()
+  log.info('Bootstrap complete — windows started')
 
   tray = createCodexlyTray({
     launchOverlay: () => productController?.openOverlay() ?? windowManager.showOverlay(),

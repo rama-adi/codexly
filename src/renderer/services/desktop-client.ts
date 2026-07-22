@@ -109,6 +109,7 @@ export const desktopClient = {
   openHome: () => requireBridge().openHome(),
   toggleOverlay: (preserveSession?: boolean) => requireBridge().toggleOverlay(preserveSession),
   resizeOverlay: (width: number, height: number) => requireBridge().resizeOverlay(width, height),
+  setOverlayFocusable: (focusable: boolean) => requireBridge().setOverlayFocusable(focusable),
   onProductEvent(listener: (event: ProductEvent) => void) {
     return requireBridge().onProductEvent(listener)
   },

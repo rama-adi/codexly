@@ -1,6 +1,8 @@
 import { BrowserWindow } from 'electron'
 import path from 'node:path'
 
+import { logger } from '../shared/logger'
+
 import {
   createHomepageWindowOptions,
   createOverlayWindowOptions,
@@ -22,6 +24,8 @@ export interface WindowManagerOptions {
   /** Invoked when the user closes the homepage window (not on teardown). */
   onHomepageClosed?: () => void
 }
+
+const log = logger.child('windows')
 
 export class WindowManager {
   private homepageWindow: BrowserWindow | null = null
@@ -72,6 +76,14 @@ export class WindowManager {
   showHomepage(): void {
     this.assertActive()
     const window = this.ensureHomepageWindow()
+    log.info('showHomepage', {
+      wasVisible: window.isVisible(),
+      overlayVisible: this.getWindow('overlay')?.isVisible() ?? false,
+    })
+
+    // The homepage and the overlay are mutually exclusive surfaces: revealing
+    // one always dismisses the other so they can never be displayed together.
+    void this.hideOverlay()
 
     if (window.isMinimized()) {
       window.restore()
@@ -92,6 +104,17 @@ export class WindowManager {
     return this.enqueueOverlayTransition(async () => {
       this.assertActive()
       const window = this.ensureOverlayWindow()
+      log.info('showOverlay', {
+        wasVisible: window.isVisible(),
+        state: this.overlayState,
+        homepageVisible: this.getWindow('homepage')?.isVisible() ?? false,
+      })
+
+      // Mutually exclusive with the homepage; hide it before revealing the HUD.
+      const homepage = this.getWindow('homepage')
+      if (homepage?.isVisible()) {
+        homepage.hide()
+      }
 
       if (window.isVisible()) {
         this.applyOverlayTransition({ type: 'shown' }, window)
@@ -106,6 +129,12 @@ export class WindowManager {
   hideOverlay(): Promise<void> {
     return this.enqueueOverlayTransition(async () => {
       const window = this.getWindow('overlay')
+      log.info('hideOverlay', {
+        exists: Boolean(window),
+        wasVisible: window?.isVisible() ?? false,
+        wasFocused: window?.isFocused() ?? false,
+        state: this.overlayState,
+      })
 
       if (!window || !window.isVisible()) {
         if (window) {
@@ -129,6 +158,31 @@ export class WindowManager {
   releaseOverlayFocus(): void {
     const window = this.getWindow('overlay')
     if (window?.isFocused()) {
+      window.blur()
+    }
+  }
+
+  /**
+   * Toggles whether the overlay can become the key window. It stays
+   * non-focusable so its controls never pull focus from the user's frontmost
+   * app; the renderer flips this on only while the chat view needs keyboard
+   * input, and off again (yielding key focus) once that view closes.
+   */
+  setOverlayFocusable(focusable: boolean): void {
+    const window = this.getWindow('overlay')
+    log.debug('setOverlayFocusable', {
+      focusable,
+      exists: Boolean(window),
+      visible: window?.isVisible() ?? false,
+      wasFocused: window?.isFocused() ?? false,
+    })
+    if (!window) {
+      return
+    }
+    window.setFocusable(focusable)
+    if (focusable) {
+      window.focus()
+    } else if (window.isFocused()) {
       window.blur()
     }
   }

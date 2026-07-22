@@ -71,6 +71,9 @@ export function Overlay() {
 
   const reportError = useCallback((error: unknown, fallback: string) => {
     const message = error instanceof Error && error.message ? error.message : fallback
+    // Surface the full error (message + stack) to the renderer console so the
+    // overlay's failures are diagnosable alongside the main-process logs.
+    console.error(`[overlay] ${fallback}`, error)
     setNotice(message)
     setVisibleError(message)
   }, [])
@@ -461,6 +464,25 @@ export function Overlay() {
     [],
   )
 
+  // The overlay is created non-focusable so clicking its controls never pulls
+  // key focus away from the app the user is working in. Only the chat view
+  // needs the keyboard, so make the window focusable while it is open — and
+  // release focus back to the user's app when leaving it.
+  useEffect(() => {
+    if (!desktopClient.available) return
+    const focusable = view === 'chat'
+    let cancelled = false
+    void desktopClient
+      .setOverlayFocusable(focusable)
+      .then(() => {
+        if (!cancelled && focusable) input.current?.focus()
+      })
+      .catch((error) => reportError(error, 'Could not adjust overlay focus.'))
+    return () => {
+      cancelled = true
+    }
+  }, [view, reportError])
+
   useEffect(() => {
     if (!root.current || !desktopClient.available) return
     let frame: number | undefined
@@ -683,8 +705,9 @@ export function Overlay() {
     actionLocksRef.current.add('settings')
     setVisibleError(undefined)
     try {
+      // Opening the homepage dismisses the overlay on its own (the two are
+      // mutually exclusive surfaces), so this is all that's needed.
       await desktopClient.openHome()
-      await desktopClient.toggleOverlay()
     } catch (error) {
       reportError(error, 'Could not open settings.')
     } finally {

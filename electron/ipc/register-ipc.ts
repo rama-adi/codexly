@@ -24,6 +24,7 @@ import {
   type ProductEvent,
 } from '../../src/shared/ipc/product'
 import { BootstrapSchema, type Bootstrap } from '../../src/shared/schemas/bootstrap'
+import { logger } from '../shared/logger'
 import type { WindowRole } from '../windows/window-options'
 import {
   authorizeRequestForRole,
@@ -62,10 +63,13 @@ export interface IpcRegistration {
   dispose(): void
 }
 
+const log = logger.child('ipc')
+
 export function registerIpc(options: RegisterIpcOptions): IpcRegistration {
   const subscriptions = new Map<string, SubscriptionRecord>()
   const ownersWithCleanup = new Set<number>()
   let disposed = false
+  log.info('Registering IPC handlers')
 
   ipcMain.handle(IPC_CHANNELS.request, async (event, rawRequest: unknown) => {
     const receivedAt = new Date().toISOString()
@@ -77,6 +81,12 @@ export function registerIpc(options: RegisterIpcOptions): IpcRegistration {
       const request = parseSupportedRequest(rawRequest)
       authorizeRequestForRole(role, request)
 
+      log.debug('Bridge request received', {
+        role,
+        operation: request.operation,
+        requestId,
+        senderId: event.sender.id,
+      })
       return await handleRequest(
         event,
         role,
@@ -87,6 +97,11 @@ export function registerIpc(options: RegisterIpcOptions): IpcRegistration {
         options,
       )
     } catch (error) {
+      log.error('Bridge request failed', error, {
+        operation,
+        requestId,
+        senderId: event.sender.id,
+      })
       return parseResponse(operation, {
         version: 1,
         requestId,
@@ -99,15 +114,35 @@ export function registerIpc(options: RegisterIpcOptions): IpcRegistration {
   })
 
   ipcMain.handle(IPC_CHANNELS.product, async (event, rawCommand: unknown) => {
+    const startedAt = Date.now()
+    const commandType =
+      rawCommand && typeof rawCommand === 'object' && 'type' in rawCommand
+        ? String((rawCommand as { type: unknown }).type)
+        : 'unknown'
+    let role: WindowRole | undefined
     try {
-      const role = validateManagedSender(event, options)
+      role = validateManagedSender(event, options)
       const command = ProductCommandSchema.parse(rawCommand)
       authorizeProductCommand(role, command)
-      return ProductResponseSchema.parse({
-        ok: true,
-        data: await options.handleProduct(command, role),
+      log.debug('Product command received', {
+        role,
+        command: command.type,
+        senderId: event.sender.id,
       })
+      const data = await options.handleProduct(command, role)
+      log.debug('Product command handled', {
+        role,
+        command: command.type,
+        durationMs: Date.now() - startedAt,
+      })
+      return ProductResponseSchema.parse({ ok: true, data })
     } catch (error) {
+      log.error('Product command failed', error, {
+        role: role ?? 'unresolved',
+        command: commandType,
+        senderId: event.sender.id,
+        durationMs: Date.now() - startedAt,
+      })
       return ProductResponseSchema.parse({
         ok: false,
         error: {
@@ -258,6 +293,7 @@ function validateManagedSender(
 ): WindowRole {
   const role = options.resolveWindowRole(event.sender.id)
   if (!role) {
+    log.warn('Sender is not a managed window', { senderId: event.sender.id })
     throw new BridgeAccessError(
       'unauthorized',
       'The sender is not a managed Codexly window.',
@@ -269,6 +305,11 @@ function validateManagedSender(
     !senderFrame ||
     senderFrame.routingId !== event.sender.mainFrame.routingId
   ) {
+    log.warn('Bridge request from non-main frame', {
+      role,
+      senderId: event.sender.id,
+      hasFrame: Boolean(senderFrame),
+    })
     throw new BridgeAccessError(
       'unauthorized',
       'Desktop bridge requests must originate from the managed main frame.',
@@ -340,8 +381,14 @@ function authorizeProductCommand(role: WindowRole, command: ProductCommand): voi
     'window.openHome',
     'window.toggleOverlay',
     'window.resizeOverlay',
+    'window.setOverlayFocusable',
   ])
   if (!allowed.has(command.type)) {
+    log.warn('Rejected product command: not permitted for role', {
+      role,
+      command: command.type,
+      allowed: [...allowed],
+    })
     throw new BridgeAccessError('forbidden', 'The overlay cannot perform this action.')
   }
 }

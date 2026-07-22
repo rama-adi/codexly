@@ -53,6 +53,7 @@ export const ProductCommandSchema = z.discriminatedUnion('type', [
     })
     .strict(),
   z.object({ type: z.literal('window.resizeOverlay'), width: z.number().int().min(320).max(1200), height: z.number().int().min(48).max(1200) }).strict(),
+  z.object({ type: z.literal('window.setOverlayFocusable'), focusable: z.boolean() }).strict(),
 ])
 
 export const ProductResponseSchema = z.discriminatedUnion('ok', [

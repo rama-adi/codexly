@@ -36,6 +36,7 @@ vi.mock('../desktop', () => ({
     clearAttachments: mocks.clearAttachments,
     createSession: mocks.createSession,
     resizeOverlay: vi.fn(async () => undefined),
+    setOverlayFocusable: vi.fn(async () => undefined),
     capture: vi.fn(),
     captureSelection: vi.fn(),
     discardAttachment: mocks.discardAttachment,

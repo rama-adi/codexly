@@ -52,6 +52,7 @@ export interface CodexlyDesktopBridgeV1 {
   openHome(): Promise<void>
   toggleOverlay(preserveSession?: boolean): Promise<void>
   resizeOverlay(width: number, height: number): Promise<void>
+  setOverlayFocusable(focusable: boolean): Promise<void>
   onProductEvent(listener: (event: ProductEvent) => void): () => void
 }
 

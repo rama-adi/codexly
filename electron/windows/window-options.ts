@@ -78,6 +78,12 @@ export function createOverlayWindowOptions(
     skipTaskbar: true,
     alwaysOnTop: true,
     show: false,
+    // The HUD must never become the key window: clicking a control (capture,
+    // select area, solve, model picker) would otherwise deactivate whatever app
+    // the user is working in, causing a focus/unfocus flicker. It is created
+    // non-focusable and is only made focusable while the chat view needs the
+    // keyboard (see WindowManager.setOverlayFocusable).
+    focusable: false,
     // A macOS panel floats above full-screen spaces without stealing focus.
     ...(process.platform === 'darwin' ? { type: 'panel' as const } : {}),
     webPreferences: secureWebPreferences(preloadPath),
