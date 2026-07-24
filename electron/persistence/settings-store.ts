@@ -46,6 +46,7 @@ export const DEFAULT_SETTINGS = Object.freeze<Settings>({
     includeMicrophone: false,
     includeSystemAudio: false,
     screenshotFormat: 'png',
+    autoAnswer: false,
   },
   assistant: {
     model: 'gpt-5.5',
@@ -147,9 +148,33 @@ const migrateSettingsV2ToV3: Migration = {
   },
 }
 
+/**
+ * Introduces capture.autoAnswer. A v3 settings.json has no such key, so it
+ * receives the documented default (off); any existing boolean is preserved.
+ */
+const migrateSettingsV3ToV4: Migration = {
+  from: 3,
+  to: 4,
+  migrate: (record) => {
+    const capture = asRecord(record.capture)
+    return {
+      ...record,
+      version: 4,
+      capture: {
+        ...capture,
+        autoAnswer:
+          typeof capture.autoAnswer === 'boolean'
+            ? capture.autoAnswer
+            : DEFAULT_SETTINGS.capture.autoAnswer,
+      },
+    }
+  },
+}
+
 const settingsMigrations: readonly Migration[] = [
   migrateSettingsV1ToV2,
   migrateSettingsV2ToV3,
+  migrateSettingsV3ToV4,
 ]
 
 function asRecord(value: unknown): Record<string, unknown> {

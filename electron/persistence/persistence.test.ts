@@ -116,7 +116,7 @@ describe('SettingsStore', () => {
     const store = new SettingsStore({ userDataPath: directory })
     const loaded = await store.load()
 
-    expect(loaded.version).toBe(3)
+    expect(loaded.version).toBe(4)
     // Preserved values survive the upgrade.
     expect(loaded.appearance.theme).toBe('dark')
     expect(loaded.assistant.model).toBe('gpt-old')
@@ -132,6 +132,8 @@ describe('SettingsStore', () => {
     expect(loaded.assistant.customInstructions).toBe('')
     // v2 -> v3 injects default shortcuts.
     expect(loaded.shortcuts).toEqual(DEFAULT_SETTINGS.shortcuts)
+    // v3 -> v4 injects the auto-answer default.
+    expect(loaded.capture.autoAnswer).toBe(false)
   })
 
   it('preserves existing accelerators when migrating v2 settings to v3', async () => {
@@ -161,9 +163,10 @@ describe('SettingsStore', () => {
     const store = new SettingsStore({ userDataPath: directory })
     const loaded = await store.load()
 
-    expect(loaded.version).toBe(3)
+    expect(loaded.version).toBe(4)
     expect(loaded.shortcuts.toggleOverlay).toBe('CommandOrControl+Alt+O')
     expect(loaded.shortcuts.summonOverlay).toBe(DEFAULT_SETTINGS.shortcuts.summonOverlay)
     expect(loaded.shortcuts.solve).toBe(DEFAULT_SETTINGS.shortcuts.solve)
+    expect(loaded.capture.autoAnswer).toBe(false)
   })
 })

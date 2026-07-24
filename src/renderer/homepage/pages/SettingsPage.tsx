@@ -1,5 +1,6 @@
 import * as React from 'react'
 import {
+  Camera,
   CheckCircle2,
   Eye,
   Globe,
@@ -10,6 +11,7 @@ import {
   Moon,
   Sun,
   XCircle,
+  Zap,
 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -309,6 +311,38 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 disabled={disabled}
                 onCheckedChange={(checked) =>
                   update({ privacy: { stealthMode: checked } })
+                }
+              />
+            }
+          />
+        </CardRows>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="min-w-0">
+            <CardTitle className="flex items-center gap-2">
+              <Camera className="size-4 text-muted-foreground" />
+              Capture
+            </CardTitle>
+            <CardDescription>How screenshots are handled after capture.</CardDescription>
+          </div>
+        </CardHeader>
+        <CardRows>
+          <SettingRow
+            label={
+              <span className="flex items-center gap-1.5">
+                Auto-answer screenshots
+                <Zap className="size-3.5 text-amber-500" />
+              </span>
+            }
+            description="Send a screenshot to the assistant the moment you capture it, instead of queuing it for Solve. New captures while an answer is streaming still queue."
+            control={
+              <Switch
+                checked={settings?.capture.autoAnswer ?? false}
+                disabled={disabled}
+                onCheckedChange={(checked) =>
+                  update({ capture: { autoAnswer: checked } })
                 }
               />
             }

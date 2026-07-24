@@ -6,7 +6,7 @@ import { JsonValueSchema } from './common'
 import { CanonicalSettingsSchema } from './settings'
 
 const settings = {
-  version: 3,
+  version: 4,
   appearance: { theme: 'system', reducedMotion: false, answerHeight: 600 },
   application: { launchAtLogin: false, showDockIcon: true, startMinimized: false },
   privacy: { persistConversations: true, shareDiagnostics: false, stealthMode: true },
@@ -14,6 +14,7 @@ const settings = {
     includeMicrophone: false,
     includeSystemAudio: true,
     screenshotFormat: 'png',
+    autoAnswer: false,
   },
   assistant: {
     model: 'codex-default',

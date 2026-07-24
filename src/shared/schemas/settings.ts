@@ -7,7 +7,7 @@ import { ExtensionsSchema } from './common'
  * that settings-only additions can migrate stored files without forcing every
  * other contract to bump in lockstep.
  */
-export const SETTINGS_VERSION = 3 as const
+export const SETTINGS_VERSION = 4 as const
 export const SettingsVersionSchema = z.literal(SETTINGS_VERSION)
 
 export const ThemeSchema = z.enum(['system', 'light', 'dark'])
@@ -114,6 +114,12 @@ export const CanonicalSettingsSchema = z
         includeMicrophone: z.boolean(),
         includeSystemAudio: z.boolean(),
         screenshotFormat: ScreenshotFormatSchema,
+        /**
+         * When true, a captured screenshot is sent to the assistant immediately
+         * (as long as no answer is streaming) instead of waiting in the queue
+         * for a manual Solve.
+         */
+        autoAnswer: z.boolean(),
       })
       .strict(),
     assistant: z

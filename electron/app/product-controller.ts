@@ -873,9 +873,48 @@ export class ProductController {
         preview: createBoundedAttachmentPreview(verified.bytes),
       }
       this.#publish({ type: 'attachment.captured', attachment }, ['overlay'])
+      // Auto-answer runs after the capture resolves so the queued attachment and
+      // its preview reach the overlay first; it must not block the return value.
+      void this.#maybeAutoAnswer()
       return { ...outcome, attachment }
     }
     return outcome
+  }
+
+  /**
+   * When the user has opted into auto-answer, sends the freshly-queued
+   * screenshot(s) to the assistant without a manual Solve. Skips silently while
+   * an overlay turn is still streaming so rapid captures simply queue instead.
+   */
+  async #maybeAutoAnswer(): Promise<void> {
+    let modelId: string
+    try {
+      const settings = await this.#settings.load()
+      if (!settings.capture.autoAnswer) return
+      modelId = settings.assistant.model
+    } catch {
+      return
+    }
+    if (this.#pendingAttachmentIds.length === 0) return
+    if (this.#hasActiveOverlayTurn()) return
+    try {
+      // Surface the overlay if it is hidden so the streamed answer is visible.
+      // preserveSession keeps any in-progress conversation and avoids clearing
+      // the queue the capture just populated.
+      if (!this.#windowManager.getWindow('overlay')?.isVisible()) {
+        await this.openOverlay(true)
+      }
+      await this.#solvePending(modelId)
+    } catch (error) {
+      log.warn('auto-answer failed', { error: errorMessage(error) })
+    }
+  }
+
+  #hasActiveOverlayTurn(): boolean {
+    for (const context of this.#turnContexts.values()) {
+      if (context.origin === 'overlay') return true
+    }
+    return false
   }
 
   /**
