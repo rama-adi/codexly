@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 
 import { DEFAULT_SHORTCUTS, type Shortcuts } from '../../../shared/schemas/settings'
 import { desktopClient } from '../../desktop'
@@ -17,23 +17,23 @@ type UseOverlaySettingsOptions = {
 }
 
 // Load the canonical settings once on mount and seed appearance/shortcuts.
-export function useOverlaySettings({
-  onAnswerHeight,
-  onShortcuts,
-  onModelId,
-  onError,
-}: UseOverlaySettingsOptions): void {
+// Callbacks are read through a ref so the load effect runs exactly once and
+// never re-fires when the caller passes fresh inline callbacks each render.
+export function useOverlaySettings(options: UseOverlaySettingsOptions): void {
+  const latest = useRef(options)
+  latest.current = options
+
   useEffect(() => {
     if (!desktopClient.available) return
     void desktopClient
       .getSettings()
       .then((settings) => {
-        onAnswerHeight(settings.appearance.answerHeight)
-        onShortcuts(settings.shortcuts ?? DEFAULT_SHORTCUTS)
-        onModelId((current) =>
+        latest.current.onAnswerHeight(settings.appearance.answerHeight)
+        latest.current.onShortcuts(settings.shortcuts ?? DEFAULT_SHORTCUTS)
+        latest.current.onModelId((current) =>
           current === FALLBACK_MODELS[0].id ? settings.assistant.model : current,
         )
       })
-      .catch((error) => onError(error, 'Could not load overlay settings.'))
-  }, [onAnswerHeight, onShortcuts, onModelId, onError])
+      .catch((error) => latest.current.onError(error, 'Could not load overlay settings.'))
+  }, [])
 }
