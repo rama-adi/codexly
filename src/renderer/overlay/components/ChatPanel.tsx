@@ -3,6 +3,7 @@ import { type FormEvent, type RefObject, useEffect, useRef } from 'react'
 
 import type { ChatMessage, ToolActivity } from '../types'
 import { LoadingIndicator } from './LoadingIndicator'
+import { Markdown } from './Markdown'
 import { ThinkingBlock } from './ThinkingBlock'
 import { ToolActivityCard } from './ToolActivityCard'
 
@@ -82,7 +83,11 @@ export function ChatPanel({
         ) : (
           messages.map((message, index) => (
             <div key={index} className={`ov-bubble ov-bubble--${message.role}`}>
-              {message.content}
+              {message.role === 'assistant' ? (
+                <Markdown>{message.content}</Markdown>
+              ) : (
+                message.content
+              )}
             </div>
           ))
         )}
@@ -98,7 +103,13 @@ export function ChatPanel({
         {streaming && (
           <div className="ov-bubble ov-bubble--assistant">
             <ThinkingBlock text={reasoning} active={streaming && !answer} />
-            {answer || (reasoning ? '' : <LoadingIndicator label={`${modelLabel} is thinking…`} />)}
+            {answer ? (
+              <Markdown>{answer}</Markdown>
+            ) : reasoning ? (
+              ''
+            ) : (
+              <LoadingIndicator label={`${modelLabel} is thinking…`} />
+            )}
             {answer && <span className="ov-cursor" />}
           </div>
         )}

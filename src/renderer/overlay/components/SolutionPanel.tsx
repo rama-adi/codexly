@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import type { ToolActivity } from '../types'
 import { LoadingIndicator } from './LoadingIndicator'
+import { Markdown } from './Markdown'
 import { ThinkingBlock } from './ThinkingBlock'
 import { ToolActivityCard } from './ToolActivityCard'
 
@@ -100,7 +101,7 @@ export function SolutionPanel({
           <div className="ov-inline-error" role="alert">{error}</div>
         ) : (
           <div className="ov-answer">
-            {answer}
+            <Markdown>{answer}</Markdown>
             {streaming && <span className="ov-cursor" />}
           </div>
         )}

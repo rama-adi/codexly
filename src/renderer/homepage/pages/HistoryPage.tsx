@@ -77,6 +77,10 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
   const [streamingTurn, setStreamingTurn] = React.useState<StreamingTurn | null>(null)
   const [composerError, setComposerError] = React.useState<string | null>(null)
   const [thinkingExpanded, setThinkingExpanded] = React.useState(true)
+  // Resolved image previews for message attachments, keyed by attachment id.
+  const [attachmentPreviews, setAttachmentPreviews] = React.useState<
+    Record<string, { name: string; preview: string }>
+  >({})
 
   const selectedIdRef = React.useRef(selectedId)
   selectedIdRef.current = selectedId
@@ -131,7 +135,34 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
     setComposerError(null)
     setSending(false)
     setThinkingExpanded(true)
+    setAttachmentPreviews({})
   }, [selectedId])
+
+  // Resolve previews for any image attachments referenced by the session's
+  // messages. Stored blobs are recoverable by id even after the turn was sent.
+  React.useEffect(() => {
+    if (!detail || !available) return
+    const ids = Array.from(new Set(detail.messages.flatMap((message) => message.attachmentIds)))
+    const missing = ids.filter((id) => !attachmentPreviews[id])
+    if (missing.length === 0) return
+    let active = true
+    desktopClient
+      .getAttachmentPreviews(missing)
+      .then((previews) => {
+        if (!active || previews.length === 0) return
+        setAttachmentPreviews((current) => {
+          const next = { ...current }
+          for (const preview of previews) {
+            next[preview.id] = { name: preview.name, preview: preview.preview }
+          }
+          return next
+        })
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [detail, available, attachmentPreviews])
 
   React.useEffect(() => {
     if (!available) return
@@ -371,6 +402,26 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                               : 'border border-border bg-card text-card-foreground',
                           )}
                         >
+                          {message.attachmentIds.length > 0 && (
+                            <div className="mb-2 flex flex-wrap gap-2">
+                              {message.attachmentIds.map((id) => {
+                                const preview = attachmentPreviews[id]
+                                return preview ? (
+                                  <img
+                                    key={id}
+                                    src={preview.preview}
+                                    alt={preview.name}
+                                    className="h-16 w-auto max-w-[160px] rounded-md border border-border/40 object-cover"
+                                  />
+                                ) : (
+                                  <div
+                                    key={id}
+                                    className="h-16 w-24 animate-pulse rounded-md border border-border/40 bg-muted"
+                                  />
+                                )
+                              })}
+                            </div>
+                          )}
                           {message.role === 'assistant' ? (
                             <Markdown text={message.content} />
                           ) : (

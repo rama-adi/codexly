@@ -47,6 +47,7 @@ export interface CodexlyDesktopBridgeV1 {
   capture(): Promise<unknown>
   captureSelection(): Promise<unknown>
   listAttachments(): Promise<unknown>
+  getAttachmentPreviews(attachmentIds: string[]): Promise<unknown>
   discardAttachment(attachmentId: string): Promise<boolean>
   clearAttachments(): Promise<void>
   openHome(): Promise<void>

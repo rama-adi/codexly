@@ -107,7 +107,7 @@ export function Overlay() {
   }
 
   return (
-    <div ref={root} className="ov-root" data-clickable-root>
+    <div ref={root} className="ov-root dark" data-clickable-root>
       <span className="sr-only" aria-live="polite">
         {s.notice}
       </span>

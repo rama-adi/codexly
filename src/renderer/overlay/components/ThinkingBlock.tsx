@@ -1,6 +1,8 @@
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
+import { Markdown } from './Markdown'
+
 export function ThinkingBlock({ text, active }: { text: string; active: boolean }) {
   const [expanded, setExpanded] = useState(active)
   const wasActive = useRef(active)
@@ -30,7 +32,9 @@ export function ThinkingBlock({ text, active }: { text: string; active: boolean 
         <span>{active ? 'Thinking…' : 'Thought for a moment'}</span>
       </button>
       {expanded && (
-        <div className={`ov-thinking-body ${active ? 'ov-thinking-body--live' : ''}`}>{text}</div>
+        <div className={`ov-thinking-body ${active ? 'ov-thinking-body--live' : ''}`}>
+          <Markdown>{text}</Markdown>
+        </div>
       )}
     </div>
   )

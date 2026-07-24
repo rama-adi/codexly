@@ -1,5 +1,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+/* Streamdown lives in node_modules, which Tailwind v4 does not scan by default;
+   register it so its utility classes are generated. */
+@source "../node_modules/streamdown/dist/index.js";
 @custom-variant dark (&:is(.dark *));
 @theme inline { --font-sans: "Avenir Next", "Segoe UI", sans-serif; --color-background: var(--background); --color-foreground: var(--foreground); --color-card: var(--card); --color-card-foreground: var(--foreground); --color-primary: var(--primary); --color-primary-foreground: var(--primary-fg); --color-secondary: var(--secondary); --color-secondary-foreground: var(--foreground); --color-muted: var(--muted); --color-muted-foreground: var(--muted-fg); --color-accent: var(--accent); --color-accent-foreground: var(--foreground); --color-destructive: var(--danger); --color-border: var(--border); --color-input: var(--border); --color-ring: var(--ring); }
 :root { --background:#f2f4f7; --foreground:#1b2430; --card:#ffffff; --primary:#2e4258; --primary-fg:#f4f7fb; --secondary:#e5eaf1; --muted:#eceff4; --muted-fg:#65748a; --accent:#dbe4ef; --danger:#bd3d34; --border:#d4dbe4; --ring:#94a9c4; }

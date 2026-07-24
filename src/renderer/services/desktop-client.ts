@@ -104,6 +104,10 @@ export const desktopClient = {
   capture: () => requireBridge().capture() as Promise<unknown>,
   captureSelection: () => requireBridge().captureSelection() as Promise<unknown>,
   listAttachments: () => requireBridge().listAttachments() as Promise<Array<{ id: string; name: string; preview: string }>>,
+  getAttachmentPreviews: (attachmentIds: string[]) =>
+    requireBridge().getAttachmentPreviews(attachmentIds) as Promise<
+      Array<{ id: string; name: string; preview: string }>
+    >,
   discardAttachment: (attachmentId: string) => requireBridge().discardAttachment(attachmentId),
   clearAttachments: () => requireBridge().clearAttachments(),
   openHome: () => requireBridge().openHome(),

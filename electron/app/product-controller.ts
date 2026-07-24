@@ -469,6 +469,8 @@ export class ProductController {
         return this.#captureSelection()
       case 'attachments.list':
         return this.#listPendingAttachments()
+      case 'attachments.getPreviews':
+        return this.#getAttachmentPreviews(command.attachmentIds)
       case 'attachments.discard': {
         if (this.#reservedAttachmentIds.has(command.attachmentId)) return false
         const removed = await this.#attachments.discardPending(command.attachmentId)
@@ -796,6 +798,32 @@ export class ProductController {
         }
       }),
     )
+  }
+
+  /**
+   * Resolves stored attachments (e.g. screenshots from history) to bounded
+   * preview data URLs by id. Unlike {@link #listPendingAttachments} this does
+   * not filter by association, so already-sent attachments remain viewable.
+   * Missing/unreadable ids are skipped rather than failing the whole request.
+   */
+  async #getAttachmentPreviews(
+    attachmentIds: readonly string[],
+  ): Promise<Array<{ id: string; name: string; preview: string }>> {
+    const previews = await Promise.all(
+      attachmentIds.map(async (id) => {
+        try {
+          const verified = await this.#attachments.resolveVerifiedBytes(id)
+          return {
+            id,
+            name: verified.attachment.name,
+            preview: createBoundedAttachmentPreview(verified.bytes),
+          }
+        } catch {
+          return null
+        }
+      }),
+    )
+    return previews.filter((preview): preview is NonNullable<typeof preview> => preview !== null)
   }
 
   async #clearPendingAttachments(): Promise<void> {

@@ -722,6 +722,82 @@
   color: rgba(245, 246, 248, 0.92);
 }
 
+/* ---------- Streamdown markdown (answer / chat / reasoning) ---------- */
+/* The overlay panel is always dark, so force light-on-dark typography that
+   wins over Streamdown's theme-derived defaults, and reset any inherited
+   `pre-wrap` from the surrounding bubbles/answer body. */
+.ov-md {
+  color: rgba(245, 246, 248, 0.92);
+  font-size: 12.5px;
+  line-height: 1.65;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.ov-md > :first-child { margin-top: 0; }
+.ov-md > :last-child { margin-bottom: 0; }
+.ov-md p,
+.ov-md ul,
+.ov-md ol,
+.ov-md pre,
+.ov-md blockquote,
+.ov-md table,
+.ov-md h1,
+.ov-md h2,
+.ov-md h3,
+.ov-md h4,
+.ov-md h5,
+.ov-md h6 {
+  margin: 0 0 8px;
+}
+.ov-md h1,
+.ov-md h2,
+.ov-md h3,
+.ov-md h4,
+.ov-md h5,
+.ov-md h6 {
+  color: rgba(245, 246, 248, 0.97);
+  font-weight: 650;
+  line-height: 1.3;
+}
+.ov-md h1 { font-size: 1.3em; }
+.ov-md h2 { font-size: 1.18em; }
+.ov-md h3 { font-size: 1.06em; }
+.ov-md ul,
+.ov-md ol { padding-left: 18px; }
+.ov-md li { margin: 2px 0; }
+.ov-md li::marker { color: var(--ov-text-faint); }
+.ov-md a { color: var(--ov-accent); text-decoration: underline; }
+.ov-md strong { color: rgba(245, 246, 248, 0.98); font-weight: 650; }
+.ov-md code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  font-style: normal;
+}
+.ov-md :not(pre) > code {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+.ov-md pre {
+  border: 1px solid var(--ov-border);
+  border-radius: var(--ov-radius-sm);
+  padding: 8px 10px;
+  overflow-x: auto;
+}
+.ov-md pre code { background: transparent; padding: 0; }
+.ov-md blockquote {
+  margin-left: 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--ov-border);
+  color: var(--ov-text-dim);
+}
+.ov-md table { border-collapse: collapse; width: 100%; font-size: 0.95em; }
+.ov-md th,
+.ov-md td { border: 1px solid var(--ov-border); padding: 4px 7px; text-align: left; }
+.ov-md hr { border: 0; border-top: 1px solid var(--ov-border); margin: 10px 0; }
+.ov-md img { max-width: 100%; border-radius: var(--ov-radius-sm); }
+
 .ov-chat-form {
   display: flex;
   gap: 6px;
@@ -819,6 +895,34 @@
   right: 6px;
   color: var(--ov-text-faint);
   pointer-events: none;
+}
+
+/* ---------- Scrollbars ---------- */
+/* Chromium's default scrollbar is chunky and light — jarring on the dark glass
+   panel. Render a thin, subtle scrollbar for every overlay scroll container. */
+.ov-root {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+.ov-root ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.ov-root ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.ov-root ::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background-color: rgba(255, 255, 255, 0.16);
+  background-clip: padding-box;
+}
+.ov-root ::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.28);
+  background-clip: padding-box;
+}
+.ov-root ::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 @media (prefers-reduced-motion: reduce) {

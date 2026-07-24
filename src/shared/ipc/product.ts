@@ -43,6 +43,12 @@ export const ProductCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('attachments.capture') }).strict(),
   z.object({ type: z.literal('attachments.captureSelection') }).strict(),
   z.object({ type: z.literal('attachments.list') }).strict(),
+  z
+    .object({
+      type: z.literal('attachments.getPreviews'),
+      attachmentIds: z.array(IdSchema).max(50),
+    })
+    .strict(),
   z.object({ type: z.literal('attachments.discard'), attachmentId: IdSchema }).strict(),
   z.object({ type: z.literal('attachments.clear') }).strict(),
   z.object({ type: z.literal('window.openHome') }).strict(),

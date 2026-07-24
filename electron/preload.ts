@@ -226,6 +226,8 @@ const bridge: CodexlyDesktopBridgeV1 = Object.freeze({
   capture: () => invokeProduct({ type: 'attachments.capture' }),
   captureSelection: () => invokeProduct({ type: 'attachments.captureSelection' }),
   listAttachments: () => invokeProduct({ type: 'attachments.list' }),
+  getAttachmentPreviews: (attachmentIds: string[]) =>
+    invokeProduct({ type: 'attachments.getPreviews', attachmentIds }),
   discardAttachment: (attachmentId: string) =>
     invokeProduct({ type: 'attachments.discard', attachmentId }) as Promise<boolean>,
   clearAttachments: async () => {
