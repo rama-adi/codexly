@@ -2,7 +2,9 @@ import { z } from 'zod'
 
 import {
   CanonicalSettingsSchema,
+  DEFAULT_SHORTCUTS,
   SETTINGS_VERSION,
+  SHORTCUT_ACTIONS,
   type CanonicalSettings,
 } from '../../src/shared/schemas/settings'
 import { AtomicJsonStore } from './atomic-json-store'
@@ -56,6 +58,7 @@ export const DEFAULT_SETTINGS = Object.freeze<Settings>({
     customInstructionsEnabled: false,
     customInstructions: '',
   },
+  shortcuts: { ...DEFAULT_SHORTCUTS },
 })
 
 const CURRENT_SETTINGS_VERSION = SETTINGS_VERSION
@@ -124,7 +127,30 @@ const migrateSettingsV1ToV2: Migration = {
   },
 }
 
-const settingsMigrations: readonly Migration[] = [migrateSettingsV1ToV2]
+/**
+ * Introduces the rebindable global shortcuts. A v2 settings.json has no
+ * `shortcuts` section, so every action receives its documented default; any
+ * partially-present section keeps the accelerators it already has.
+ */
+const migrateSettingsV2ToV3: Migration = {
+  from: 2,
+  to: 3,
+  migrate: (record) => {
+    const shortcuts = asRecord(record.shortcuts)
+    const next: Record<string, string> = {}
+    for (const action of SHORTCUT_ACTIONS) {
+      const value = shortcuts[action]
+      next[action] =
+        typeof value === 'string' && value.trim() ? value : DEFAULT_SHORTCUTS[action]
+    }
+    return { ...record, version: 3, shortcuts: next }
+  },
+}
+
+const settingsMigrations: readonly Migration[] = [
+  migrateSettingsV1ToV2,
+  migrateSettingsV2ToV3,
+]
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)

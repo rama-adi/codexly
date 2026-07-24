@@ -1,5 +1,7 @@
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 
+import { DEFAULT_SHORTCUTS, type Shortcuts } from '../../shared/schemas/settings'
+import { formatAccelerator } from '../../shared/shortcuts/accelerator'
 import { desktopClient } from '../desktop'
 import { CommandBar } from './components/CommandBar'
 import { ChatPanel } from './components/ChatPanel'
@@ -61,6 +63,7 @@ export function Overlay() {
   const [models, setModels] = useState<ModelChoice[]>(FALLBACK_MODELS)
   const [modelId, setModelId] = useState(FALLBACK_MODELS[0].id)
   const [answerHeight, setAnswerHeight] = useState(DEFAULT_ANSWER_HEIGHT)
+  const [shortcuts, setShortcuts] = useState<Shortcuts>(DEFAULT_SHORTCUTS)
   const [notice, setNotice] = useState('Screenshot queue ready.')
   const [visibleError, setVisibleError] = useState<string>()
 
@@ -222,6 +225,7 @@ export function Overlay() {
       .getSettings()
       .then((settings) => {
         setAnswerHeight(settings.appearance.answerHeight)
+        setShortcuts(settings.shortcuts ?? DEFAULT_SHORTCUTS)
         setModelId((current) =>
           current === FALLBACK_MODELS[0].id ? settings.assistant.model : current,
         )
@@ -443,6 +447,7 @@ export function Overlay() {
         })
       } else if (event.type === 'settings.changed') {
         setAnswerHeight(event.settings.appearance.answerHeight)
+        setShortcuts(event.settings.shortcuts ?? DEFAULT_SHORTCUTS)
       }
     })
   }, [
@@ -751,6 +756,9 @@ export function Overlay() {
         onChat={() => setView((current) => (current === 'chat' ? 'queue' : 'chat'))}
         onSettings={() => void openSettings()}
         onClose={() => void hideOverlay()}
+        captureKey={formatAccelerator(shortcuts.captureDisplay)}
+        captureSelectionKey={formatAccelerator(shortcuts.captureSelection)}
+        solveKey={formatAccelerator(shortcuts.solve)}
       />
 
       {visibleError && <div className="ov-visible-notice" role="alert">{visibleError}</div>}

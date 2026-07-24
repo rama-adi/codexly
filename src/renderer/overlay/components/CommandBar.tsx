@@ -29,6 +29,9 @@ export function CommandBar({
   onChat,
   onSettings,
   onClose,
+  captureKey,
+  captureSelectionKey,
+  solveKey,
 }: {
   attachments: number
   chatOpen: boolean
@@ -44,6 +47,9 @@ export function CommandBar({
   onChat(): void
   onSettings(): void
   onClose(): void
+  captureKey: string
+  captureSelectionKey: string
+  solveKey: string
 }) {
   return (
     <div className="ov-bar draggable-area">
@@ -55,12 +61,12 @@ export function CommandBar({
         <button onClick={onCapture} title="Capture display">
           <Camera size={13} />
           <span>Capture</span>
-          <Key>⇧⌘1</Key>
+          <Key>{captureKey}</Key>
         </button>
         <button onClick={onCaptureSelection} title="Capture a screen region">
           <Crop size={13} />
           <span>Select</span>
-          <Key>⇧⌘2</Key>
+          <Key>{captureSelectionKey}</Key>
         </button>
       </div>
 
@@ -68,7 +74,7 @@ export function CommandBar({
         <button className="ov-solve" onClick={onSolve} disabled={busy}>
           <Sparkles size={13} />
           <span>Solve</span>
-          <Key>⇧⌘⏎</Key>
+          <Key>{solveKey}</Key>
         </button>
       )}
 

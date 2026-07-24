@@ -6,7 +6,7 @@ import { JsonValueSchema } from './common'
 import { CanonicalSettingsSchema } from './settings'
 
 const settings = {
-  version: 2,
+  version: 3,
   appearance: { theme: 'system', reducedMotion: false, answerHeight: 600 },
   application: { launchAtLogin: false, showDockIcon: true, startMinimized: false },
   privacy: { persistConversations: true, shareDiagnostics: false, stealthMode: true },
@@ -25,6 +25,13 @@ const settings = {
     codingLanguage: 'javascript',
     customInstructionsEnabled: false,
     customInstructions: '',
+  },
+  shortcuts: {
+    summonOverlay: 'CommandOrControl+Shift+Space',
+    toggleOverlay: 'CommandOrControl+Shift+B',
+    captureDisplay: 'CommandOrControl+Shift+1',
+    captureSelection: 'CommandOrControl+Shift+2',
+    solve: 'CommandOrControl+Shift+Enter',
   },
 } as const
 

@@ -15,7 +15,12 @@ import path from 'node:path'
 import { z } from 'zod'
 
 import type { ProductCommand, ProductEvent, TurnOrigin } from '../../src/shared/ipc/product'
-import type { CanonicalSettings } from '../../src/shared/schemas/settings'
+import {
+  DEFAULT_SHORTCUTS,
+  SHORTCUT_ACTIONS,
+  type CanonicalSettings,
+  type Shortcuts,
+} from '../../src/shared/schemas/settings'
 import type {
   ConnectionTestResult,
   ModelOption,
@@ -69,13 +74,12 @@ type RuntimeStatus = Readonly<{
   detail: string
 }>
 
-export const PRODUCT_SHORTCUT_ACCELERATORS = Object.freeze({
-  summonOverlay: 'CommandOrControl+Shift+Space',
-  toggleOverlay: 'CommandOrControl+Shift+B',
-  captureDisplay: 'CommandOrControl+Shift+1',
-  captureSelection: 'CommandOrControl+Shift+2',
-  solve: 'CommandOrControl+Shift+Enter',
-})
+/**
+ * The default global-shortcut accelerators. Kept as a named export (and sourced
+ * from the shared settings defaults) so the values have a single source of truth
+ * across the main process, the renderer reset control, and tests.
+ */
+export const PRODUCT_SHORTCUT_ACCELERATORS = DEFAULT_SHORTCUTS
 
 type TurnContext = Readonly<{
   origin: TurnOrigin
@@ -377,45 +381,16 @@ export class ProductController {
       // Workspace selection remains optional when the home directory is unavailable.
     }
 
+    let shortcuts: Shortcuts = { ...DEFAULT_SHORTCUTS }
     try {
       const settings = await this.#settings.load()
       this.#windowManager.setOverlayContentProtection(settings.privacy.stealthMode)
+      shortcuts = settings.shortcuts
     } catch {
       // Stealth defaults to on inside the window manager if settings are unreadable.
+      // Shortcuts fall back to their documented defaults.
     }
-
-    const capture = async () => {
-      await this.#captureDisplay()
-    }
-    this.#shortcuts.configure({
-      summonOverlay: {
-        accelerator: PRODUCT_SHORTCUT_ACCELERATORS.summonOverlay,
-        callback: () => this.openOverlay(),
-      },
-      toggleOverlay: {
-        accelerator: PRODUCT_SHORTCUT_ACCELERATORS.toggleOverlay,
-        callback: () => this.#toggleOverlay(),
-      },
-      captureDisplay: {
-        accelerator: PRODUCT_SHORTCUT_ACCELERATORS.captureDisplay,
-        callback: capture,
-        dispatch: 'single-flight',
-      },
-      captureSelection: {
-        accelerator: PRODUCT_SHORTCUT_ACCELERATORS.captureSelection,
-        callback: async () => {
-          await this.#captureSelection()
-        },
-        dispatch: 'single-flight',
-      },
-      solve: {
-        accelerator: PRODUCT_SHORTCUT_ACCELERATORS.solve,
-        callback: async () => {
-          await this.#solvePending(await this.#defaultModelId())
-        },
-        dispatch: 'single-flight',
-      },
-    })
+    this.#configureShortcuts(shortcuts)
 
     // Spawn and initialize the shared app-server in the background so the
     // first user turn normally arrives on an already-warm connection.
@@ -743,8 +718,12 @@ export class ProductController {
   }
 
   async #updateSettings(settings: CanonicalSettings): Promise<CanonicalSettings> {
+    const previous = await this.#settings.load().catch(() => null)
     const next = await this.#settings.update(() => settings)
     this.#windowManager.setOverlayContentProtection(next.privacy.stealthMode)
+    if (!previous || !shortcutsEqual(previous.shortcuts, next.shortcuts)) {
+      this.#configureShortcuts(next.shortcuts)
+    }
     this.#publish({ type: 'settings.changed', settings: next }, ['homepage', 'overlay'])
     return next
   }
@@ -940,6 +919,61 @@ export class ProductController {
     throw new Error(
       'Screen Recording permission is required. Enable Codexly in System Settings → Privacy & Security → Screen Recording, then relaunch the app.',
     )
+  }
+
+  /**
+   * (Re)registers every global shortcut from the given accelerators and then
+   * reports the resulting registration state so the UI can flag any that the OS
+   * (or another app) refused. Re-running replaces the previous registrations.
+   */
+  #configureShortcuts(shortcuts: Shortcuts): void {
+    this.#shortcuts.configure({
+      summonOverlay: {
+        accelerator: shortcuts.summonOverlay,
+        callback: () => this.openOverlay(),
+      },
+      toggleOverlay: {
+        accelerator: shortcuts.toggleOverlay,
+        callback: () => this.#toggleOverlay(),
+      },
+      captureDisplay: {
+        accelerator: shortcuts.captureDisplay,
+        callback: async () => {
+          await this.#captureDisplay()
+        },
+        dispatch: 'single-flight',
+      },
+      captureSelection: {
+        accelerator: shortcuts.captureSelection,
+        callback: async () => {
+          await this.#captureSelection()
+        },
+        dispatch: 'single-flight',
+      },
+      solve: {
+        accelerator: shortcuts.solve,
+        callback: async () => {
+          await this.#solvePending(await this.#defaultModelId())
+        },
+        dispatch: 'single-flight',
+      },
+    })
+    this.#publishShortcutStatus()
+  }
+
+  #publishShortcutStatus(): void {
+    const statuses: Record<
+      string,
+      { accelerator: string; registered: boolean; conflicted: boolean }
+    > = {}
+    for (const [action, status] of Object.entries(this.#shortcuts.getStatuses())) {
+      statuses[action] = {
+        accelerator: status.accelerator,
+        registered: status.registered,
+        conflicted: status.conflicted,
+      }
+    }
+    this.#publish({ type: 'shortcut.status', statuses }, ['homepage', 'overlay'])
   }
 
   async #toggleOverlay(preserveSession = false): Promise<void> {
@@ -1247,6 +1281,10 @@ function wrapNativeImage(image: NativeImage) {
 
 function errorMessage(value: unknown): string {
   return value instanceof Error ? value.message : String(value)
+}
+
+function shortcutsEqual(a: Shortcuts, b: Shortcuts): boolean {
+  return SHORTCUT_ACTIONS.every((action) => a[action] === b[action])
 }
 
 const MAX_TOOL_OUTPUT_LENGTH = 4000

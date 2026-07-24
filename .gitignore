@@ -29,3 +29,7 @@ runtime-verification-*.png
 *.njsproj
 *.sln
 *.sw?
+
+# Playwright
+/test-results/
+/playwright-report/

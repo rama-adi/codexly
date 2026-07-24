@@ -156,6 +156,7 @@ export function Homepage() {
                   workspaces={workspaces}
                   busy={busy}
                   available={available}
+                  shortcuts={settings?.shortcuts ?? null}
                   onLaunchOverlay={() => void desktopClient.toggleOverlay()}
                   onUseLocalLogin={() =>
                     void run(async () => {

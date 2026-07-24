@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   Eye,
   Globe,
+  Keyboard,
   KeyRound,
   Loader2,
   Monitor,
@@ -25,12 +26,16 @@ import { SettingRow } from '@/components/ui/setting-row'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import type { ModelOption } from '../../../shared/schemas/models'
-import type {
-  CanonicalSettings,
-  ReasoningEffort,
-  Theme,
+import {
+  DEFAULT_SHORTCUTS,
+  SHORTCUT_ACTIONS,
+  SHORTCUT_METADATA,
+  type CanonicalSettings,
+  type ReasoningEffort,
+  type Theme,
 } from '../../../shared/schemas/settings'
 import { desktopClient } from '../../desktop'
+import { ShortcutRecorder } from '../components/ShortcutRecorder'
 import type { SettingsPatch } from '../hooks/useSettings'
 
 interface SettingsPageProps {
@@ -63,6 +68,22 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [statusMessage, setStatusMessage] = React.useState('')
   const [apiKey, setApiKey] = React.useState('')
   const [savingApiKey, setSavingApiKey] = React.useState(false)
+  const [shortcutConflicts, setShortcutConflicts] = React.useState<
+    Record<string, boolean>
+  >({})
+
+  React.useEffect(() => {
+    if (!available) return
+    const unsubscribe = desktopClient.onProductEvent((event) => {
+      if (event.type !== 'shortcut.status') return
+      const conflicts: Record<string, boolean> = {}
+      for (const [action, status] of Object.entries(event.statuses)) {
+        conflicts[action] = status.conflicted
+      }
+      setShortcutConflicts(conflicts)
+    })
+    return unsubscribe
+  }, [available])
 
   React.useEffect(() => {
     if (!available) {
@@ -292,6 +313,41 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               />
             }
           />
+        </CardRows>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="min-w-0">
+            <CardTitle className="flex items-center gap-2">
+              <Keyboard className="size-4 text-muted-foreground" />
+              Keyboard shortcuts
+            </CardTitle>
+            <CardDescription>
+              Click a shortcut, then press the keys you want. Changes apply
+              immediately.
+            </CardDescription>
+          </div>
+        </CardHeader>
+        <CardRows>
+          {SHORTCUT_ACTIONS.map((action) => (
+            <SettingRow
+              key={action}
+              label={SHORTCUT_METADATA[action].label}
+              description={SHORTCUT_METADATA[action].description}
+              control={
+                <ShortcutRecorder
+                  value={settings?.shortcuts[action] ?? DEFAULT_SHORTCUTS[action]}
+                  defaultValue={DEFAULT_SHORTCUTS[action]}
+                  conflicted={shortcutConflicts[action] ?? false}
+                  disabled={disabled}
+                  onChange={(accelerator) =>
+                    update({ shortcuts: { [action]: accelerator } })
+                  }
+                />
+              }
+            />
+          ))}
         </CardRows>
       </Card>
 

@@ -34,6 +34,8 @@ export class WindowManager {
   private overlayState: OverlayState = 'hidden'
   private overlayStreaming = false
   private overlayTransitionQueue: Promise<void> = Promise.resolve()
+  /** Tracks the last-applied dock/menu-bar (activation policy) state on macOS. */
+  private dockVisible: boolean | null = null
   private readonly latestSnapshots = new Map<WindowRole, WindowSnapshot>()
   private readonly snapshotListeners = new Set<(snapshot: WindowSnapshot) => void>()
   private destroyed = false
@@ -44,6 +46,10 @@ export class WindowManager {
     this.assertActive()
     this.ensureHomepageWindow()
     this.ensureOverlayWindow()
+    // The homepage is the initial surface, so the dock icon belongs on screen
+    // from launch. Set it explicitly rather than relying on the OS default,
+    // which is not guaranteed to match the surface we actually show first.
+    this.setDockVisible(true)
   }
 
   getWindow(role: WindowRole): BrowserWindow | null {
@@ -476,25 +482,24 @@ export class WindowManager {
   }
 
   /**
-   * Shows or hides the macOS dock icon. Hiding it switches the app to the
-   * "accessory" activation policy, which also removes the menu bar — so the
-   * overlay presents as a floating HUD while the homepage keeps a normal
-   * windowed-app presence. No-op off macOS, where there is no dock.
+   * Shows or hides the macOS dock icon (and, with it, the menu bar) by switching
+   * the app's activation policy: `regular` for the homepage's normal windowed
+   * presence, `accessory` for the floating overlay HUD. This uses
+   * `setActivationPolicy` rather than `app.dock.hide()`, which is unreliable
+   * (it does not actually hide the icon on current macOS/Electron). No-op off
+   * macOS, where there is no dock or activation policy.
    */
   private setDockVisible(visible: boolean): void {
-    if (process.platform !== 'darwin' || !app.dock) {
+    if (process.platform !== 'darwin') {
       return
     }
-    const isVisible = app.dock.isVisible()
-    if (visible === isVisible) {
+    if (this.dockVisible === visible) {
       return
     }
-    log.info('setDockVisible', { visible })
-    if (visible) {
-      void app.dock.show()
-    } else {
-      app.dock.hide()
-    }
+    this.dockVisible = visible
+    const policy = visible ? 'regular' : 'accessory'
+    log.info('setDockVisible', { visible, policy })
+    app.setActivationPolicy(policy)
   }
 
   private get preloadPath(): string {

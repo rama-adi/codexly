@@ -11,6 +11,9 @@ import {
 
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import type { Shortcuts } from '../../../shared/schemas/settings'
+import { DEFAULT_SHORTCUTS } from '../../../shared/schemas/settings'
+import { formatAccelerator } from '../../../shared/shortcuts/accelerator'
 import type { RuntimeStatus, Workspace } from '../../desktop'
 
 interface OverviewPageProps {
@@ -18,6 +21,7 @@ interface OverviewPageProps {
   workspaces: Workspace[]
   busy: boolean
   available: boolean
+  shortcuts: Shortcuts | null
   onLaunchOverlay: () => void
   onUseLocalLogin: () => void
   onPickWorkspace: () => void
@@ -45,6 +49,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
   workspaces,
   busy,
   available,
+  shortcuts,
   onLaunchOverlay,
   onUseLocalLogin,
   onPickWorkspace,
@@ -52,6 +57,9 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
   onRemoveWorkspace,
 }) => {
   const ready = runtime.state === 'ready'
+  const keys = shortcuts ?? DEFAULT_SHORTCUTS
+  const summonKey = formatAccelerator(keys.summonOverlay)
+  const captureKey = formatAccelerator(keys.captureDisplay)
 
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-6 py-6">
@@ -83,10 +91,10 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
             <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-1 pt-2 text-xs text-muted-foreground">
               <span className="inline-flex items-center gap-1.5">
                 <Command className="size-3.5" />
-                <kbd className="hp-kbd">⌘⇧Space</kbd> toggles overlay
+                <kbd className="hp-kbd">{summonKey}</kbd> shows the overlay
               </span>
               <span className="inline-flex items-center gap-1.5">
-                <kbd className="hp-kbd">⌘⇧4</kbd> captures the display
+                <kbd className="hp-kbd">{captureKey}</kbd> captures the display
               </span>
             </div>
           </div>

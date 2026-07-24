@@ -101,7 +101,7 @@ describe('SettingsStore', () => {
     })
   })
 
-  it('migrates a stored v1 settings.json to v2 with defaults for new fields', async () => {
+  it('migrates a stored v1 settings.json through to the current version with defaults', async () => {
     const directory = await temporaryDirectory()
     const legacyStored = {
       version: 1,
@@ -116,7 +116,7 @@ describe('SettingsStore', () => {
     const store = new SettingsStore({ userDataPath: directory })
     const loaded = await store.load()
 
-    expect(loaded.version).toBe(2)
+    expect(loaded.version).toBe(3)
     // Preserved values survive the upgrade.
     expect(loaded.appearance.theme).toBe('dark')
     expect(loaded.assistant.model).toBe('gpt-old')
@@ -130,5 +130,40 @@ describe('SettingsStore', () => {
     expect(loaded.assistant.codingLanguage).toBe('javascript')
     expect(loaded.assistant.customInstructionsEnabled).toBe(false)
     expect(loaded.assistant.customInstructions).toBe('')
+    // v2 -> v3 injects default shortcuts.
+    expect(loaded.shortcuts).toEqual(DEFAULT_SETTINGS.shortcuts)
+  })
+
+  it('preserves existing accelerators when migrating v2 settings to v3', async () => {
+    const directory = await temporaryDirectory()
+    const v2Stored = {
+      version: 2,
+      appearance: { theme: 'system', reducedMotion: false, answerHeight: 600 },
+      application: { launchAtLogin: false, showDockIcon: true, startMinimized: false },
+      privacy: { persistConversations: true, shareDiagnostics: false, stealthMode: true },
+      capture: { includeMicrophone: false, includeSystemAudio: false, screenshotFormat: 'png' },
+      assistant: {
+        model: 'gpt-5.5',
+        reasoningEffort: 'medium',
+        responseLanguage: '',
+        webSearchEnabled: false,
+        mode: 'question',
+        verbosity: 'concise',
+        codingLanguage: 'javascript',
+        customInstructionsEnabled: false,
+        customInstructions: '',
+      },
+      // A partially-present shortcuts section: one custom, the rest missing.
+      shortcuts: { toggleOverlay: 'CommandOrControl+Alt+O' },
+    }
+    await writeFile(path.join(directory, 'settings.json'), JSON.stringify(v2Stored), 'utf8')
+
+    const store = new SettingsStore({ userDataPath: directory })
+    const loaded = await store.load()
+
+    expect(loaded.version).toBe(3)
+    expect(loaded.shortcuts.toggleOverlay).toBe('CommandOrControl+Alt+O')
+    expect(loaded.shortcuts.summonOverlay).toBe(DEFAULT_SETTINGS.shortcuts.summonOverlay)
+    expect(loaded.shortcuts.solve).toBe(DEFAULT_SETTINGS.shortcuts.solve)
   })
 })

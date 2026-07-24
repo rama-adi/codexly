@@ -168,6 +168,21 @@ export const ProductEventSchema = z.discriminatedUnion('type', [
       message: z.string(),
     })
     .strict(),
+  z
+    .object({
+      type: z.literal('shortcut.status'),
+      statuses: z.record(
+        z.string(),
+        z
+          .object({
+            accelerator: z.string(),
+            registered: z.boolean(),
+            conflicted: z.boolean(),
+          })
+          .strict(),
+      ),
+    })
+    .strict(),
 ])
 
 export type TurnOrigin = z.infer<typeof TurnOriginSchema>
