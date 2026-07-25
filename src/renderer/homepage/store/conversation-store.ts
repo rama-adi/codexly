@@ -46,7 +46,7 @@ export function createConversationStore(
 
   const initial: ConversationState = { ...defaultState(), ...options.initial }
 
-  return createStore<ConversationStoreState>((setState, getState) => {
+  const store = createStore<ConversationStoreState>((setState, getState) => {
     const renderTranscript = () => setState({ answer: answerBuffer, reasoning: reasoningBuffer })
 
     const cancelFrame = () => {
@@ -164,4 +164,11 @@ export function createConversationStore(
       },
     }
   })
+
+  // Dev-only: lets the browser harness' inspector report real store state. The
+  // guard is compiled away in production, and the registry only exists when the
+  // harness created it.
+  if (import.meta.env.DEV) globalThis.__codexlyDevStores?.set('conversation', store)
+
+  return store
 }

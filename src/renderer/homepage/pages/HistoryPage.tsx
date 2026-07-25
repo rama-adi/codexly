@@ -53,20 +53,19 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
   onReactivate,
   onDelete,
 }) => {
-  // Assigned below, once `loadDetail` exists. The store only reads it when a
-  // turn actually ends, which is always after the first render.
+  // Assigned in an effect below, once `loadDetail` exists. The store only reads
+  // it when a turn actually ends, which is always after the first commit.
   const onTurnEnded = React.useRef<(sessionId: string) => void>(() => undefined)
 
   // One store per mount, mirroring the overlay: fresh transcript buffers per
-  // mount keep test runs isolated.
-  const storeRef = React.useRef<StoreApi<ConversationStoreState>>()
-  if (!storeRef.current) {
-    storeRef.current = createConversationStore({
+  // mount keep test runs isolated. A lazy `useState` initializer owns it so no
+  // ref is written during render.
+  const [store] = React.useState<StoreApi<ConversationStoreState>>(() =>
+    createConversationStore({
       transport: { stopTurn: (id) => desktopClient.stopTurn(id) },
       onTurnEnded: (sessionId) => onTurnEnded.current(sessionId),
-    })
-  }
-  const store = storeRef.current
+    }),
+  )
 
   const actions = React.useMemo(
     () =>
@@ -121,7 +120,11 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
     },
     [store],
   )
-  onTurnEnded.current = loadDetail
+  // Declared before the event bridge so the assignment lands before the bridge
+  // subscribes and can deliver a turn-ended event.
+  React.useEffect(() => {
+    onTurnEnded.current = loadDetail
+  }, [loadDetail])
 
   useConversationEventBridge(store)
 

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import { ipcMain, webContents, type IpcMainInvokeEvent } from 'electron'
+import { ipcMain, webContents } from 'electron'
 import { z } from 'zod'
 
 import type { SerializedError } from '../../src/shared/errors/serialized-error'
@@ -43,6 +43,37 @@ const UnsubscribeResponseSchema = createResponseEnvelopeSchema(
   z.literal('subscriptions.unsubscribe'),
 )
 
+/** The invoke-event surface the routing reads, stated structurally. */
+export interface IpcInvokeEvent {
+  readonly sender: {
+    readonly id: number
+    readonly mainFrame: { readonly routingId: number }
+    once(event: 'destroyed', listener: () => void): void
+  }
+  readonly senderFrame: { readonly routingId: number; readonly url: string } | null
+}
+
+export type IpcInvokeHandler = (
+  event: IpcInvokeEvent,
+  payload: unknown,
+) => Promise<unknown> | unknown
+
+/**
+ * The `ipcMain` surface this module needs. Injecting it lets the routing and the
+ * per-role authorization be exercised without an Electron runtime.
+ */
+export interface IpcTransport {
+  handle(channel: string, handler: IpcInvokeHandler): void
+  removeHandler(channel: string): void
+}
+
+export function createElectronIpcTransport(): IpcTransport {
+  return {
+    handle: (channel, handler) => ipcMain.handle(channel, handler),
+    removeHandler: (channel) => ipcMain.removeHandler(channel),
+  }
+}
+
 interface SubscriptionRecord {
   readonly id: string
   readonly ownerWebContentsId: number
@@ -55,6 +86,8 @@ export interface RegisterIpcOptions extends SenderUrlPolicy {
   resolveWindowRole(webContentsId: number): WindowRole | null
   getBootstrap(role: WindowRole): Promise<Bootstrap> | Bootstrap
   handleProduct(command: ProductCommand, role: WindowRole): Promise<unknown>
+  /** Transport seam; defaults to the real `ipcMain`. */
+  transport?: IpcTransport
 }
 
 export interface IpcRegistration {
@@ -68,10 +101,11 @@ const log = logger.child('ipc')
 export function registerIpc(options: RegisterIpcOptions): IpcRegistration {
   const subscriptions = new Map<string, SubscriptionRecord>()
   const ownersWithCleanup = new Set<number>()
+  const transport = options.transport ?? createElectronIpcTransport()
   let disposed = false
   log.info('Registering IPC handlers')
 
-  ipcMain.handle(IPC_CHANNELS.request, async (event, rawRequest: unknown) => {
+  transport.handle(IPC_CHANNELS.request, async (event, rawRequest: unknown) => {
     const receivedAt = new Date().toISOString()
     const requestId = getRequestId(rawRequest)
     const operation = getRequestOperation(rawRequest)
@@ -113,7 +147,7 @@ export function registerIpc(options: RegisterIpcOptions): IpcRegistration {
     }
   })
 
-  ipcMain.handle(IPC_CHANNELS.product, async (event, rawCommand: unknown) => {
+  transport.handle(IPC_CHANNELS.product, async (event, rawCommand: unknown) => {
     const startedAt = Date.now()
     const commandType =
       rawCommand && typeof rawCommand === 'object' && 'type' in rawCommand
@@ -206,14 +240,14 @@ export function registerIpc(options: RegisterIpcOptions): IpcRegistration {
       disposed = true
       subscriptions.clear()
       ownersWithCleanup.clear()
-      ipcMain.removeHandler(IPC_CHANNELS.request)
-      ipcMain.removeHandler(IPC_CHANNELS.product)
+      transport.removeHandler(IPC_CHANNELS.request)
+      transport.removeHandler(IPC_CHANNELS.product)
     },
   }
 }
 
 async function handleRequest(
-  event: IpcMainInvokeEvent,
+  event: IpcInvokeEvent,
   role: WindowRole,
   request: SupportedRequest,
   receivedAt: string,
@@ -288,7 +322,7 @@ async function handleRequest(
 }
 
 function validateManagedSender(
-  event: IpcMainInvokeEvent,
+  event: IpcInvokeEvent,
   options: RegisterIpcOptions,
 ): WindowRole {
   const role = options.resolveWindowRole(event.sender.id)
@@ -361,34 +395,60 @@ function serializeError(error: unknown, requestId: string): SerializedError {
   }
 }
 
-function authorizeProductCommand(role: WindowRole, command: ProductCommand): void {
+/**
+ * Commands the overlay may issue. The overlay bridge exposes the full product
+ * surface, so anything the overlay UI can reach must be listed here — a missing
+ * entry is a live bug, not a locked door. Every command is classified either
+ * here or in {@link HOMEPAGE_ONLY_PRODUCT_COMMANDS}, and `register-ipc.test.ts`
+ * fails when a newly contracted command belongs to neither.
+ */
+export const OVERLAY_PRODUCT_COMMANDS: ReadonlySet<ProductCommand['type']> = new Set([
+  'runtime.status',
+  'runtime.testConnection',
+  'models.list',
+  'settings.get',
+  'sessions.get',
+  'sessions.create',
+  'conversation.send',
+  'conversation.stop',
+  'conversation.transcriptSnapshot',
+  'conversation.solvePending',
+  'attachments.capture',
+  'attachments.captureSelection',
+  'attachments.list',
+  'attachments.discard',
+  'attachments.clear',
+  'window.openHome',
+  'window.toggleOverlay',
+  'window.resizeOverlay',
+  'window.setOverlayFocusable',
+])
+
+/**
+ * Commands only the homepage may issue: credential entry, destructive session
+ * and workspace management, and the native directory picker.
+ */
+export const HOMEPAGE_ONLY_PRODUCT_COMMANDS: ReadonlySet<ProductCommand['type']> = new Set([
+  'auth.useChatGpt',
+  'auth.setApiKey',
+  'settings.update',
+  'sessions.list',
+  'sessions.delete',
+  'sessions.reactivate',
+  'workspaces.list',
+  'workspaces.pick',
+  'workspaces.select',
+  'workspaces.remove',
+  'attachments.getPreviews',
+])
+
+export function authorizeProductCommand(role: WindowRole, command: ProductCommand): void {
   if (role === 'homepage') return
-  const allowed = new Set<ProductCommand['type']>([
-    'runtime.status',
-    'runtime.testConnection',
-    'models.list',
-    'settings.get',
-    'sessions.get',
-    'sessions.create',
-    'conversation.send',
-    'conversation.stop',
-    'conversation.transcriptSnapshot',
-    'conversation.solvePending',
-    'attachments.capture',
-    'attachments.captureSelection',
-    'attachments.list',
-    'attachments.discard',
-    'attachments.clear',
-    'window.openHome',
-    'window.toggleOverlay',
-    'window.resizeOverlay',
-    'window.setOverlayFocusable',
-  ])
-  if (!allowed.has(command.type)) {
+  if (!OVERLAY_PRODUCT_COMMANDS.has(command.type)) {
     log.warn('Rejected product command: not permitted for role', {
       role,
       command: command.type,
-      allowed: [...allowed],
+      allowed: [...OVERLAY_PRODUCT_COMMANDS],
     })
     throw new BridgeAccessError('forbidden', 'The overlay cannot perform this action.')
   }

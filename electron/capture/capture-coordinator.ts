@@ -1,4 +1,10 @@
 import type { AttachmentRecord, AttachmentStore } from './attachment-store'
+
+/** The attachment-store surface a capture needs; keeps the store substitutable. */
+export type CaptureAttachmentSink = Pick<
+  AttachmentStore,
+  'addPendingImage' | 'discardPending'
+>
 import type { CapturedImage, DisplayCapture } from './display-capture'
 import type { CaptureDisplay, CaptureTarget, Rectangle } from './selection-models'
 
@@ -62,7 +68,7 @@ export class CaptureCoordinator {
 
   constructor(
     private readonly displayCapture: DisplayCapture,
-    private readonly attachmentStore: AttachmentStore,
+    private readonly attachmentStore: CaptureAttachmentSink,
     private readonly presentation: CapturePresentationAdapter,
   ) {}
 

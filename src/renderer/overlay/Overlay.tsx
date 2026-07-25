@@ -1,4 +1,4 @@
-import { type FormEvent, useCallback, useMemo, useRef } from 'react'
+import { type FormEvent, useCallback, useMemo, useRef, useState } from 'react'
 import { useStore } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
 import type { StoreApi } from 'zustand/vanilla'
@@ -29,14 +29,13 @@ export function Overlay() {
   const input = useRef<HTMLInputElement>(null)
 
   // One store per overlay mount. Fresh reconciliation buffers per mount keep
-  // test runs isolated; production mounts the overlay exactly once.
-  const storeRef = useRef<StoreApi<OverlayStoreState>>()
-  if (!storeRef.current) {
-    storeRef.current = createOverlayStore({
+  // test runs isolated; production mounts the overlay exactly once. A lazy
+  // `useState` initializer owns it so no ref is written during render.
+  const [store] = useState<StoreApi<OverlayStoreState>>(() =>
+    createOverlayStore({
       transport: { stopTurn: (id) => desktopClient.stopTurn(id) },
-    })
-  }
-  const store = storeRef.current
+    }),
+  )
 
   const reportError = useCallback(
     (error: unknown, fallback: string) => store.getState().reportError(errorText(error, fallback)),

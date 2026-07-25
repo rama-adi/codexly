@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { IPC_CHANNELS } from '../src/shared/ipc/operations'
 import type { ProductEvent } from '../src/shared/ipc/product'
+import { resetFakeRendererBridge } from './test/fake-electron'
 
 const electron = vi.hoisted(() => ({
   handlers: new Map<string, (...args: unknown[]) => void>(),
@@ -9,19 +10,10 @@ const electron = vi.hoisted(() => ({
   invoke: vi.fn(),
 }))
 
-vi.mock('electron', () => ({
-  contextBridge: {
-    exposeInMainWorld: vi.fn((_name: string, value: unknown) => {
-      electron.exposed = value
-    }),
-  },
-  ipcRenderer: {
-    invoke: electron.invoke,
-    on: vi.fn((channel: string, listener: (...args: unknown[]) => void) => {
-      electron.handlers.set(channel, listener)
-    }),
-  },
-}))
+vi.mock('electron', async () => {
+  const { createFakeElectron } = await import('./test/fake-electron')
+  return createFakeElectron(electron)
+})
 
 type ProductBridge = {
   onProductEvent(listener: (event: ProductEvent) => void): () => void
@@ -53,9 +45,7 @@ const started: ProductEvent = {
 
 beforeEach(() => {
   vi.resetModules()
-  electron.handlers.clear()
-  electron.exposed = undefined
-  electron.invoke.mockReset()
+  resetFakeRendererBridge(electron)
 })
 
 describe('preload product event delivery', () => {

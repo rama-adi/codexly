@@ -1,28 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { makeTranscriptSnapshot } from '../../src/shared/fixtures/product-events'
 import type { TranscriptSnapshot } from '../../src/shared/ipc/product'
-
-vi.mock('electron', () => ({
-  app: { once: vi.fn() },
-  BrowserWindow: class {},
-  MessageChannelMain: class {},
-  desktopCapturer: { getSources: vi.fn() },
-  dialog: { showOpenDialog: vi.fn(), showMessageBoxSync: vi.fn() },
-  globalShortcut: { register: vi.fn(), unregister: vi.fn() },
-  nativeImage: { createFromBuffer: vi.fn() },
-  safeStorage: {
-    isEncryptionAvailable: vi.fn(() => false),
-    encryptString: vi.fn(),
-    decryptString: vi.fn(),
-  },
-  screen: {
-    getAllDisplays: vi.fn(() => []),
-    getCursorScreenPoint: vi.fn(() => ({ x: 0, y: 0 })),
-    getDisplayMatching: vi.fn(),
-  },
-  shell: { openExternal: vi.fn() },
-  systemPreferences: { getMediaAccessStatus: vi.fn(() => 'granted') },
-}))
 
 import {
   announceTurnBeforeDeferredEvents,
@@ -313,16 +292,13 @@ describe('ProductController terminal presentation', () => {
 })
 
 describe('ProductController retained transcript snapshots', () => {
-  const snapshot = (turnId: string): TranscriptSnapshot => ({
-    turnId,
-    sessionId: 'session-1',
-    origin: 'overlay',
-    sequence: 3,
-    answer: `answer-${turnId}`,
-    reasoning: '',
-    toolOutputs: [],
-    live: true,
-  })
+  const snapshot = (turnId: string): TranscriptSnapshot =>
+    makeTranscriptSnapshot({
+      turnId,
+      sessionId: 'session-1',
+      sequence: 3,
+      answer: `answer-${turnId}`,
+    })
 
   it('marks a retained snapshot as no longer live', () => {
     const retained = new Map<string, TranscriptSnapshot>()

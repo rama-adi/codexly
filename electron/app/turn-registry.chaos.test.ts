@@ -1,28 +1,6 @@
 import fc from 'fast-check'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
-vi.mock('electron', () => ({
-  app: { once: vi.fn() },
-  BrowserWindow: class {},
-  MessageChannelMain: class {},
-  desktopCapturer: { getSources: vi.fn() },
-  dialog: { showOpenDialog: vi.fn(), showMessageBoxSync: vi.fn() },
-  globalShortcut: { register: vi.fn(), unregister: vi.fn() },
-  nativeImage: { createFromBuffer: vi.fn() },
-  safeStorage: {
-    isEncryptionAvailable: vi.fn(() => false),
-    encryptString: vi.fn(),
-    decryptString: vi.fn(),
-  },
-  screen: {
-    getAllDisplays: vi.fn(() => []),
-    getCursorScreenPoint: vi.fn(() => ({ x: 0, y: 0 })),
-    getDisplayMatching: vi.fn(),
-  },
-  shell: { openExternal: vi.fn() },
-  systemPreferences: { getMediaAccessStatus: vi.fn(() => 'granted') },
-}))
-
 import type { TurnOrigin } from '../../src/shared/ipc/product'
 import {
   TurnLifecycleHarness,

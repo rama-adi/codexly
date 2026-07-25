@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { IPC_CHANNELS } from '../src/shared/ipc/operations'
 import type { ProductEvent } from '../src/shared/ipc/product'
+import { resetFakeRendererBridge } from './test/fake-electron'
 
 /**
  * Property/chaos suite for the preload hand-off buffer.
@@ -34,19 +35,10 @@ const electron = vi.hoisted(() => ({
   invoke: vi.fn(),
 }))
 
-vi.mock('electron', () => ({
-  contextBridge: {
-    exposeInMainWorld: vi.fn((_name: string, value: unknown) => {
-      electron.exposed = value
-    }),
-  },
-  ipcRenderer: {
-    invoke: electron.invoke,
-    on: vi.fn((channel: string, listener: (...args: unknown[]) => void) => {
-      electron.handlers.set(channel, listener)
-    }),
-  },
-}))
+vi.mock('electron', async () => {
+  const { createFakeElectron } = await import('./test/fake-electron')
+  return createFakeElectron(electron)
+})
 
 /** Mirrors the private limits in preload.ts. */
 const MAX_PENDING_PRODUCT_EVENTS = 128
@@ -58,9 +50,7 @@ interface ProductBridge {
 
 async function loadBridge(): Promise<ProductBridge> {
   vi.resetModules()
-  electron.handlers.clear()
-  electron.exposed = undefined
-  electron.invoke.mockReset()
+  resetFakeRendererBridge(electron)
   await import('./preload')
   return (electron.exposed as { v1: ProductBridge }).v1
 }

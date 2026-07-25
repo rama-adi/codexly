@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, type BrowserWindowConstructorOptions } from 'electron'
 import path from 'node:path'
 
 import { logger } from '../shared/logger'
@@ -17,19 +17,88 @@ import {
   type WindowSnapshot,
 } from './window-state'
 
+type WindowBounds = Readonly<{ x: number; y: number; width: number; height: number }>
+
+/**
+ * Every window capability this process uses, stated structurally. A real
+ * BrowserWindow satisfies it; so does a plain object in a node test.
+ */
+export interface ManagedWindow {
+  readonly webContents: {
+    readonly id: number
+    setWindowOpenHandler(handler: () => { action: 'deny' }): void
+    on(
+      event: 'will-navigate' | 'will-redirect',
+      listener: (event: { preventDefault(): void }) => void,
+    ): void
+    on(event: 'did-finish-load', listener: () => void): void
+    setBackgroundThrottling(enabled: boolean): void
+  }
+  on(event: string, listener: () => void): void
+  isDestroyed(): boolean
+  isVisible(): boolean
+  isFocused(): boolean
+  isMinimized(): boolean
+  isMaximized(): boolean
+  isFullScreen(): boolean
+  getBounds(): WindowBounds
+  setBounds(bounds: WindowBounds): void
+  getContentSize(): number[]
+  setContentSize(width: number, height: number): void
+  setIgnoreMouseEvents(ignore: boolean): void
+  setFocusable(focusable: boolean): void
+  setContentProtection(enabled: boolean): void
+  setSkipTaskbar(skip: boolean): void
+  setVisibleOnAllWorkspaces(flag: boolean, options: { visibleOnFullScreen: boolean }): void
+  setHiddenInMissionControl(hidden: boolean): void
+  setAlwaysOnTop(flag: boolean, level: 'screen-saver', relativeLevel: number): void
+  restore(): void
+  show(): void
+  showInactive(): void
+  hide(): void
+  focus(): void
+  blur(): void
+  close(): void
+  destroy(): void
+  loadURL(url: string): Promise<unknown>
+  loadFile(filePath: string, options?: { query?: Record<string, string> }): Promise<unknown>
+}
+
+/** The host-application surface the manager drives (activation policy / dock). */
+export interface WindowHostAdapter {
+  readonly platform: string
+  setActivationPolicy(policy: 'regular' | 'accessory'): void
+}
+
 export interface WindowManagerOptions {
   mainDist: string
   rendererDist: string
   devServerUrl?: string
   /** Invoked when the user closes the homepage window (not on teardown). */
   onHomepageClosed?: () => void
+  /** Window construction seam; defaults to a real BrowserWindow. */
+  createWindow?(options: BrowserWindowConstructorOptions): ManagedWindow
+  /** Host-application seam; defaults to the real Electron app. */
+  host?: WindowHostAdapter
+}
+
+const createRealWindow = (options: BrowserWindowConstructorOptions): ManagedWindow =>
+  new BrowserWindow(options)
+
+const realHost: WindowHostAdapter = {
+  get platform() {
+    return process.platform
+  },
+  setActivationPolicy: (policy) => app.setActivationPolicy(policy),
 }
 
 const log = logger.child('windows')
 
 export class WindowManager {
-  private homepageWindow: BrowserWindow | null = null
-  private overlayWindow: BrowserWindow | null = null
+  private readonly createWindow: NonNullable<WindowManagerOptions['createWindow']>
+  private readonly host: WindowHostAdapter
+  private homepageWindow: ManagedWindow | null = null
+  private overlayWindow: ManagedWindow | null = null
   private overlayContentProtection = true
   private overlayState: OverlayState = 'hidden'
   private overlayStreaming = false
@@ -40,7 +109,10 @@ export class WindowManager {
   private readonly snapshotListeners = new Set<(snapshot: WindowSnapshot) => void>()
   private destroyed = false
 
-  constructor(private readonly options: WindowManagerOptions) {}
+  constructor(private readonly options: WindowManagerOptions) {
+    this.createWindow = options.createWindow ?? createRealWindow
+    this.host = options.host ?? realHost
+  }
 
   start(): void {
     this.assertActive()
@@ -52,7 +124,7 @@ export class WindowManager {
     this.setDockVisible(true)
   }
 
-  getWindow(role: WindowRole): BrowserWindow | null {
+  getWindow(role: WindowRole): ManagedWindow | null {
     const window = role === 'homepage' ? this.homepageWindow : this.overlayWindow
     return window && !window.isDestroyed() ? window : null
   }
@@ -255,15 +327,13 @@ export class WindowManager {
     this.snapshotListeners.clear()
   }
 
-  private ensureHomepageWindow(): BrowserWindow {
+  private ensureHomepageWindow(): ManagedWindow {
     const existingWindow = this.getWindow('homepage')
     if (existingWindow) {
       return existingWindow
     }
 
-    const window = new BrowserWindow(
-      createHomepageWindowOptions(this.preloadPath),
-    )
+    const window = this.createWindow(createHomepageWindowOptions(this.preloadPath))
     this.homepageWindow = window
     this.configureWindow('homepage', window)
     this.loadRenderer('homepage', window)
@@ -287,13 +357,13 @@ export class WindowManager {
     return window
   }
 
-  private ensureOverlayWindow(): BrowserWindow {
+  private ensureOverlayWindow(): ManagedWindow {
     const existingWindow = this.getWindow('overlay')
     if (existingWindow) {
       return existingWindow
     }
 
-    const window = new BrowserWindow(createOverlayWindowOptions(this.preloadPath))
+    const window = this.createWindow(createOverlayWindowOptions(this.preloadPath))
     this.overlayWindow = window
     this.overlayState = 'hidden'
     this.configureWindow('overlay', window)
@@ -321,7 +391,7 @@ export class WindowManager {
     return window
   }
 
-  private configureWindow(role: WindowRole, window: BrowserWindow): void {
+  private configureWindow(role: WindowRole, window: ManagedWindow): void {
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     window.webContents.on('will-navigate', (event) => {
       event.preventDefault()
@@ -366,7 +436,7 @@ export class WindowManager {
     }
   }
 
-  private configureOverlayProtection(window: BrowserWindow): void {
+  private configureOverlayProtection(window: ManagedWindow): void {
     try {
       window.setContentProtection(this.overlayContentProtection)
     } catch {
@@ -376,14 +446,14 @@ export class WindowManager {
     window.setSkipTaskbar(true)
     window.webContents.setBackgroundThrottling(false)
 
-    if (process.platform === 'darwin') {
+    if (this.host.platform === 'darwin') {
       window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
       window.setHiddenInMissionControl(true)
       window.setAlwaysOnTop(true, 'screen-saver', 1)
     }
   }
 
-  private loadRenderer(role: WindowRole, window: BrowserWindow): void {
+  private loadRenderer(role: WindowRole, window: ManagedWindow): void {
     const target = createRendererTarget(
       role,
       this.options.devServerUrl,
@@ -402,7 +472,7 @@ export class WindowManager {
 
   private applyOverlayTransition(
     transition: OverlayTransition,
-    window: BrowserWindow,
+    window: ManagedWindow,
   ): void {
     const nextState = transitionOverlayState(
       this.overlayState,
@@ -418,7 +488,7 @@ export class WindowManager {
     this.publishSnapshot('overlay', window)
   }
 
-  private publishSnapshot(role: WindowRole, window: BrowserWindow): void {
+  private publishSnapshot(role: WindowRole, window: ManagedWindow): void {
     if (window.isDestroyed()) {
       return
     }
@@ -434,7 +504,7 @@ export class WindowManager {
     }
   }
 
-  private readSnapshot(role: WindowRole, window: BrowserWindow): WindowSnapshot {
+  private readSnapshot(role: WindowRole, window: ManagedWindow): WindowSnapshot {
     return {
       role,
       visible: window.isVisible(),
@@ -490,7 +560,7 @@ export class WindowManager {
    * macOS, where there is no dock or activation policy.
    */
   private setDockVisible(visible: boolean): void {
-    if (process.platform !== 'darwin') {
+    if (this.host.platform !== 'darwin') {
       return
     }
     if (this.dockVisible === visible) {
@@ -499,7 +569,7 @@ export class WindowManager {
     this.dockVisible = visible
     const policy = visible ? 'regular' : 'accessory'
     log.info('setDockVisible', { visible, policy })
-    app.setActivationPolicy(policy)
+    this.host.setActivationPolicy(policy)
   }
 
   private get preloadPath(): string {

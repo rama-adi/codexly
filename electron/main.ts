@@ -2,6 +2,7 @@ import { app, Menu, screen, type Tray } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { createElectronAdapters, registerAdapterTeardown } from './app/adapters'
 import { ProductController } from './app/product-controller'
 import { createCodexlyTray } from './app/tray'
 import { registerIpc, type IpcRegistration } from './ipc/register-ipc'
@@ -34,6 +35,9 @@ process.env.VITE_PUBLIC = devServerUrl ? path.join(appRoot, 'public') : renderer
 if (process.env['CODEXLY_USER_DATA_DIR']) {
   app.setPath('userData', process.env['CODEXLY_USER_DATA_DIR'])
 }
+
+const adapters = createElectronAdapters()
+registerAdapterTeardown(adapters)
 
 const windowManager = new WindowManager({
   mainDist,
@@ -97,6 +101,7 @@ void app.whenReady().then(async () => {
     isPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
     windowManager,
+    adapters,
     publish: (event, roles) => ipcRegistration?.publishProduct(event, roles),
   })
   ipcRegistration = registerIpc({

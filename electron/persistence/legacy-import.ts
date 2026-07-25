@@ -3,7 +3,10 @@ import path from 'node:path'
 import { z } from 'zod'
 
 import { AtomicJsonStore } from './atomic-json-store'
-import { type LegacyWorkspaceProfile, WorkspaceStore } from './workspace-store'
+import { type LegacyWorkspaceProfile, type WorkspaceStore } from './workspace-store'
+
+/** The workspace-store surface the import needs; keeps the store substitutable. */
+export type LegacyWorkspaceSink = Pick<WorkspaceStore, 'importLegacyProfiles'>
 
 const LEGACY_IMPORT_VERSION = 1
 const ISO_DATE = z.string().datetime()
@@ -67,7 +70,7 @@ export type LegacyImportOptions = Readonly<{
   userDataPath: string
   /** Read-only former state directory, e.g. ~/.codexly/userdata. */
   legacyStatePath: string
-  workspaceStore: WorkspaceStore
+  workspaceStore: LegacyWorkspaceSink
   /** Optional integration point for the new non-secret settings store. */
   importSettings?: (settings: ImportedLegacySettings) => Promise<void>
 }>
@@ -80,7 +83,7 @@ export type LegacyImportOptions = Readonly<{
 export class LegacyImporter {
   readonly #markerStore: AtomicJsonStore<ImportMarker>
   readonly #legacyStatePath: string
-  readonly #workspaceStore: WorkspaceStore
+  readonly #workspaceStore: LegacyWorkspaceSink
   readonly #importSettings?: (settings: ImportedLegacySettings) => Promise<void>
   #queue: Promise<void> = Promise.resolve()
 

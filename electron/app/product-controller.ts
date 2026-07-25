@@ -1,20 +1,4 @@
 import {
-  desktopCapturer,
-  dialog,
-  globalShortcut,
-  nativeImage,
-  safeStorage,
-  screen,
-  shell,
-  systemPreferences,
-  type BrowserWindow,
-  type NativeImage,
-} from 'electron'
-import os from 'node:os'
-import path from 'node:path'
-import { z } from 'zod'
-
-import {
   TranscriptSnapshotSchema,
   type ProductCommand,
   type ProductEvent,
@@ -32,15 +16,11 @@ import type {
   ModelOption,
 } from '../../src/shared/schemas/models'
 import type { WindowRole } from '../windows/window-options'
-import type { WindowManager } from '../windows/window-manager'
+import type { ManagedWindow, WindowManager } from '../windows/window-manager'
+
 import type { PromptSettings } from '../conversation/prompt-builder'
 import { sanitizeThreadTitle, TITLE_FALLBACK } from './thread-title'
-import {
-  LegacyImporter,
-  type ImportedLegacySettings,
-} from '../persistence/legacy-import'
-import { CredentialStore } from '../auth/credential-store'
-import { AttachmentStore } from '../capture/attachment-store'
+import type { ImportedLegacySettings } from '../persistence/legacy-import'
 import {
   CaptureCancelledError,
   CaptureCoordinator,
@@ -48,26 +28,34 @@ import {
   type CaptureRequest,
 } from '../capture/capture-coordinator'
 import { DisplayCapture } from '../capture/display-capture'
-import { displayAtPoint } from '../capture/selection-models'
-import { selectCaptureRegion } from '../capture/selection-surface'
-import {
-  CodexProviderManager,
-  resolvePinnedNativeCodexPath,
-} from '../conversation/codex-provider-manager'
-import {
-  ConversationRuntime,
-  type ConversationEventStore,
-  type ConversationThreadStore,
-  type ConversationTurnHandle,
+import { displayAtPoint, type CaptureDisplay } from '../capture/selection-models'
+import type {
+  ConversationEventStore,
+  ConversationThreadStore,
+  ConversationTurnHandle,
 } from '../conversation/conversation-runtime'
 import type { TurnEventEnvelope } from '../conversation/turn-controller'
 import { retry } from '../effects/retry'
-import { AtomicJsonStore } from '../persistence/atomic-json-store'
-import { SessionStore, type SessionRecord } from '../persistence/session-store'
-import { SettingsStore } from '../persistence/settings-store'
-import { WorkspaceStore } from '../persistence/workspace-store'
+import type { SessionRecord } from '../persistence/session-store'
 import { ShortcutManager } from '../shortcuts/shortcut-manager'
 import { logger, serializeErrorForLog } from '../shared/logger'
+import type {
+  MainProcessAdapters,
+  PreviewImage,
+  ScreenDisplay,
+} from './adapters'
+import {
+  legacyStatePath,
+  resolveProductStoreFactories,
+  type AttachmentStoreLike,
+  type LegacyImportRunner,
+  type ConversationRuntimeLike,
+  type CredentialStoreLike,
+  type ProductStoreFactories,
+  type SessionStoreLike,
+  type SettingsStoreLike,
+  type WorkspaceStoreLike,
+} from './product-stores'
 import {
   decideTurnEventDisposition,
   isFreshOverlayOpen,
@@ -77,10 +65,6 @@ import {
 } from './turn-registry'
 
 const log = logger.child('product')
-
-const CredentialRecordSchema = z
-  .object({ version: z.literal(1), encryptedApiKey: z.string().nullable() })
-  .strict()
 
 type RuntimeStatus = Readonly<{
   state: 'ready' | 'offline' | 'unauthorized'
@@ -103,12 +87,33 @@ const WARMUP_RETRY_ATTEMPTS = 3
 /** How many finished turns stay re-syncable after their records are closed. */
 const MAX_RETAINED_TERMINAL_SNAPSHOTS = 8
 
+/** The window-manager surface the controller drives. */
+export type WindowManagerLike = Pick<
+  WindowManager,
+  | 'getWindow'
+  | 'showHomepage'
+  | 'showOverlay'
+  | 'hideOverlay'
+  | 'releaseOverlayFocus'
+  | 'setOverlayFocusable'
+  | 'setOverlayStreaming'
+  | 'setOverlayContentProtection'
+>
+
 export interface ProductControllerOptions {
   userDataPath: string
   isPackaged: boolean
   resourcesPath: string
-  windowManager: WindowManager
+  windowManager: WindowManagerLike
   publish(event: ProductEvent, roles?: readonly WindowRole[]): void
+  /**
+   * Host access. Required rather than defaulted: the real adapters own selector
+   * windows that must be torn down by `registerAdapterTeardown`, so exactly one
+   * composition root may build them.
+   */
+  adapters: MainProcessAdapters
+  /** Construction seams for the stores and the runtime; each one has a default. */
+  factories?: Partial<ProductStoreFactories>
 }
 
 export function consumePendingAttachmentSnapshot(
@@ -132,8 +137,8 @@ export async function consumePendingAttachmentsAfter<T>(
 
 export async function restoreCapturePresentation(
   snapshot: CapturePresentationSnapshot,
-  homepage: BrowserWindow | null,
-  overlay: BrowserWindow | null,
+  homepage: ManagedWindow | null,
+  overlay: ManagedWindow | null,
   showOverlay: () => Promise<void>,
 ): Promise<void> {
   if (homepage) {
@@ -212,8 +217,7 @@ const MAX_PREVIEW_DIMENSION = 128
 
 export function createBoundedAttachmentPreview(
   bytes: Buffer,
-  createImage: (bytes: Buffer) => Pick<NativeImage, 'getSize' | 'resize' | 'toDataURL'> = (value) =>
-    nativeImage.createFromBuffer(value),
+  createImage: (bytes: Buffer) => PreviewImage,
 ): string {
   try {
     const image = createImage(bytes)
@@ -269,14 +273,16 @@ export function resolveTurnTerminalPresentation(
 }
 
 export class ProductController {
-  readonly #settings: SettingsStore
-  readonly #sessions: SessionStore
-  readonly #workspaces: WorkspaceStore
-  readonly #attachments: AttachmentStore
-  readonly #credentials: CredentialStore
-  readonly #windowManager: WindowManager
+  readonly #adapters: MainProcessAdapters
+  readonly #settings: SettingsStoreLike
+  readonly #sessions: SessionStoreLike
+  readonly #workspaces: WorkspaceStoreLike
+  readonly #attachments: AttachmentStoreLike
+  readonly #credentials: CredentialStoreLike
+  readonly #createLegacyImport: () => LegacyImportRunner
+  readonly #windowManager: WindowManagerLike
   readonly #publish: ProductControllerOptions['publish']
-  readonly #runtime: ConversationRuntime | null
+  readonly #runtime: ConversationRuntimeLike | null
   readonly #capture: CaptureCoordinator
   readonly #shortcuts: ShortcutManager
   readonly #turns: TurnRegistry
@@ -290,7 +296,6 @@ export class ProductController {
    * can still re-sync, including for ephemeral sessions that persist nothing.
    */
   readonly #terminalSnapshots = new Map<string, TranscriptSnapshot>()
-  readonly #userDataPath: string
   #runtimeError: string | null = null
   #screenAccessEnsured = false
   #warmup: { key: string; promise: Promise<void> } | null = null
@@ -303,55 +308,39 @@ export class ProductController {
   }
 
   private constructor(options: ProductControllerOptions) {
+    const adapters = options.adapters
+    this.#adapters = adapters
     this.#windowManager = options.windowManager
     this.#publish = options.publish
-    this.#userDataPath = options.userDataPath
-    this.#settings = new SettingsStore({ userDataPath: options.userDataPath })
-    this.#sessions = new SessionStore({ userDataPath: options.userDataPath })
-    this.#workspaces = new WorkspaceStore({
+    const factories = resolveProductStoreFactories(options.factories)
+    const context = {
       userDataPath: options.userDataPath,
-      allowedRootPaths: workspaceRoots(),
-    })
-    this.#attachments = new AttachmentStore({ userDataPath: options.userDataPath })
-
-    const credentialRecord = new AtomicJsonStore({
-      basePath: options.userDataPath,
-      filename: 'credentials.json',
-      schema: CredentialRecordSchema,
-    })
-    this.#credentials = new CredentialStore({
-      safeStorage: {
-        isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
-        encryptString: (value) => safeStorage.encryptString(value),
-        decryptString: (value) => safeStorage.decryptString(value),
-      },
-      persistence: {
-        readEncryptedApiKey: async () =>
-          (await credentialRecord.read())?.encryptedApiKey ?? null,
-        writeEncryptedApiKey: async (value) => {
-          await credentialRecord.write({ version: 1, encryptedApiKey: value })
+      isPackaged: options.isPackaged,
+      resourcesPath: options.resourcesPath,
+      adapters,
+    }
+    this.#settings = factories.settings(context)
+    this.#sessions = factories.sessions(context)
+    this.#workspaces = factories.workspaces(context)
+    this.#attachments = factories.attachments(context)
+    this.#credentials = factories.credentials(context)
+    // Constructed lazily inside #importLegacyState's try/catch: LegacyImporter
+    // rejects a non-absolute legacy path, and a bad CODEXLY_HOME must degrade to
+    // "no import" rather than failing the whole controller construction.
+    this.#createLegacyImport = () =>
+      factories.legacyImport({
+        ...context,
+        workspaces: this.#workspaces,
+        importSettings: async (legacy) => {
+          await this.#settings.update((current) => mergeLegacySettings(current, legacy))
         },
-        deleteEncryptedApiKey: async () => {
-          await credentialRecord.write({ version: 1, encryptedApiKey: null })
-        },
-      },
-    })
+      })
 
-    let runtime: ConversationRuntime | null = null
+    let runtime: ConversationRuntimeLike | null = null
     try {
-      const codexPath = resolvePinnedNativeCodexPath({
-        isPackaged: options.isPackaged,
-        resourcesPath: options.resourcesPath,
-      })
-      const providers = new CodexProviderManager({
+      runtime = factories.runtime({
+        ...context,
         credentials: this.#credentials,
-        codexPath,
-        onToolRequestUserInput: async () => {
-          throw new Error('Codex requested user input; explicit UI handling is required.')
-        },
-      })
-      runtime = new ConversationRuntime({
-        providers,
         threads: this.#createThreadStore(),
         events: this.#createEventStore(),
       })
@@ -368,29 +357,9 @@ export class ProductController {
     })
 
     const displayCapture = new DisplayCapture({
-      getAllDisplays: () =>
-        screen.getAllDisplays().map((display) => ({
-          id: String(display.id),
-          label: display.label || `Display ${display.id}`,
-          bounds: display.bounds,
-          workArea: display.workArea,
-          scaleFactor: display.scaleFactor,
-          rotation: normalizeRotation(display.rotation),
-          physicalSize: {
-            width: Math.round(display.bounds.width * display.scaleFactor),
-            height: Math.round(display.bounds.height * display.scaleFactor),
-          },
-        })),
-      getCursorPoint: () => screen.getCursorScreenPoint(),
-      getSources: async (thumbnailSize) =>
-        (await desktopCapturer.getSources({ types: ['screen'], thumbnailSize })).map(
-          (source) => ({
-            id: source.id,
-            displayId: source.display_id || null,
-            name: source.name,
-            image: wrapNativeImage(source.thumbnail),
-          }),
-        ),
+      getAllDisplays: () => adapters.screen.getAllDisplays().map(toCaptureDisplay),
+      getCursorPoint: () => adapters.screen.getCursorPoint(),
+      getSources: (thumbnailSize) => adapters.captureSources.getSources(thumbnailSize),
     })
     this.#capture = new CaptureCoordinator(
       displayCapture,
@@ -398,7 +367,7 @@ export class ProductController {
       this.#createPresentationAdapter(),
     )
     this.#shortcuts = new ShortcutManager({
-      adapter: globalShortcut,
+      adapter: adapters.globalShortcut,
       onError: (failure) => {
         this.#publish(
           {
@@ -418,7 +387,7 @@ export class ProductController {
     // Read-only, one-time import of the legacy settings/profile surface. Must run
     // before the first settings load so imported preferences are visible.
     await this.#importLegacyState()
-    const home = os.homedir()
+    const home = this.#adapters.env.homedir()
     try {
       if (!(await this.#workspaces.getSelected())) {
         await this.#workspaces.registerApprovedPath(home, 'Home')
@@ -495,7 +464,7 @@ export class ProductController {
         return this.#workspaces.list()
       case 'workspaces.pick': {
         this.#requireHomepage(role)
-        const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
+        const result = await this.#adapters.dialog.openDirectory()
         if (result.canceled || !result.filePaths[0]) return null
         const workspace = await this.#workspaces.registerApprovedPath(result.filePaths[0])
         void this.#warmRuntime()
@@ -654,7 +623,7 @@ export class ProductController {
               role: 'user',
               content: command.message,
               attachmentIds: command.attachmentIds,
-              createdAt: new Date().toISOString(),
+              createdAt: this.#adapters.clock.now().toISOString(),
             })
           },
           associateAll: async (ids) => {
@@ -886,29 +855,19 @@ export class ProductController {
   async #providerRevisionInput() {
     const workspace = await this.#workspaces.getSelected()
     return {
-      workspacePath: workspace?.canonicalPath ?? os.homedir(),
+      workspacePath: workspace?.canonicalPath ?? this.#adapters.env.homedir(),
       workspaceRevision: workspace ? Number(new Date(workspace.updatedAt)) : 0,
       configRevision: this.#credentials.getStatus().revision,
     }
   }
 
   async #importLegacyState(): Promise<void> {
-    const base = process.env['CODEXLY_HOME']?.trim() || path.join(os.homedir(), '.codexly')
-    const legacyStatePath = path.join(base, 'userdata')
     try {
-      const importer = new LegacyImporter({
-        userDataPath: this.#userDataPath,
-        legacyStatePath,
-        workspaceStore: this.#workspaces,
-        importSettings: async (legacy) => {
-          await this.#settings.update((current) => mergeLegacySettings(current, legacy))
-        },
-      })
-      await importer.importOnce()
+      await this.#createLegacyImport().importOnce()
     } catch (error) {
       // A failed or absent legacy import must never block startup.
       log.warn('legacy state import failed', {
-        legacyStatePath,
+        legacyStatePath: legacyStatePath(this.#adapters.env),
         error: serializeErrorForLog(error),
       })
     }
@@ -932,7 +891,7 @@ export class ProductController {
         const verified = await this.#attachments.resolveVerifiedBytes(attachment.id)
         return {
           ...attachment,
-          preview: createBoundedAttachmentPreview(verified.bytes),
+          preview: this.#createAttachmentPreview(verified.bytes),
         }
       }),
     )
@@ -954,7 +913,7 @@ export class ProductController {
           return {
             id,
             name: verified.attachment.name,
-            preview: createBoundedAttachmentPreview(verified.bytes),
+            preview: this.#createAttachmentPreview(verified.bytes),
           }
         } catch {
           return null
@@ -1018,7 +977,8 @@ export class ProductController {
     return this.#captureWithRequest({
       selectTarget: async (signal, displays) => {
         if (signal.aborted) throw signal.reason
-        const display = displayAtPoint(displays, screen.getCursorScreenPoint()) ?? displays[0]
+        const display =
+          displayAtPoint(displays, this.#adapters.screen.getCursorPoint()) ?? displays[0]
         if (!display) throw new Error('No display is available for capture.')
         return { kind: 'display', displayId: display.id }
       },
@@ -1028,7 +988,7 @@ export class ProductController {
   async #captureSelection() {
     return this.#captureWithRequest({
       selectTarget: async (signal, displays) => {
-        const result = await selectCaptureRegion(displays, signal)
+        const result = await this.#adapters.selection.selectRegion(displays, signal)
         if (result === 'cancelled') throw new CaptureCancelledError()
         return result
       },
@@ -1043,7 +1003,7 @@ export class ProductController {
       const verified = await this.#attachments.resolveVerifiedBytes(outcome.attachment.id)
       const attachment = {
         ...outcome.attachment,
-        preview: createBoundedAttachmentPreview(verified.bytes),
+        preview: this.#createAttachmentPreview(verified.bytes),
       }
       this.#publish({ type: 'attachment.captured', attachment }, ['overlay'])
       // Auto-answer runs after the capture resolves so the queued attachment and
@@ -1092,16 +1052,14 @@ export class ProductController {
    * to open the relevant System Settings pane. No-op on other platforms.
    */
   async #ensureScreenCaptureAccess(): Promise<void> {
-    if (process.platform !== 'darwin' || this.#screenAccessEnsured) return
+    const { dialog, env, shell, systemPreferences } = this.#adapters
+    if (env.platform !== 'darwin' || this.#screenAccessEnsured) return
     if (systemPreferences.getMediaAccessStatus('screen') === 'granted') {
       this.#screenAccessEnsured = true
       return
     }
     try {
-      await desktopCapturer.getSources({
-        types: ['screen'],
-        thumbnailSize: { width: 1, height: 1 },
-      })
+      await this.#adapters.captureSources.getSources({ width: 1, height: 1 })
     } catch {
       // The TCC prompt itself can reject the probe; fall through to the dialog.
     }
@@ -1453,12 +1411,18 @@ export class ProductController {
     }
   }
 
+  #createAttachmentPreview(bytes: Buffer): string {
+    return createBoundedAttachmentPreview(bytes, (value) =>
+      this.#adapters.image.createFromBuffer(value),
+    )
+  }
+
   #createPresentationAdapter() {
-    const read = (window: BrowserWindow | null) => ({
+    const read = (window: ManagedWindow | null) => ({
       visible: window?.isVisible() ?? false,
       focused: window?.isFocused() ?? false,
       clickThrough: false,
-      displayId: window ? String(screen.getDisplayMatching(window.getBounds()).id) : '',
+      displayId: window ? this.#adapters.screen.getDisplayIdMatching(window.getBounds()) : '',
       bounds: window?.getBounds() ?? { x: 0, y: 0, width: 1, height: 1 },
     })
     return {
@@ -1492,7 +1456,7 @@ export class ProductController {
   }
 
   #createEphemeralSession(workspaceId: string): SessionRecord {
-    const now = new Date().toISOString()
+    const now = this.#adapters.clock.now().toISOString()
     const session: SessionRecord = {
       version: 1,
       id: `session_${crypto.randomUUID()}`,
@@ -1537,10 +1501,20 @@ export class ProductController {
   }
 }
 
-function workspaceRoots(): string[] {
-  const home = os.homedir()
-  const roots = [home, path.parse(home).root]
-  return [...new Set(roots)]
+/** Normalizes one host display into the geometry the capture pipeline uses. */
+function toCaptureDisplay(display: ScreenDisplay): CaptureDisplay {
+  return {
+    id: display.id,
+    label: display.label,
+    bounds: display.bounds,
+    workArea: display.workArea,
+    scaleFactor: display.scaleFactor,
+    rotation: normalizeRotation(display.rotation),
+    physicalSize: {
+      width: Math.round(display.bounds.width * display.scaleFactor),
+      height: Math.round(display.bounds.height * display.scaleFactor),
+    },
+  }
 }
 
 function normalizeRotation(rotation: number): 0 | 90 | 180 | 270 {
@@ -1548,16 +1522,6 @@ function normalizeRotation(rotation: number): 0 | 90 | 180 | 270 {
   return normalized === 90 || normalized === 180 || normalized === 270
     ? normalized
     : 0
-}
-
-function wrapNativeImage(image: NativeImage) {
-  const size = image.getSize()
-  return {
-    size,
-    toPng: () => image.toPNG(),
-    crop: (bounds: { x: number; y: number; width: number; height: number }) =>
-      wrapNativeImage(image.crop(bounds)),
-  }
 }
 
 function errorMessage(value: unknown): string {

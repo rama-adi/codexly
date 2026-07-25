@@ -4,8 +4,20 @@
     {
       "name": "vite",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["vite", "--port", "5273"],
+      "runtimeArgs": [
+        "vite",
+        "--port",
+        "5273"
+      ],
       "port": 5273
+    },
+    {
+      "name": "harness",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "dev:harness"
+      ],
+      "port": 5173
     }
   ]
 }

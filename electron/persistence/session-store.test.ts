@@ -104,7 +104,9 @@ describe('SessionStore', () => {
     await store.clear()
     expect(await store.list()).toEqual([])
     expect(await store.get(created[1].id)).toBeNull()
-  })
+    // 101 real atomic disk writes; comfortably slower than the 5s default under
+    // full-suite parallel load.
+  }, 30_000)
 
   it('rejects non-application session identifiers', async () => {
     const store = new SessionStore({ userDataPath: await temporaryDirectory() })

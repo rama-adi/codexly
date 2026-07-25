@@ -1,40 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 import { SerializedErrorSchema } from '../errors'
+import { makeSettings } from '../fixtures'
 import { CapabilitiesSchema } from './capabilities'
 import { JsonValueSchema } from './common'
 import { CanonicalSettingsSchema } from './settings'
 
-const settings = {
-  version: 4,
-  appearance: { theme: 'system', reducedMotion: false, answerHeight: 600 },
-  application: { launchAtLogin: false, showDockIcon: true, startMinimized: false },
-  privacy: { persistConversations: true, shareDiagnostics: false, stealthMode: true },
-  capture: {
-    includeMicrophone: false,
-    includeSystemAudio: true,
-    screenshotFormat: 'png',
-    autoAnswer: false,
-  },
-  assistant: {
-    model: 'codex-default',
-    reasoningEffort: 'medium',
-    responseLanguage: 'en-US',
-    webSearchEnabled: false,
-    mode: 'question',
-    verbosity: 'concise',
-    codingLanguage: 'javascript',
-    customInstructionsEnabled: false,
-    customInstructions: '',
-  },
-  shortcuts: {
-    summonOverlay: 'CommandOrControl+Shift+Space',
-    toggleOverlay: 'CommandOrControl+Shift+B',
-    captureDisplay: 'CommandOrControl+Shift+1',
-    captureSelection: 'CommandOrControl+Shift+2',
-    solve: 'CommandOrControl+Shift+Enter',
-  },
-} as const
+const settings = makeSettings()
 
 describe('shared schemas', () => {
   it('accepts canonical settings and rejects unknown nested fields', () => {

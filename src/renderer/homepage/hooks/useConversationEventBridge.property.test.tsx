@@ -42,7 +42,6 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  cleanup()
   mocks.listener = undefined
   mocks.transcriptSnapshot.mockReset()
   vi.restoreAllMocks()

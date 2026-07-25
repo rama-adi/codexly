@@ -1,11 +1,8 @@
-import type { DesktopCapturerSource, Display, NativeImage } from 'electron'
-
 import {
   displayAtPoint,
   logicalSelectionToPhysicalCrop,
   type CaptureDisplay,
   type CaptureTarget,
-  type DisplayRotation,
   type Point,
   type Rectangle,
   type Size,
@@ -135,69 +132,6 @@ export class DisplayCapture {
       display,
       target,
     }
-  }
-}
-
-export async function createElectronDisplayCaptureAdapter(): Promise<DisplayCaptureAdapter> {
-  const { desktopCapturer, screen } = await import('electron')
-  return {
-    getAllDisplays: () => screen.getAllDisplays().map(mapElectronDisplay),
-    getCursorPoint: () => screen.getCursorScreenPoint(),
-    getSources: async (thumbnailSize) => {
-      const sources = await desktopCapturer.getSources({
-        types: ['screen'],
-        fetchWindowIcons: false,
-        thumbnailSize,
-      })
-      return sources.map(mapElectronSource)
-    },
-  }
-}
-
-function mapElectronDisplay(display: Display): CaptureDisplay {
-  const scaleFactor = display.scaleFactor
-  const rotation = normalizeRotation(display.rotation)
-  return {
-    id: String(display.id),
-    label: display.label || `Display ${display.id}`,
-    bounds: display.bounds,
-    workArea: display.workArea,
-    scaleFactor,
-    rotation,
-    physicalSize: physicalSize(display.bounds, scaleFactor),
-  }
-}
-
-function physicalSize(bounds: Rectangle, scaleFactor: number): Size {
-  return {
-    width: Math.round(bounds.width * scaleFactor),
-    height: Math.round(bounds.height * scaleFactor),
-  }
-}
-
-function normalizeRotation(rotation: number): DisplayRotation {
-  const normalized = ((rotation % 360) + 360) % 360
-  if (normalized === 0 || normalized === 90 || normalized === 180 || normalized === 270) {
-    return normalized
-  }
-  return 0
-}
-
-function mapElectronSource(source: DesktopCapturerSource): ScreenCaptureSource {
-  return {
-    id: source.id,
-    displayId: source.display_id || null,
-    name: source.name,
-    image: wrapNativeImage(source.thumbnail),
-  }
-}
-
-function wrapNativeImage(image: NativeImage): CaptureImage {
-  const size = image.getSize()
-  return {
-    size,
-    toPng: () => image.toPNG(),
-    crop: (bounds) => wrapNativeImage(image.crop(bounds)),
   }
 }
 

@@ -79,7 +79,7 @@ export function createOverlayStore(
 
   const initial: OverlayState = { ...defaultState(), ...options.initial }
 
-  return createStore<OverlayStoreState>((setState, getState) => {
+  const store = createStore<OverlayStoreState>((setState, getState) => {
     const renderTranscript = () => setState({ answer: answerBuffer, reasoning: reasoningBuffer })
 
     const cancelFrame = () => {
@@ -305,4 +305,11 @@ export function createOverlayStore(
       },
     }
   })
+
+  // Dev-only: lets the browser harness' inspector report real store state. The
+  // guard is compiled away in production, and the registry only exists when the
+  // harness created it.
+  if (import.meta.env.DEV) globalThis.__codexlyDevStores?.set('overlay', store)
+
+  return store
 }

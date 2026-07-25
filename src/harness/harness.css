@@ -1,0 +1,46 @@
+/**
+ * Backdrop for the browser harness. The overlay role renders on a transparent
+ * Electron window, so in a browser it needs a neutral checkered surface behind
+ * it to be visible at all.
+ */
+body[data-codexly-harness] {
+  min-height: 100vh;
+  background-color: #14171d;
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.04) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.04) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.04) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.04) 75%);
+  background-size: 28px 28px;
+  background-position:
+    0 0,
+    0 14px,
+    14px -14px,
+    -14px 0;
+}
+
+body[data-codexly-harness][data-codexly-role='overlay'] {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 56px 24px 24px;
+}
+
+body[data-codexly-harness][data-codexly-role='homepage'] .renderer-root--homepage {
+  height: 100vh;
+}
+
+#codexly-harness-badge {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  z-index: 2147483647;
+  padding: 3px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.62);
+  color: rgba(235, 240, 248, 0.82);
+  font: 500 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}

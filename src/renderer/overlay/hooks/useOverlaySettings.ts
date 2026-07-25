@@ -21,7 +21,11 @@ type UseOverlaySettingsOptions = {
 // never re-fires when the caller passes fresh inline callbacks each render.
 export function useOverlaySettings(options: UseOverlaySettingsOptions): void {
   const latest = useRef(options)
-  latest.current = options
+  // Refreshed after commit, never during render. Declared before the load
+  // effect so the first assignment lands before that effect reads it.
+  useEffect(() => {
+    latest.current = options
+  })
 
   useEffect(() => {
     if (!desktopClient.available) return

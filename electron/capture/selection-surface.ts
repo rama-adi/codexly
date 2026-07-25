@@ -1,11 +1,4 @@
-import {
-  app,
-  BrowserWindow,
-  MessageChannelMain,
-  screen,
-  type BrowserWindowConstructorOptions,
-  type MessagePortMain,
-} from 'electron'
+import type { BrowserWindowConstructorOptions, MessagePortMain } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -362,19 +355,15 @@ export class SelectionSurfaceController {
   }
 }
 
-const selectionSurface = new SelectionSurfaceController({
-  createWindow: (options) => new BrowserWindow(options),
-  createChannel: () => new MessageChannelMain(),
-  getCursorPoint: () => screen.getCursorScreenPoint(),
-})
-
-app.once('before-quit', () => selectionSurface.dispose())
-
-export function selectCaptureRegion(
-  displays: readonly CaptureDisplay[],
-  signal: AbortSignal,
-): Promise<SelectionSurfaceResult> {
-  return selectionSurface.select(displays, signal)
+/**
+ * Builds a selector-window pool. Construction is deliberately a factory rather
+ * than a module-level singleton: importing this module must not reach into the
+ * Electron runtime, so the composition root owns the instance and its teardown.
+ */
+export function createSelectionSurface(
+  dependencies: SelectionSurfaceDependencies,
+): SelectionSurfaceController {
+  return new SelectionSurfaceController(dependencies)
 }
 
 type SelectionMessage =

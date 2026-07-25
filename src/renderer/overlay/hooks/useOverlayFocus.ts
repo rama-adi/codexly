@@ -17,7 +17,11 @@ type UseOverlayFocusOptions = {
 // cannot cause the focus toggle to re-fire every render.
 export function useOverlayFocus({ view, inputRef, onError }: UseOverlayFocusOptions): void {
   const latest = useRef({ inputRef, onError })
-  latest.current = { inputRef, onError }
+  // Refreshed after commit, never during render. Declared before the focus
+  // effect so the first assignment lands before that effect reads it.
+  useEffect(() => {
+    latest.current = { inputRef, onError }
+  })
 
   useEffect(() => {
     if (!desktopClient.available) return

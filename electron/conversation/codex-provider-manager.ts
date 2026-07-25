@@ -117,8 +117,11 @@ export interface CodexProviderLease {
   release(): Promise<void>
 }
 
+/** The credential surface the provider needs; keeps the store substitutable. */
+export type CodexCredentialSource = Pick<CredentialStore, 'getProviderSnapshot'>
+
 export interface CodexProviderManagerOptions {
-  credentials: CredentialStore
+  credentials: CodexCredentialSource
   codexPath: string
   createProvider?: (
     settings: CodexAppServerProviderSettings,
@@ -140,7 +143,7 @@ interface ManagedProvider {
 }
 
 export class CodexProviderManager {
-  readonly #credentials: CredentialStore
+  readonly #credentials: CodexCredentialSource
   readonly #codexPath: string
   readonly #createProvider: NonNullable<
     CodexProviderManagerOptions['createProvider']

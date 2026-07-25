@@ -1,12 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('electron', () => ({
-  app: { once: vi.fn() },
-  BrowserWindow: class {},
-  MessageChannelMain: class {},
-  screen: { getCursorScreenPoint: () => ({ x: 10, y: 10 }) },
-}))
-
 import {
   SelectionSurfaceController,
   type SelectionSurfaceDependencies,
