@@ -2,8 +2,12 @@
 // floating panels stay visually identical without repeating utility strings.
 // Compose them with `cn()` — later classes win over these defaults.
 
+// A flat width, not `min(760px, 100vw - 16px)`: the window is sized around this
+// content, so a viewport-derived width makes every window width its own fixed
+// point — the panel stays stuck at whatever the window last happened to be, and
+// it outgrows the viewport as soon as a classic scrollbar eats into `100vw`.
 export const hudPanel =
-  'relative mt-1.5 w-[min(760px,calc(100vw-16px))] animate-hud-rise rounded-hud border border-hud-line bg-hud-solid shadow-hud backdrop-blur-[30px] backdrop-saturate-[1.4]'
+  'relative mt-1.5 w-[760px] animate-hud-rise rounded-hud border border-hud-line bg-hud-solid shadow-hud backdrop-blur-[30px] backdrop-saturate-[1.4]'
 
 export const hudInlineError =
   'mt-2 rounded-hud-sm border border-hud-danger/32 bg-hud-danger/8 px-[9px] py-[7px] whitespace-pre-wrap text-hud-danger-text'

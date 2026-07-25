@@ -139,7 +139,7 @@ export function Overlay() {
 
       {s.visibleError && (
         <div
-          className="mt-1.5 w-[min(760px,calc(100vw-16px))] rounded-hud-sm border border-hud-danger/35 bg-[rgba(35,17,17,0.94)] px-2.5 py-[7px] text-hud-danger-text shadow-hud"
+          className="mt-1.5 w-[760px] rounded-hud-sm border border-hud-danger/35 bg-[rgba(35,17,17,0.94)] px-2.5 py-[7px] text-hud-danger-text shadow-hud"
           role="alert"
         >
           {s.visibleError}

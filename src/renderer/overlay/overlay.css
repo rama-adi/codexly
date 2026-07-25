@@ -94,6 +94,23 @@
 .ov-md hr { border: 0; border-top: 1px solid var(--color-hud-line); margin: 10px 0; }
 .ov-md img { max-width: 100%; border-radius: var(--radius-hud-sm); }
 
+/* ---------- Window fit ---------- */
+/* The desktop window is sized to this document's content (useOverlayResize), so
+   the document itself must never scroll. Any transient overflow — a panel that
+   mounts before the resize lands — would otherwise raise a document scrollbar,
+   and on a classic (space-taking) scrollbar that bar shrinks the viewport,
+   which raises the bar on the other axis, which keeps the first one alive: two
+   phantom scrollbars that never go away, because the window keeps being sized
+   from the unchanged content size. The window bounds in useOverlayResize are
+   what keep the content inside the frame. */
+html:has(.renderer-root--overlay),
+html:has(.renderer-root--overlay) body,
+html:has(.renderer-root--overlay) #root {
+  min-height: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 /* ---------- Scrollbars ---------- */
 /* Chromium's default scrollbar is chunky and light — jarring on the dark glass
    panel. Render a thin, subtle scrollbar for every overlay scroll container. */

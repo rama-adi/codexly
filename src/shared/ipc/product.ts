@@ -61,7 +61,10 @@ export const ProductCommandSchema = z.discriminatedUnion('type', [
       preserveSession: z.boolean().optional(),
     })
     .strict(),
-  z.object({ type: z.literal('window.resizeOverlay'), width: z.number().int().min(320).max(1200), height: z.number().int().min(48).max(1200) }).strict(),
+  // The height ceiling has to clear the tallest HUD the renderer can build —
+  // `appearance.answerHeight` (max 1400) plus panel chrome — or the overlay
+  // window would be validated down to less than its own content.
+  z.object({ type: z.literal('window.resizeOverlay'), width: z.number().int().min(320).max(1200), height: z.number().int().min(48).max(1600) }).strict(),
   z.object({ type: z.literal('window.setOverlayFocusable'), focusable: z.boolean() }).strict(),
 ])
 
