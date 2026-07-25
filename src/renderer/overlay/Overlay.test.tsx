@@ -451,7 +451,7 @@ describe('overlay failure recovery and external commands', () => {
       })
     }
     fireEvent.click(screen.getByRole('button', { name: /Noisy tool/i }))
-    const output = document.querySelector('.ov-tool-output')
+    const output = document.querySelector('pre')
     expect(output?.textContent).toHaveLength(64 * 1024)
     expect(output?.textContent?.startsWith('0'.repeat(100))).toBe(true)
     await act(async () => command.resolve(scope))

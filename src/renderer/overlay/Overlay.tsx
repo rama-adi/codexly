@@ -107,7 +107,11 @@ export function Overlay() {
   }
 
   return (
-    <div ref={root} className="ov-root dark" data-clickable-root>
+    <div
+      ref={root}
+      className="ov-root dark relative w-max min-w-[360px] max-w-[900px] p-2 font-hud text-[12px] text-hud-text antialiased pointer-events-auto"
+      data-clickable-root
+    >
       <span className="sr-only" aria-live="polite">
         {s.notice}
       </span>
@@ -135,7 +139,10 @@ export function Overlay() {
       />
 
       {s.visibleError && (
-        <div className="ov-visible-notice" role="alert">
+        <div
+          className="mt-1.5 w-[min(760px,calc(100vw-16px))] rounded-hud-sm border border-hud-danger/35 bg-[rgba(35,17,17,0.94)] px-2.5 py-[7px] text-hud-danger-text shadow-hud"
+          role="alert"
+        >
           {s.visibleError}
         </div>
       )}

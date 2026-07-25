@@ -1,11 +1,17 @@
 import { Copy, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
+import { cn } from '@/lib/utils'
+import { hudIconButton, hudInlineError, hudPanel, hudToolStack } from '../styles'
 import type { ToolActivity } from '../types'
+import { Cursor } from './Cursor'
 import { LoadingIndicator } from './LoadingIndicator'
 import { Markdown } from './Markdown'
 import { ThinkingBlock } from './ThinkingBlock'
 import { ToolActivityCard } from './ToolActivityCard'
+
+const shimmerLine =
+  'h-2.5 animate-hud-shimmer rounded-[5px] bg-[length:440px_100%] bg-gradient-to-r from-white/6 via-white/16 to-white/6'
 
 export function SolutionPanel({
   answer,
@@ -60,26 +66,36 @@ export function SolutionPanel({
   const isEmpty = !answer && streaming
 
   return (
-    <section className="ov-panel ov-solution">
-      <div className="ov-solution-head draggable-area" aria-hidden />
-      <div className="ov-panel-actions">
+    <section className={cn(hudPanel, 'pt-3.5 pr-11 pb-0 pl-3.5')}>
+      <div className="draggable-area absolute inset-x-0 top-0 h-9" aria-hidden />
+      <div className="absolute right-1.5 top-1.5 z-1 flex gap-1">
         <button
+          className={cn(hudIconButton, 'relative size-6')}
           aria-label="Copy answer"
           onClick={() => void copy()}
           disabled={!answer || copying}
           title="Copy answer"
         >
           <Copy size={12} />
-          {copied && <span className="ov-copied">Copied</span>}
+          {copied && (
+            <span className="absolute right-0 top-7 animate-hud-fade-fast rounded-[5px] bg-black/85 px-[7px] py-[3px] text-[10px] font-semibold whitespace-nowrap text-hud-accent">
+              Copied
+            </span>
+          )}
         </button>
-        <button aria-label="Close answer" onClick={onClose} title="Close">
+        <button
+          className={cn(hudIconButton, 'size-6')}
+          aria-label="Close answer"
+          onClick={onClose}
+          title="Close"
+        >
           <X size={12} />
         </button>
       </div>
 
-      <div className="ov-solution-body" style={{ maxHeight: answerHeight }}>
+      <div className="overflow-y-auto pb-3" style={{ maxHeight: answerHeight }}>
         {activities.length > 0 && (
-          <div className="ov-tool-stack">
+          <div className={cn(hudToolStack, 'mb-3')}>
             {activities.map((activity) => (
               <ToolActivityCard key={activity.key} activity={activity} />
             ))}
@@ -91,27 +107,39 @@ export function SolutionPanel({
         {isEmpty ? (
           <>
             <LoadingIndicator label={`${modelLabel} is thinking…`} />
-            <div className="ov-shimmer-block" aria-hidden>
-              <span className="ov-shimmer-line" style={{ width: '82%' }} />
-              <span className="ov-shimmer-line" style={{ width: '64%' }} />
-              <span className="ov-shimmer-line" style={{ width: '71%' }} />
+            <div className="grid gap-[9px] pt-0.5 pb-1.5" aria-hidden>
+              <span className={cn(shimmerLine, 'w-[82%]')} />
+              <span className={cn(shimmerLine, 'w-[64%]')} />
+              <span className={cn(shimmerLine, 'w-[71%]')} />
             </div>
           </>
         ) : error && !answer ? (
-          <div className="ov-inline-error" role="alert">{error}</div>
+          <div className={hudInlineError} role="alert">
+            {error}
+          </div>
         ) : (
-          <div className="ov-answer">
+          <div className="animate-hud-fade text-[12.5px] leading-[1.65] whitespace-pre-wrap text-[rgba(245,246,248,0.92)]">
             <Markdown>{answer}</Markdown>
-            {streaming && <span className="ov-cursor" />}
+            {streaming && <Cursor />}
           </div>
         )}
-        {error && answer && <div className="ov-inline-error" role="alert">{error}</div>}
-        {copyError && <div className="ov-inline-error" role="alert">Copy failed: {copyError}</div>}
+        {error && answer && (
+          <div className={hudInlineError} role="alert">
+            {error}
+          </div>
+        )}
+        {copyError && (
+          <div className={hudInlineError} role="alert">
+            Copy failed: {copyError}
+          </div>
+        )}
       </div>
 
-      <footer className="ov-solution-foot">
+      <footer className="flex items-center gap-1.5 border-t border-hud-line py-2 text-[10.5px] text-hud-faint">
         <span>{modelLabel}</span>
-        {streaming && <span className="ov-live-dot" aria-hidden />}
+        {streaming && (
+          <span className="size-1.5 animate-hud-pulse rounded-full bg-hud-accent" aria-hidden />
+        )}
       </footer>
     </section>
   )

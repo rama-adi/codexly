@@ -1,11 +1,25 @@
 import { Square, X } from 'lucide-react'
 import { type FormEvent, type RefObject, useEffect, useRef } from 'react'
 
+import { cn } from '@/lib/utils'
+import {
+  hudBubble,
+  hudIconButton,
+  hudInlineError,
+  hudPanel,
+  hudToolStack,
+} from '../styles'
 import type { ChatMessage, ToolActivity } from '../types'
+import { Cursor } from './Cursor'
 import { LoadingIndicator } from './LoadingIndicator'
 import { Markdown } from './Markdown'
 import { ThinkingBlock } from './ThinkingBlock'
 import { ToolActivityCard } from './ToolActivityCard'
+
+const bubbleTone: Record<ChatMessage['role'], string> = {
+  user: 'self-end border border-hud-accent/22 bg-hud-accent-soft text-[rgba(232,240,250,0.95)]',
+  assistant: 'self-start border border-hud-line bg-white/5 text-[rgba(245,246,248,0.92)]',
+}
 
 export function ChatPanel({
   sessionLabel,
@@ -63,26 +77,36 @@ export function ChatPanel({
   const isEmpty = messages.length === 0 && !answer
 
   return (
-    <section className="ov-panel ov-chat">
-      <header className="ov-chat-head draggable-area">
-        <div>
-          <b>{sessionLabel}</b>
-          <small>{modelLabel}</small>
+    <section className={cn(hudPanel, 'w-96 p-2.5')}>
+      <header className="draggable-area flex items-center justify-between pb-2">
+        <div className="flex flex-col gap-px">
+          <b className="text-[11px] font-semibold">{sessionLabel}</b>
+          <small className="text-[10px] text-hud-faint">{modelLabel}</small>
         </div>
-        <button aria-label="Close chat" onClick={onClose}>
+        <button
+          className={cn(hudIconButton, 'size-[22px]')}
+          aria-label="Close chat"
+          onClick={onClose}
+        >
           <X size={12} />
         </button>
       </header>
 
-      <div className="ov-chat-messages" ref={scrollRef} style={{ maxHeight: answerHeight }}>
+      <div
+        className="mb-2 flex min-h-[110px] flex-col gap-[7px] overflow-y-auto rounded-hud-sm border border-hud-line bg-black/28 p-[9px]"
+        ref={scrollRef}
+        style={{ maxHeight: answerHeight }}
+      >
         {isEmpty ? (
-          <p className="ov-chat-empty">
-            Chat with <code>{modelLabel}</code>
-            <small>Continue the current Codex session.</small>
+          <p className="m-auto py-3.5 text-center text-[11px] text-hud-dim">
+            Chat with <code className="font-hud-mono text-hud-accent">{modelLabel}</code>
+            <small className="mt-1 block text-[10.5px] text-hud-faint">
+              Continue the current Codex session.
+            </small>
           </p>
         ) : (
           messages.map((message, index) => (
-            <div key={index} className={`ov-bubble ov-bubble--${message.role}`}>
+            <div key={index} className={cn(hudBubble, bubbleTone[message.role])}>
               {message.role === 'assistant' ? (
                 <Markdown>{message.content}</Markdown>
               ) : (
@@ -93,7 +117,7 @@ export function ChatPanel({
         )}
 
         {activities.length > 0 && (
-          <div className="ov-tool-stack ov-tool-stack--chat">
+          <div className={cn(hudToolStack, 'mt-0.5')}>
             {activities.map((activity) => (
               <ToolActivityCard key={activity.key} activity={activity} />
             ))}
@@ -101,7 +125,7 @@ export function ChatPanel({
         )}
 
         {streaming && (
-          <div className="ov-bubble ov-bubble--assistant">
+          <div className={cn(hudBubble, bubbleTone.assistant)}>
             <ThinkingBlock text={reasoning} active={streaming && !answer} />
             {answer ? (
               <Markdown>{answer}</Markdown>
@@ -110,19 +134,20 @@ export function ChatPanel({
             ) : (
               <LoadingIndicator label={`${modelLabel} is thinking…`} />
             )}
-            {answer && <span className="ov-cursor" />}
+            {answer && <Cursor />}
           </div>
         )}
 
         {error && (
-          <div className="ov-inline-error" role="alert">
+          <div className={hudInlineError} role="alert">
             {error}
           </div>
         )}
       </div>
 
-      <form className="ov-chat-form" onSubmit={onSend}>
+      <form className="flex gap-1.5" onSubmit={onSend}>
         <input
+          className="h-[30px] min-w-0 flex-1 rounded-hud-sm border border-hud-line bg-white/5 px-[9px] text-[11.5px] text-hud-text transition-colors placeholder:text-hud-faint focus-visible:border-hud-accent"
           ref={inputRef}
           value={chatInput}
           onChange={(event) => onChatInputChange(event.target.value)}
@@ -132,7 +157,7 @@ export function ChatPanel({
         {streaming ? (
           <button
             type="button"
-            className="ov-stop"
+            className="grid size-[30px] shrink-0 place-items-center rounded-hud-sm border border-hud-danger/35 bg-hud-danger/14 text-hud-danger hover:bg-hud-danger/24"
             onClick={onStop}
             aria-label="Stop generating"
             disabled={!canStop}
@@ -140,7 +165,11 @@ export function ChatPanel({
             <Square size={11} />
           </button>
         ) : (
-          <button type="submit" disabled={!chatInput.trim()}>
+          <button
+            type="submit"
+            className="h-[30px] rounded-hud-sm border-0 bg-hud-accent-soft px-[13px] text-[11px] font-[650] text-hud-accent transition-colors enabled:hover:bg-hud-accent-strong disabled:cursor-default disabled:opacity-35"
+            disabled={!chatInput.trim()}
+          >
             Send
           </button>
         )}

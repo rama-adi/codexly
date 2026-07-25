@@ -14,8 +14,9 @@ export function ModelSelect({
   disabled?: boolean
 }) {
   return (
-    <div className="ov-model">
+    <div className="relative mx-0.5 inline-flex items-center">
       <select
+        className="h-6 max-w-[130px] appearance-none rounded-md border border-transparent bg-white/6 pl-[7px] pr-[18px] text-[10px] font-medium text-ellipsis text-hud-dim transition-colors hover:bg-white/10 hover:text-hud-text"
         aria-label="Codex model"
         value={value}
         disabled={disabled}
@@ -27,7 +28,7 @@ export function ModelSelect({
           </option>
         ))}
       </select>
-      <ChevronDown size={10} />
+      <ChevronDown size={10} className="pointer-events-none absolute right-1.5 text-hud-faint" />
     </div>
   )
 }
