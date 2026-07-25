@@ -110,6 +110,8 @@ export class ConversationRuntime {
   #nextGeneration = 0
   readonly #sessions = new Map<string, CodexAppServerSession>()
   readonly #persistedThreadIds = new Map<string, string | null>()
+  /** Models that rejected 'minimal' effort once; later turns skip straight to 'low'. */
+  readonly #minimalEffortUnsupported = new Set<string>()
   readonly #sessionCallbacks = new Map<
     string,
     (session: CodexAppServerSession) => Promise<void>
@@ -302,6 +304,9 @@ export class ConversationRuntime {
 
       const built = buildPrompt(input)
       let effort = input.reasoningEffort as ReasoningEffort | undefined
+      if (effort === 'minimal' && this.#minimalEffortUnsupported.has(input.modelId)) {
+        effort = 'low'
+      }
       let staleRetried = false
       let minimalEffortRetried = false
       let firstTokenRetried = false
@@ -398,6 +403,9 @@ export class ConversationRuntime {
               if (!minimalEffortRetried && effort === 'minimal') {
                 minimalEffortRetried = true
                 effort = 'low'
+                // Remember it so later turns on this model don't pay the
+                // rejected round trip again.
+                this.#minimalEffortUnsupported.add(input.modelId)
                 continue
               }
               break

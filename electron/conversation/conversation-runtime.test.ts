@@ -524,6 +524,50 @@ describe('ConversationRuntime', () => {
     expect(appServerOptions(stream, 1).effort).toBe('low')
   })
 
+  it('skips minimal effort on later turns once the model has rejected it', async () => {
+    const { provider } = createProvider()
+    const stores = createStores()
+    let calls = 0
+    let turnIds = 0
+    const stream = vi.fn(() => {
+      calls += 1
+      if (calls === 1) {
+        return {
+          stream: {
+            [Symbol.asyncIterator]() {
+              return {
+                next: () =>
+                  Promise.reject(
+                    new Error(
+                      "Unsupported value: 'minimal' is not supported with the 'gpt-5.6-terra' model.",
+                    ),
+                  ),
+              }
+            },
+          },
+          finishReason: Promise.resolve('error'),
+        }
+      }
+      return { stream: asyncParts([]), finishReason: Promise.resolve('stop') }
+    })
+    const runtime = new ConversationRuntime({
+      providers: createManager(provider),
+      threads: stores.threads,
+      events: stores.eventStore,
+      stream: stream as unknown as typeof import('ai').streamText,
+      generateTurnId: () => `turn-${turnIds += 1}`,
+    })
+
+    await (await runtime.startTurn({ ...baseInput, reasoningEffort: 'minimal' })).completion
+    await (await runtime.startTurn({ ...baseInput, reasoningEffort: 'minimal' })).completion
+
+    // Attempt 0 asked for 'minimal' and was rejected; every request after it
+    // goes out at 'low' without re-probing.
+    expect(stream).toHaveBeenCalledTimes(3)
+    expect(appServerOptions(stream, 1).effort).toBe('low')
+    expect(appServerOptions(stream, 2).effort).toBe('low')
+  })
+
   it('lists and normalizes Codex models', async () => {
     const { provider } = createProvider()
     ;(provider.listModels as ReturnType<typeof vi.fn>).mockResolvedValue({

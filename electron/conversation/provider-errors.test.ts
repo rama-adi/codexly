@@ -20,6 +20,10 @@ describe('toTaggedProviderError', () => {
       'the selected tools cannot be used with reasoning.effort of minimal',
       'MinimalEffortUnsupportedError',
     ],
+    [
+      "Unsupported value: 'minimal' is not supported with the 'gpt-5.6-terra' model. Supported values are: 'none', 'low', 'medium', 'high', and 'xhigh'.",
+      'MinimalEffortUnsupportedError',
+    ],
     ['ECONNRESET while reading the app-server stream', 'ProviderRequestError'],
   ])('maps %j to %s at the single sniffing boundary', (message, tag) => {
     const tagged = toTaggedProviderError(new Error(message))

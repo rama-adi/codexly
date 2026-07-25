@@ -473,6 +473,9 @@ export class ProductController {
       case 'workspaces.select': {
         const workspace = await this.#workspaces.select(command.workspaceId)
         void this.#warmRuntime()
+        // Picking a workspace is intent to work in it: pop the overlay on a
+        // fresh conversation so the next send lands in the new workspace.
+        await this.openOverlay()
         return workspace
       }
       case 'workspaces.remove': {
@@ -580,10 +583,10 @@ export class ProductController {
         }
       }),
     )
-    // Text-only turns run at 'minimal' effort; image turns use the configured
-    // effort and may enable web search when the user opted in.
+    // Every turn runs at the configured effort. Web search stays image-only,
+    // where the user opted in.
     const textOnlyTurn = attachments.length === 0
-    const reasoningEffort = textOnlyTurn ? 'minimal' : settings.assistant.reasoningEffort
+    const reasoningEffort = settings.assistant.reasoningEffort
     const webSearch = !textOnlyTurn && settings.assistant.webSearchEnabled
     const turnId = crypto.randomUUID()
     const messageId = crypto.randomUUID()

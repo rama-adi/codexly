@@ -424,6 +424,23 @@ describe('ProductController openOverlay session freshness', () => {
     await harness.controller.dispose()
   })
 
+  it('pops the overlay on a fresh conversation when a workspace is selected', async () => {
+    const harness = await createHarness()
+    await harness.sessions.create({ workspaceId: 'workspace-1' })
+    const workspaceId = harness.workspaces.workspaces[0]?.id
+    if (!workspaceId) throw new Error('the harness has no workspace to select')
+
+    await harness.controller.handle({ type: 'workspaces.select', workspaceId }, 'homepage')
+
+    expect(harness.windowManager.calls).toContain('showOverlay')
+    expect(harness.eventsOfType('overlay.opened').at(-1)).toEqual({
+      type: 'overlay.opened',
+      fresh: true,
+      sessionId: null,
+    })
+    await harness.controller.dispose()
+  })
+
   it('keeps the active session when the caller explicitly continues it', async () => {
     const harness = await createHarness()
     const session = await harness.sessions.create({ workspaceId: 'workspace-1' })

@@ -29,8 +29,12 @@ const PROVIDER_ERROR_TAGS: ReadonlySet<string> = new Set([
 //   "no rollout found for thread id <id>"  (0.14x)
 const STALE_THREAD_PATTERN =
   /thread ['"]?.+['"]? not found|no rollout found for thread/i
+// Two shapes reach us here:
+//   "reasoning.effort 'minimal' cannot be used with the web_search tool"
+//   "Unsupported value: 'minimal' is not supported with the '<model>' model."
+// The second is the model rejecting 'minimal' outright, tools or not.
 const MINIMAL_EFFORT_PATTERN =
-  /reasoning\.effort ['"]minimal['"]|cannot be used with reasoning\.effort/i
+  /reasoning\.effort ['"]minimal['"]|cannot be used with reasoning\.effort|['"]minimal['"] is not supported/i
 
 /**
  * The single boundary where raw provider failures become tagged errors.
