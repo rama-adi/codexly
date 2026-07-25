@@ -455,9 +455,20 @@ function selectionDocument(display: CaptureDisplay): string {
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
 <style>
-html,body{margin:0;width:100%;height:100%;overflow:hidden;cursor:crosshair;user-select:none;background:rgba(3,7,18,.28)}
+/* The selector deliberately does not dim the screen. A full-screen scrim (and a
+   scrim around the selection while dragging) steps the display's brightness the
+   moment it appears and steps it back the moment it closes, and a webcam's auto
+   exposure rides that step — the user sees the screen's reflection flash on
+   their face on calls. Everything here is therefore either luminance-neutral or
+   small enough and gradual enough (it grows with the drag) not to be: the
+   backdrop is 0.4% black — invisible, but opaque enough that macOS keeps
+   hit-testing the window instead of passing clicks through — and the selection
+   is drawn as an outline rather than as a hole punched in a dark sheet. */
+html,body{margin:0;width:100%;height:100%;overflow:hidden;cursor:crosshair;user-select:none;background:rgba(0,0,0,.004)}
 #hint{position:fixed;left:50%;top:24px;transform:translateX(-50%);padding:8px 12px;border:1px solid rgba(255,255,255,.25);border-radius:8px;background:rgba(0,0,0,.72);color:white;font:12px -apple-system,BlinkMacSystemFont,sans-serif;pointer-events:none}
-#selection{position:fixed;display:none;border:2px solid white;background:rgba(255,255,255,.08);box-shadow:0 0 0 99999px rgba(0,0,0,.35);pointer-events:none}
+/* Two hairlines, light over dark, so the edge reads on any wallpaper without a
+   scrim behind it to separate it from. */
+#selection{position:fixed;display:none;border:1px solid rgba(255,255,255,.95);outline:1px solid rgba(0,0,0,.55);background:rgba(255,255,255,.04);pointer-events:none}
 #size{position:absolute;right:0;bottom:-25px;padding:3px 6px;border-radius:4px;background:rgba(0,0,0,.8);color:white;font:10px ui-monospace,monospace;white-space:nowrap}
 </style>
 </head>
