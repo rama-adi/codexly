@@ -21,7 +21,8 @@
     "pack": "pnpm verify && pnpm prepare:codex && electron-builder --dir",
     "dist": "pnpm verify && pnpm prepare:codex && electron-builder",
     "verify": "pnpm typecheck && pnpm lint && pnpm test && pnpm build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "doctor": "npx react-doctor@latest"
   },
   "dependencies": {
     "@openai/codex": "0.144.5",
@@ -56,6 +57,7 @@
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.5",
     "jsdom": "26.1.0",
+    "react-doctor": "^0.9.1",
     "tailwindcss": "4.3.3",
     "typescript": "^5.2.2",
     "vite": "^5.1.6",
