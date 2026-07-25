@@ -28,7 +28,7 @@ import {
   type CaptureRequest,
 } from '../capture/capture-coordinator'
 import { DisplayCapture } from '../capture/display-capture'
-import { displayAtPoint, type CaptureDisplay } from '../capture/selection-models'
+import { displayAtPoint } from '../capture/selection-models'
 import type {
   ConversationEventStore,
   ConversationThreadStore,
@@ -39,10 +39,10 @@ import { retry } from '../effects/retry'
 import type { SessionRecord } from '../persistence/session-store'
 import { ShortcutManager } from '../shortcuts/shortcut-manager'
 import { logger, serializeErrorForLog } from '../shared/logger'
-import type {
-  MainProcessAdapters,
-  PreviewImage,
-  ScreenDisplay,
+import {
+  toCaptureDisplay,
+  type MainProcessAdapters,
+  type PreviewImage,
 } from './adapters'
 import {
   legacyStatePath,
@@ -1502,28 +1502,6 @@ export class ProductController {
 }
 
 /** Normalizes one host display into the geometry the capture pipeline uses. */
-function toCaptureDisplay(display: ScreenDisplay): CaptureDisplay {
-  return {
-    id: display.id,
-    label: display.label,
-    bounds: display.bounds,
-    workArea: display.workArea,
-    scaleFactor: display.scaleFactor,
-    rotation: normalizeRotation(display.rotation),
-    physicalSize: {
-      width: Math.round(display.bounds.width * display.scaleFactor),
-      height: Math.round(display.bounds.height * display.scaleFactor),
-    },
-  }
-}
-
-function normalizeRotation(rotation: number): 0 | 90 | 180 | 270 {
-  const normalized = ((rotation % 360) + 360) % 360
-  return normalized === 90 || normalized === 180 || normalized === 270
-    ? normalized
-    : 0
-}
-
 function errorMessage(value: unknown): string {
   return value instanceof Error ? value.message : String(value)
 }

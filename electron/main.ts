@@ -2,7 +2,11 @@ import { app, Menu, screen, type Tray } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { createElectronAdapters, registerAdapterTeardown } from './app/adapters'
+import {
+  createElectronAdapters,
+  registerAdapterTeardown,
+  registerSelectionWarmup,
+} from './app/adapters'
 import { ProductController } from './app/product-controller'
 import { createCodexlyTray } from './app/tray'
 import { registerIpc, type IpcRegistration } from './ipc/register-ipc'
@@ -38,6 +42,7 @@ if (process.env['CODEXLY_USER_DATA_DIR']) {
 
 const adapters = createElectronAdapters()
 registerAdapterTeardown(adapters)
+registerSelectionWarmup(adapters)
 
 const windowManager = new WindowManager({
   mainDist,

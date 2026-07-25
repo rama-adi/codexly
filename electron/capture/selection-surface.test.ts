@@ -184,6 +184,47 @@ describe('SelectionSurfaceController', () => {
     await second
   })
 
+  it('warms the pool so the first selection loads nothing and shows immediately', async () => {
+    const state = harness()
+    state.controller.warm(displays)
+    expect(state.windows).toHaveLength(2)
+    expect(state.windows.every((window) => !window.visible)).toBe(true)
+    await Promise.all(state.windows.map((window) => window.loaded.resolve()))
+
+    const pending = state.controller.select(displays, new AbortController().signal)
+    await vi.waitFor(() => expect(state.windows.every((window) => window.visible)).toBe(true))
+    expect(state.windows.map((window) => window.loadCount)).toEqual([1, 1])
+    state.ports[0].send({ type: 'cancelled', displayId: '1' })
+    await expect(pending).resolves.toBe('cancelled')
+  })
+
+  it('re-warms only the displays whose geometry changed and drops failed loads', async () => {
+    const state = harness()
+    state.controller.warm(displays)
+    state.windows[0].loaded.resolve()
+    state.windows[1].loaded.reject(new Error('warm load failed'))
+    await vi.waitFor(() => expect(state.windows[1].destroyed).toBe(true))
+
+    state.controller.warm([
+      displays[0],
+      { ...displays[1], bounds: { ...displays[1].bounds, width: 900 } },
+    ])
+    // The surviving window is reused; only the missing display is recreated.
+    expect(state.windows).toHaveLength(3)
+    expect(state.windows[0].destroyed).toBe(false)
+    expect(state.windows[0].loadCount).toBe(1)
+  })
+
+  it('leaves the pool alone while a selection is in flight', async () => {
+    const state = harness()
+    const pending = state.controller.select([displays[0]], new AbortController().signal)
+    await ready(state.windows[0])
+    state.controller.warm(displays)
+    expect(state.windows).toHaveLength(1)
+    state.ports[0].send({ type: 'cancelled', displayId: '1' })
+    await expect(pending).resolves.toBe('cancelled')
+  })
+
   it('shows each display as soon as it is ready and focuses the cursor display', async () => {
     const state = harness({ x: 1200, y: 50 })
     const pending = state.controller.select(displays, new AbortController().signal)

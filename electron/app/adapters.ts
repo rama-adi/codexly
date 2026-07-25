@@ -27,7 +27,10 @@ import {
   createSelectionSurface,
   type SelectionSurfaceResult,
 } from '../capture/selection-surface'
+import { logger, serializeErrorForLog } from '../shared/logger'
 import type { GlobalShortcutAdapter } from '../shortcuts/shortcut-manager'
+
+const log = logger.child('adapters')
 
 /**
  * The main process' entire dependency on Electron and the host machine, stated
@@ -116,6 +119,8 @@ export interface SelectionAdapter {
     displays: readonly CaptureDisplay[],
     signal: AbortSignal,
   ): Promise<CaptureTarget | 'cancelled'>
+  /** Boots the selector renderers ahead of the first capture. Best-effort. */
+  warm(displays: readonly CaptureDisplay[]): void
   dispose(): void
 }
 
@@ -145,6 +150,7 @@ export function createElectronAdapters(
   const selection: SelectionAdapter = {
     selectRegion: (displays, signal): Promise<SelectionSurfaceResult> =>
       selectionSurface.select(displays, signal),
+    warm: (displays) => selectionSurface.warm(displays),
     dispose: () => selectionSurface.dispose(),
   }
 
@@ -210,6 +216,53 @@ export function createElectronAdapters(
 /** Releases the host resources the real adapters own (selector windows). */
 export function registerAdapterTeardown(adapters: MainProcessAdapters): void {
   app.once('before-quit', () => adapters.selection.dispose())
+}
+
+/**
+ * Keeps the selector renderers warm from app start, and re-warms them whenever
+ * the display topology changes (which retires the windows that no longer match
+ * a display). Without this the user waits for a renderer launch the first time
+ * they press the region-capture shortcut after launch or after plugging in a
+ * monitor.
+ */
+export function registerSelectionWarmup(adapters: MainProcessAdapters): void {
+  const warm = () => {
+    try {
+      adapters.selection.warm(adapters.screen.getAllDisplays().map(toCaptureDisplay))
+    } catch (error) {
+      // Warming only buys latency; the selection path creates what it needs.
+      log.warn('selector warmup failed', { error: serializeErrorForLog(error) })
+    }
+  }
+  void app.whenReady().then(() => {
+    warm()
+    screen.on('display-added', warm)
+    screen.on('display-removed', warm)
+    screen.on('display-metrics-changed', warm)
+  })
+}
+
+/** Normalizes a host display into the capture pipeline's display model. */
+export function toCaptureDisplay(display: ScreenDisplay): CaptureDisplay {
+  return {
+    id: display.id,
+    label: display.label,
+    bounds: display.bounds,
+    workArea: display.workArea,
+    scaleFactor: display.scaleFactor,
+    rotation: normalizeRotation(display.rotation),
+    physicalSize: {
+      width: Math.round(display.bounds.width * display.scaleFactor),
+      height: Math.round(display.bounds.height * display.scaleFactor),
+    },
+  }
+}
+
+function normalizeRotation(rotation: number): 0 | 90 | 180 | 270 {
+  const normalized = ((rotation % 360) + 360) % 360
+  return normalized === 90 || normalized === 180 || normalized === 270
+    ? normalized
+    : 0
 }
 
 function wrapNativeImage(image: NativeImage): CaptureImage {

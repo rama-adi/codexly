@@ -103,6 +103,7 @@ export function createFakeAdapters(
       image: { createFromBuffer: (bytes) => createFakePreviewImage(bytes) },
       selection: {
         selectRegion: async () => fake.selectionResult,
+        warm: () => undefined,
         dispose: () => undefined,
       },
       clock: { now: () => new Date(clockMs) },

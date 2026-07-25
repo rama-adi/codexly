@@ -117,6 +117,35 @@ export class SelectionSurfaceController {
     })
   }
 
+  /**
+   * Pre-creates and loads the pooled renderers for the given displays without
+   * showing them. The first selection is otherwise the one that pays for the
+   * renderer launch — the visible "the selector took a second to appear" delay
+   * — and a monitor change re-introduces it by retiring the stale window.
+   * Warming is best-effort: a display that fails here is simply created again
+   * (and reported) by the selection that needs it.
+   */
+  warm(displays: readonly CaptureDisplay[]): void {
+    // A selection owns the pool while it runs; #reconcile has already matched
+    // it to the topology the capture was started with.
+    if (this.#active) return
+    this.#prune(displays)
+    for (const display of displays) {
+      if (this.#windows.has(display.id)) continue
+      try {
+        const entry = this.#createWindow(display)
+        // A load that fails while nobody is waiting must not stay in the pool:
+        // drop it so the next selection creates (and reports on) a fresh one.
+        void entry.loading.catch(() => this.#retire(entry))
+      } catch (error) {
+        log.warn('selector window warmup failed', {
+          displayId: display.id,
+          error: serializeErrorForLog(error),
+        })
+      }
+    }
+  }
+
   dispose(): void {
     if (this.#active) {
       this.#finish(this.#active, 'cancelled')
@@ -128,7 +157,8 @@ export class SelectionSurfaceController {
     this.#windows.clear()
   }
 
-  #reconcile(displays: readonly CaptureDisplay[], active: ActiveSelection): void {
+  /** Retires pooled windows for displays that disappeared or changed geometry. */
+  #prune(displays: readonly CaptureDisplay[]): void {
     const desired = new Map(displays.map((display) => [display.id, display]))
     for (const [displayId, entry] of this.#windows) {
       const display = desired.get(displayId)
@@ -136,6 +166,10 @@ export class SelectionSurfaceController {
         this.#retire(entry)
       }
     }
+  }
+
+  #reconcile(displays: readonly CaptureDisplay[], active: ActiveSelection): void {
+    this.#prune(displays)
 
     for (const display of displays) {
       if (this.#active !== active) return
