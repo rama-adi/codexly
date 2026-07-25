@@ -166,6 +166,12 @@ export class ShortcutManager {
     if (this.disposed || this.registrations.get(action)?.id !== registration.id) {
       return
     }
+    log.debug('shortcut fired', {
+      action,
+      accelerator: registration.accelerator,
+      mode,
+      running: registration.running,
+    })
 
     const invoke = async (): Promise<void> => {
       if (this.disposed || this.registrations.get(action)?.id !== registration.id) {
@@ -185,7 +191,15 @@ export class ShortcutManager {
       return
     }
     if (mode === 'single-flight') {
-      if (registration.running) return
+      if (registration.running) {
+        // Not an error — key repeat and impatient re-presses land here — but it
+        // is the reason a shortcut can look like it did nothing at all.
+        log.info('shortcut press dropped; the previous run is still active', {
+          action,
+          accelerator: registration.accelerator,
+        })
+        return
+      }
       registration.running = true
       void invoke()
         .catch((error) => {

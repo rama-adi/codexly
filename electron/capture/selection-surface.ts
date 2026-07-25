@@ -73,6 +73,8 @@ interface ActiveSelection {
   ports: Set<SelectionPort>
   focusDisplayId: string | null
   settled: boolean
+  /** Start of the user-visible wait, used to log the show latency. */
+  requestedAt: number
 }
 
 /**
@@ -90,10 +92,13 @@ export class SelectionSurfaceController {
     displays: readonly CaptureDisplay[],
     signal: AbortSignal,
   ): Promise<SelectionSurfaceResult> {
+    const requestedAt = Date.now()
     log.info('select requested', {
       displays: displays.length,
       aborted: signal.aborted,
       busy: Boolean(this.#active),
+      // How much of the pool this request can show without waiting for a load.
+      warm: displays.filter((display) => this.#windows.get(display.id)?.loaded).length,
     })
     if (signal.aborted || displays.length === 0 || this.#active) {
       return Promise.resolve('cancelled')
@@ -110,6 +115,7 @@ export class SelectionSurfaceController {
         ports: new Set(),
         focusDisplayId: cursorDisplay?.id ?? displays[0]?.id ?? null,
         settled: false,
+        requestedAt,
       }
       this.#active = active
       signal.addEventListener('abort', active.cancel, { once: true })
@@ -130,6 +136,10 @@ export class SelectionSurfaceController {
     // it to the topology the capture was started with.
     if (this.#active) return
     this.#prune(displays)
+    log.info('warming selector pool', {
+      displays: displays.length,
+      pooled: this.#windows.size,
+    })
     for (const display of displays) {
       if (this.#windows.has(display.id)) continue
       try {
@@ -302,6 +312,15 @@ export class SelectionSurfaceController {
           !isSelectionMessage(data)
         ) return
         if (data.displayId !== entry.display.id) return
+        if (data.type === 'painted') {
+          // The renderer's first frame after the show. showMs measures when we
+          // asked; this measures when the user could actually see it.
+          log.info('selector window painted', {
+            displayId: entry.display.id,
+            paintMs: Date.now() - active.requestedAt,
+          })
+          return
+        }
         if (data.type === 'cancelled') {
           this.#finish(active, 'cancelled')
           return
@@ -321,11 +340,15 @@ export class SelectionSurfaceController {
       active.ready.add(entry.display.id)
       entry.window.showInactive()
       const takesFocus = entry.display.id === active.focusDisplayId
-      log.debug('activated selector window', {
+      log.info('activated selector window', {
         displayId: entry.display.id,
         takesFocus,
         ready: active.ready.size,
         pending: active.pending.size,
+        // Time from select() to this window being on screen. A warm pool makes
+        // this a couple of milliseconds; anything larger is the host stalling
+        // the show (a cold renderer, a Spaces switch, App Nap).
+        showMs: Date.now() - active.requestedAt,
       })
       if (takesFocus) entry.window.focus()
     } catch (error) {
@@ -401,6 +424,7 @@ export function createSelectionSurface(
 }
 
 type SelectionMessage =
+  | { type: 'painted'; displayId: string }
   | { type: 'cancelled'; displayId: string }
   | {
       type: 'selected'
@@ -412,7 +436,7 @@ function isSelectionMessage(value: unknown): value is SelectionMessage {
   if (!value || typeof value !== 'object') return false
   const message = value as Record<string, unknown>
   if (typeof message.displayId !== 'string') return false
-  if (message.type === 'cancelled') return true
+  if (message.type === 'cancelled' || message.type === 'painted') return true
   if (message.type !== 'selected' || !message.bounds || typeof message.bounds !== 'object') return false
   const bounds = message.bounds as Record<string, unknown>
   return ['x', 'y', 'width', 'height'].every((key) => typeof bounds[key] === 'number')
@@ -444,7 +468,10 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;cursor:crosshair;user-
 const display=${config};let port=null;let start=null;let pending=null;
 const selection=document.getElementById('selection');const size=document.getElementById('size');
 const send=value=>{if(port)port.postMessage(value);else pending=value;};
-window.addEventListener('message',event=>{if(event.data==='codexly-selection-port'){port?.close();port=event.ports[0];port.start();start=null;selection.style.display='none';document.body.dataset.portReady='true';if(pending){port.postMessage(pending);pending=null;}}});
+window.addEventListener('message',event=>{if(event.data==='codexly-selection-port'){port?.close();port=event.ports[0];port.start();start=null;selection.style.display='none';document.body.dataset.portReady='true';if(pending){port.postMessage(pending);pending=null;}
+// A hidden window runs no animation frames, so this fires on the first frame
+// after the show — i.e. when the selector is actually visible to the user.
+requestAnimationFrame(()=>requestAnimationFrame(()=>send({type:'painted',displayId:display.id})));}});
 const rect=(a,b)=>({x:Math.min(a.x,b.x),y:Math.min(a.y,b.y),width:Math.abs(a.x-b.x),height:Math.abs(a.y-b.y)});
 const render=value=>{selection.style.display='block';selection.style.left=value.x+'px';selection.style.top=value.y+'px';selection.style.width=value.width+'px';selection.style.height=value.height+'px';size.textContent=Math.round(value.width)+' × '+Math.round(value.height);};
 window.addEventListener('mousedown',event=>{if(event.button!==0)return;start={x:event.clientX,y:event.clientY};render({x:start.x,y:start.y,width:0,height:0});});

@@ -1,4 +1,7 @@
 import type { AttachmentRecord, AttachmentStore } from './attachment-store'
+import { logger } from '../shared/logger'
+
+const log = logger.child('capture')
 
 /** The attachment-store surface a capture needs; keeps the store substitutable. */
 export type CaptureAttachmentSink = Pick<
@@ -97,18 +100,31 @@ export class CaptureCoordinator {
 
     let restoreError: unknown
     try {
+      // Timings for the user-visible latency of a capture: everything before
+      // `selected` runs while the user is still waiting to see the selector.
+      const startedAt = Date.now()
+      let preparedAt = startedAt
       try {
         snapshot = await this.presentation.snapshot()
         await this.presentation.prepareForCapture(snapshot)
+        preparedAt = Date.now()
         throwIfAborted(abortController.signal)
         const displays = this.displayCapture.snapshotTopology()
         const target = await request.selectTarget(abortController.signal, displays)
+        const selectedAt = Date.now()
         throwIfAborted(abortController.signal)
         const image = await this.displayCapture.capture(
           target,
           abortController.signal,
           displays,
         )
+        log.debug('capture timings', {
+          // Time spent hiding our own windows before the selector can appear.
+          prepareMs: preparedAt - startedAt,
+          // Includes the user's drag; the surface logs the show latency itself.
+          selectWithUserMs: selectedAt - preparedAt,
+          grabMs: Date.now() - selectedAt,
+        })
         throwIfAborted(abortController.signal)
         const attachment = await this.attachmentStore.addPendingImage({
           bytes: image.bytes,
