@@ -1,5 +1,10 @@
 import { SubscriptionEventSchema } from '../../shared/ipc/events'
-import { ConversationTurnResultSchema, type ProductEvent } from '../../shared/ipc/product'
+import {
+  ConversationTurnResultSchema,
+  TranscriptSnapshotSchema,
+  type ProductEvent,
+  type TranscriptSnapshot,
+} from '../../shared/ipc/product'
 import { BootstrapSchema } from '../../shared/schemas/bootstrap'
 import {
   ConnectionTestResultSchema,
@@ -98,6 +103,11 @@ export const desktopClient = {
     return ConversationTurnResultSchema.parse(await requireBridge().sendMessage(input))
   },
   stopTurn: (turnId: string) => requireBridge().stopTurn(turnId),
+  async transcriptSnapshot(turnId: string): Promise<TranscriptSnapshot | null> {
+    return TranscriptSnapshotSchema.nullable().parse(
+      await requireBridge().transcriptSnapshot(turnId),
+    )
+  },
   async solvePending(modelId: string) {
     return ConversationTurnResultSchema.parse(await requireBridge().solvePending(modelId))
   },

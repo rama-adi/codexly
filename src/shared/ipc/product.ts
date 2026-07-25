@@ -39,6 +39,9 @@ export const ProductCommandSchema = z.discriminatedUnion('type', [
     })
     .strict(),
   z.object({ type: z.literal('conversation.stop'), turnId: IdSchema }).strict(),
+  z
+    .object({ type: z.literal('conversation.transcriptSnapshot'), turnId: IdSchema })
+    .strict(),
   z.object({ type: z.literal('conversation.solvePending'), modelId: z.string().trim().min(1).max(128) }).strict(),
   z.object({ type: z.literal('attachments.capture') }).strict(),
   z.object({ type: z.literal('attachments.captureSelection') }).strict(),
@@ -84,6 +87,41 @@ export const ConversationTurnResultSchema = z
 
 export type ConversationTurnResult = z.infer<typeof ConversationTurnResultSchema>
 
+/**
+ * Per-turn monotonic counter carried by every turn-scoped event the main process
+ * publishes. It counts PUBLISHED events only, so a consumer that receives
+ * `n + 1` after `n` knows it has the whole stream, and any jump means the
+ * transport dropped something (see `transcript.gap`) and the transcript must be
+ * re-synced through `conversation.transcriptSnapshot`.
+ *
+ * The field is optional so the contract stays additive: an event without it is
+ * simply not gap-checked.
+ */
+const SequenceSchema = z.number().int().nonnegative()
+
+export const TranscriptSnapshotSchema = z
+  .object({
+    turnId: IdSchema,
+    sessionId: IdSchema,
+    origin: TurnOriginSchema,
+    /** Highest sequence included in this snapshot; 0 when nothing was published. */
+    sequence: SequenceSchema,
+    answer: z.string(),
+    reasoning: z.string(),
+    toolOutputs: z
+      .array(
+        z
+          .object({ activityId: z.string().min(1).max(256), text: z.string() })
+          .strict(),
+      )
+      .max(200),
+    /** False when the turn already ended and this is the retained final copy. */
+    live: z.boolean(),
+  })
+  .strict()
+
+export type TranscriptSnapshot = z.infer<typeof TranscriptSnapshotSchema>
+
 export const ProductEventSchema = z.discriminatedUnion('type', [
   z
     .object({
@@ -100,6 +138,7 @@ export const ProductEventSchema = z.discriminatedUnion('type', [
       sessionId: IdSchema,
       turnId: IdSchema,
       origin: TurnOriginSchema,
+      sequence: SequenceSchema.optional(),
       text: z.string(),
     })
     .strict(),
@@ -109,6 +148,7 @@ export const ProductEventSchema = z.discriminatedUnion('type', [
       sessionId: IdSchema,
       turnId: IdSchema,
       origin: TurnOriginSchema,
+      sequence: SequenceSchema.optional(),
       text: z.string(),
     })
     .strict(),
@@ -118,6 +158,7 @@ export const ProductEventSchema = z.discriminatedUnion('type', [
       sessionId: IdSchema,
       turnId: IdSchema,
       origin: TurnOriginSchema,
+      sequence: SequenceSchema.optional(),
     })
     .strict(),
   z
@@ -126,6 +167,7 @@ export const ProductEventSchema = z.discriminatedUnion('type', [
       sessionId: IdSchema,
       turnId: IdSchema,
       origin: TurnOriginSchema,
+      sequence: SequenceSchema.optional(),
       message: z.string(),
     })
     .strict(),
@@ -135,6 +177,7 @@ export const ProductEventSchema = z.discriminatedUnion('type', [
       sessionId: IdSchema,
       turnId: IdSchema,
       origin: TurnOriginSchema,
+      sequence: SequenceSchema.optional(),
       activityId: z.string().min(1).max(256).optional(),
       name: z.string().min(1).max(256),
       state: z.enum(['running', 'complete', 'error']),
@@ -147,9 +190,25 @@ export const ProductEventSchema = z.discriminatedUnion('type', [
       sessionId: IdSchema,
       turnId: IdSchema,
       origin: TurnOriginSchema,
+      sequence: SequenceSchema.optional(),
       activityId: z.string().min(1).max(256),
       text: z.string(),
       preliminary: z.boolean(),
+    })
+    .strict(),
+  // Synthesized by the preload transport (never by the main process) when
+  // buffer pressure forces it to drop turn-scoped events before a renderer has
+  // subscribed. It tells the consumer that the stream it is about to see has a
+  // hole, so it must re-sync instead of trusting its own accumulation.
+  z
+    .object({
+      type: z.literal('transcript.gap'),
+      sessionId: IdSchema,
+      turnId: IdSchema,
+      origin: TurnOriginSchema,
+      /** Highest sequence known to have been discarded. */
+      evictedThrough: SequenceSchema,
+      droppedCount: z.number().int().positive(),
     })
     .strict(),
   z

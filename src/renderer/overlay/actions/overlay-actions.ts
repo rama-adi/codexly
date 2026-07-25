@@ -1,6 +1,6 @@
 import type { StoreApi } from 'zustand/vanilla'
 
-import { isActive } from '../machine/turn-machine'
+import { isActive } from '../../shared/turn/turn-machine'
 import type { OverlayStoreState } from '../store/contract'
 
 /**

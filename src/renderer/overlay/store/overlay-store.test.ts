@@ -104,6 +104,40 @@ describe('createOverlayStore — tool activity reconciliation', () => {
     s.clearActivities()
     expect(store.getState().activities).toHaveLength(0)
   })
+
+  it('never rolls an activity back to the state of a reordered status', () => {
+    const { store } = makeStore()
+    const s = store.getState()
+
+    s.applyToolStatus({ activityId: 'act-1', name: 'grep', state: 'running', sequence: 1 })
+    s.applyToolStatus({
+      activityId: 'act-1',
+      name: 'grep',
+      state: 'complete',
+      detail: 'done',
+      sequence: 2,
+    })
+
+    // The transport re-delivers the earlier status out of order.
+    s.applyToolStatus({ activityId: 'act-1', name: 'grep', state: 'running', sequence: 1 })
+    expect(store.getState().activities[0]).toMatchObject({
+      state: 'complete',
+      detail: 'done',
+    })
+
+    // A genuinely newer status still applies.
+    s.applyToolStatus({ activityId: 'act-1', name: 'grep', state: 'error', sequence: 3 })
+    expect(store.getState().activities[0].state).toBe('error')
+  })
+
+  it('keeps applying unsequenced status events so the row is never lost', () => {
+    const { store } = makeStore()
+    const s = store.getState()
+
+    s.applyToolStatus({ activityId: 'act-1', name: 'grep', state: 'complete' })
+    s.applyToolStatus({ activityId: 'act-1', name: 'grep', state: 'running' })
+    expect(store.getState().activities[0].state).toBe('running')
+  })
 })
 
 describe('createOverlayStore — attachment queue reconciliation', () => {

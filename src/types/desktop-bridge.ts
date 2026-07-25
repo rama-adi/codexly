@@ -4,7 +4,11 @@ import type {
   ConnectionTestResult,
   ModelOption,
 } from '../shared/schemas/models'
-import type { ConversationTurnResult, ProductEvent } from '../shared/ipc/product'
+import type {
+  ConversationTurnResult,
+  ProductEvent,
+  TranscriptSnapshot,
+} from '../shared/ipc/product'
 import type {
   SubscriptionEvent,
   SubscriptionTopic,
@@ -43,6 +47,11 @@ export interface CodexlyDesktopBridgeV1 {
     attachmentIds: string[]
   }): Promise<ConversationTurnResult>
   stopTurn(turnId: string): Promise<boolean>
+  /**
+   * The main-side authoritative transcript for one turn, used to recover from a
+   * detected sequence gap. `null` when the main process no longer knows the turn.
+   */
+  transcriptSnapshot(turnId: string): Promise<TranscriptSnapshot | null>
   solvePending(modelId: string): Promise<ConversationTurnResult>
   capture(): Promise<unknown>
   captureSelection(): Promise<unknown>

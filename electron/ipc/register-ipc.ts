@@ -372,6 +372,7 @@ function authorizeProductCommand(role: WindowRole, command: ProductCommand): voi
     'sessions.create',
     'conversation.send',
     'conversation.stop',
+    'conversation.transcriptSnapshot',
     'conversation.solvePending',
     'attachments.capture',
     'attachments.captureSelection',

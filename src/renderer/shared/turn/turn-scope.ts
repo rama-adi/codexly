@@ -4,7 +4,7 @@ export type TurnScope = {
 }
 
 /**
- * Match a transcript event to the turn currently owned by the overlay. Missing
+ * Match a transcript event to the turn currently owned by the surface. Missing
  * identifiers are latched from the first event because the bridge can start
  * streaming before the command promise resolves.
  */

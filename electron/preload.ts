@@ -18,6 +18,7 @@ import {
   ConversationTurnResultSchema,
   ProductEventSchema,
   ProductResponseSchema,
+  TranscriptSnapshotSchema,
   type ProductCommand,
   type ProductEvent,
 } from '../src/shared/ipc/product'
@@ -48,12 +49,21 @@ const productListeners = new Set<(event: ProductEvent) => void>()
 const pendingProductEvents: ProductEvent[] = []
 const MAX_PENDING_PRODUCT_EVENTS = 128
 const MAX_PENDING_STREAM_BYTES = 256 * 1024
+// One window mounts several independent product-event consumers (settings, the
+// overlay/History store, the settings page). They do not subscribe in the same
+// tick, so the hand-off buffer has to survive the first subscriber and be
+// replayed to each of them. It is retained for this grace period after the first
+// subscriber attaches, which bounds the window in which a much later mount could
+// see stale events; renderers de-duplicate replays by sequence number.
+const PRODUCT_REPLAY_GRACE_MS = 3_000
 // Attachment previews may legitimately contain a 25 MiB image encoded as a
 // base64 data URL (~67 MiB in a UTF-16 string). Keep one full-size capture plus
 // control events, but do not allow a sequence of previews to grow unchecked.
 const MAX_PENDING_PROTECTED_BYTES = 96 * 1024 * 1024
 let pendingProductBytes = 0
-let hasAttachedProductListener = false
+// Infinity until the first subscriber attaches: before that the buffer is the
+// only copy of the stream and must never expire.
+let productReplayDeadline = Number.POSITIVE_INFINITY
 
 ipcRenderer.on(IPC_CHANNELS.event, (_electronEvent, rawEnvelope: unknown) => {
   const parsed = SubscriptionEventEnvelopeSchema.safeParse(rawEnvelope)
@@ -83,15 +93,16 @@ ipcRenderer.on(IPC_CHANNELS.event, (_electronEvent, rawEnvelope: unknown) => {
 ipcRenderer.on(IPC_CHANNELS.productEvent, (_electronEvent, rawEvent: unknown) => {
   const parsed = ProductEventSchema.safeParse(rawEvent)
   if (!parsed.success) return
-  if (productListeners.size > 0) {
-    for (const listener of productListeners) listener(parsed.data)
-    return
-  }
-  // The main process can emit overlay.opened, conversation.started, and even
-  // an instant terminal event before React mounts its first listener. Buffer
-  // only during that initial hand-off; unmounting later must not replay stale
-  // events when the overlay subscribes again.
-  if (!hasAttachedProductListener) bufferProductEvent(parsed.data)
+  // The main process can emit overlay.opened, conversation.started, and even an
+  // instant terminal event before React mounts its first listener, and the
+  // remaining consumers of the same window mount after it. Keep buffering across
+  // the whole hand-off window so every one of them is replayed; only after the
+  // window closes does the buffer stop growing and get dropped. The buffered
+  // entry is coalesced and re-stamped in place, so it is a copy: never the object
+  // a live listener has already been handed.
+  if (isWithinProductReplayWindow()) bufferProductEvent({ ...parsed.data })
+  else clearPendingProductEvents()
+  for (const listener of productListeners) listener(parsed.data)
 })
 
 const requestBootstrap = async () => {
@@ -250,14 +261,23 @@ const bridge: CodexlyDesktopBridgeV1 = Object.freeze({
   },
   onProductEvent(listener: (event: ProductEvent) => void) {
     productListeners.add(listener)
-    if (!hasAttachedProductListener) {
-      hasAttachedProductListener = true
-      const replay = pendingProductEvents.splice(0)
-      pendingProductBytes = 0
-      for (const event of replay) listener(event)
+    // Every subscriber that attaches within the hand-off window is replayed the
+    // same buffer, so a consumer that filters the stream (settings only, one
+    // origin only, …) can no longer starve its siblings.
+    if (isWithinProductReplayWindow()) {
+      if (productReplayDeadline === Number.POSITIVE_INFINITY) {
+        productReplayDeadline = Date.now() + PRODUCT_REPLAY_GRACE_MS
+      }
+      for (const event of [...pendingProductEvents]) listener(event)
+    } else {
+      clearPendingProductEvents()
     }
     return () => productListeners.delete(listener)
   },
+  transcriptSnapshot: async (turnId: string) =>
+    TranscriptSnapshotSchema.nullable().parse(
+      await invokeProduct({ type: 'conversation.transcriptSnapshot', turnId }),
+    ),
 })
 
 contextBridge.exposeInMainWorld(
@@ -267,6 +287,16 @@ contextBridge.exposeInMainWorld(
 
 function createRequestId(): string {
   return globalThis.crypto.randomUUID()
+}
+
+function isWithinProductReplayWindow(): boolean {
+  return Date.now() <= productReplayDeadline
+}
+
+function clearPendingProductEvents(): void {
+  if (pendingProductEvents.length === 0) return
+  pendingProductEvents.length = 0
+  pendingProductBytes = 0
 }
 
 function bufferProductEvent(event: ProductEvent): void {
@@ -283,6 +313,11 @@ function bufferProductEvent(event: ProductEvent): void {
   ) {
     pendingProductBytes -= productEventSize(last)
     last.text += event.text
+    // The merged event now carries the text of the whole run, so it must claim
+    // the NEWEST sequence: a consumer that applies it has consumed everything up
+    // to that number, and adjacency in the buffer guarantees the run is
+    // contiguous (an event of another turn or type would have broken the merge).
+    if (event.sequence !== undefined) last.sequence = event.sequence
     pendingProductBytes += productEventSize(last)
   } else {
     pendingProductEvents.push(event)
@@ -295,12 +330,26 @@ function bufferProductEvent(event: ProductEvent): void {
     // start or terminal signal needed to settle the overlay state machine.
     const streamIndex = pendingProductEvents.findIndex(isEvictableProductEvent)
     if (streamIndex < 0) break
-    removePendingProductEvent(streamIndex)
+    evictPendingProductEvent(streamIndex)
   }
 
   while (pendingProductEvents.length > MAX_PENDING_PRODUCT_EVENTS) {
     const streamIndex = pendingProductEvents.findIndex(isEvictableProductEvent)
-    removePendingProductEvent(streamIndex >= 0 ? streamIndex : 0)
+    if (streamIndex >= 0) {
+      evictPendingProductEvent(streamIndex)
+      continue
+    }
+    // Nothing expendable is left, so the cap has to break a protected event.
+    // Sacrifice the oldest event that carries no turn identity first: a gap
+    // marker cannot describe it, and its consumers re-read their own state on
+    // mount, whereas dropping conversation.started or a terminal event would
+    // wedge a state machine with no watermark to recover from. Note the drop
+    // without inserting a marker, so the buffer always shrinks and this loop
+    // cannot spin on a buffer of one-event-per-turn lifecycle records.
+    const unscopedIndex = pendingProductEvents.findIndex(
+      (candidate) => !isTurnScopedProductEvent(candidate),
+    )
+    dropProtectedProductEvent(unscopedIndex >= 0 ? unscopedIndex : 0)
   }
 
   while (pendingProductBytes > MAX_PENDING_PROTECTED_BYTES) {
@@ -328,10 +377,10 @@ function bufferProductEvent(event: ProductEvent): void {
             (_candidate, index) => index !== newestOversizedIndex,
           )
       if (removableIndex < 0) break
-      removePendingProductEvent(removableIndex)
+      dropProtectedProductEvent(removableIndex)
       continue
     }
-    removePendingProductEvent(0)
+    dropProtectedProductEvent(0)
   }
 }
 
@@ -373,6 +422,71 @@ function removeAllPendingProductEvents(
   }
 }
 
+/**
+ * Drops a buffered event under memory pressure and, when the event was part of a
+ * turn's stream, leaves a `transcript.gap` marker in its place. Without the
+ * marker a late subscriber would receive a transcript with a missing middle that
+ * looks perfectly well-formed.
+ */
+function evictPendingProductEvent(index: number): void {
+  const evicted = pendingProductEvents[index]
+  removePendingProductEvent(index)
+  if (evicted) noteEvictedProductEvent(evicted, index)
+}
+
+/**
+ * Drops an event the caps must break even though it is not expendable. It only
+ * annotates a gap marker the turn already has, never inserts one, so the buffer
+ * strictly shrinks on every call.
+ */
+function dropProtectedProductEvent(index: number): void {
+  const dropped = pendingProductEvents[index]
+  removePendingProductEvent(index)
+  if (dropped) mergeEvictedProductEvent(dropped)
+}
+
+function noteEvictedProductEvent(evicted: ProductEvent, index: number): void {
+  if (!isEvictableProductEvent(evicted)) return
+  if (mergeEvictedProductEvent(evicted)) return
+  const marker: ProductEvent = {
+    type: 'transcript.gap',
+    sessionId: evicted.sessionId,
+    turnId: evicted.turnId,
+    origin: evicted.origin,
+    evictedThrough: evicted.sequence ?? 0,
+    droppedCount: 1,
+  }
+  pendingProductEvents.splice(index, 0, marker)
+  pendingProductBytes += productEventSize(marker)
+}
+
+/**
+ * Records a dropped turn-scoped event on that turn's existing gap marker, and
+ * reports whether it found one. It never inserts a marker, so a caller whose
+ * loop condition is the buffer length can use it and still shrink the buffer.
+ */
+function mergeEvictedProductEvent(evicted: ProductEvent): boolean {
+  if (!isTurnScopedProductEvent(evicted)) return false
+  const existing = pendingProductEvents.find(
+    (candidate): candidate is Extract<ProductEvent, { type: 'transcript.gap' }> =>
+      candidate.type === 'transcript.gap' &&
+      candidate.turnId === evicted.turnId &&
+      candidate.origin === evicted.origin,
+  )
+  if (!existing) return false
+  // One marker per turn: it only has to say "something is missing", and the
+  // watermark is the newest sequence known to be gone.
+  existing.evictedThrough = Math.max(existing.evictedThrough, evictedSequence(evicted))
+  existing.droppedCount +=
+    evicted.type === 'transcript.gap' ? evicted.droppedCount : 1
+  return true
+}
+
+function evictedSequence(evicted: TurnScopedProductEvent): number {
+  if (evicted.type === 'transcript.gap') return evicted.evictedThrough
+  return 'sequence' in evicted ? evicted.sequence ?? 0 : 0
+}
+
 function removePendingProductEvent(index: number): void {
   const [removed] = pendingProductEvents.splice(index, 1)
   if (removed) pendingProductBytes -= productEventSize(removed)
@@ -386,13 +500,27 @@ function attachmentId(
   return typeof id === 'string' && id.length > 0 ? id : null
 }
 
-function isEvictableProductEvent(event: ProductEvent): boolean {
+type EvictableProductEvent = Extract<
+  ProductEvent,
+  { type: 'transcript.delta' | 'transcript.reasoning' | 'tool.output' | 'tool.status' }
+>
+
+function isEvictableProductEvent(event: ProductEvent): event is EvictableProductEvent {
   return (
     event.type === 'transcript.delta' ||
     event.type === 'transcript.reasoning' ||
     event.type === 'tool.output' ||
     event.type === 'tool.status'
   )
+}
+
+type TurnScopedProductEvent = Extract<ProductEvent, { turnId: string }>
+
+/** Whether losing the event leaves a hole a `transcript.gap` marker can describe. */
+function isTurnScopedProductEvent(
+  event: ProductEvent,
+): event is TurnScopedProductEvent {
+  return 'turnId' in event
 }
 
 function productEventSize(event: ProductEvent): number {

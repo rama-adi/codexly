@@ -642,4 +642,141 @@ describe('ConversationRuntime', () => {
     expect(stores.events[0]?.turnId).toBe('routed-turn')
     await handle.completion
   })
+
+  it('aborts a silent attempt with a tagged timeout and retries it once', async () => {
+    const { provider } = createProvider()
+    const stores = createStores()
+    let calls = 0
+    const stream = vi.fn((options: { abortSignal?: AbortSignal }) => {
+      calls += 1
+      const attemptCall = calls
+      return {
+        stream: {
+          async *[Symbol.asyncIterator]() {
+            if (attemptCall === 1) {
+              await new Promise<void>((resolve) => {
+                options.abortSignal?.addEventListener('abort', () => resolve(), { once: true })
+              })
+              throw options.abortSignal?.reason
+            }
+            yield { type: 'text-delta', text: 'answered on the retry' }
+          },
+        },
+        finishReason: Promise.resolve('stop'),
+      }
+    })
+    const runtime = new ConversationRuntime({
+      providers: createManager(provider),
+      threads: stores.threads,
+      events: stores.eventStore,
+      stream: stream as unknown as typeof import('ai').streamText,
+      generateTurnId: () => 'turn-watchdog',
+      firstTokenTimeoutMs: 5,
+    })
+
+    const handle = await runtime.startTurn(baseInput)
+    expect(await handle.completion).toBe('completed')
+    expect(calls).toBe(2)
+    expect(
+      stores.events.some(
+        (event) => event.event.type === 'assistant.delta',
+      ),
+    ).toBe(true)
+  })
+
+  it('fails the turn with the timeout tag when every attempt stays silent', async () => {
+    const { provider } = createProvider()
+    const stores = createStores()
+    const stream = vi.fn((options: { abortSignal?: AbortSignal }) => ({
+      stream: {
+        async *[Symbol.asyncIterator]() {
+          await new Promise<void>((resolve) => {
+            options.abortSignal?.addEventListener('abort', () => resolve(), { once: true })
+          })
+          if (options.abortSignal?.aborted) throw options.abortSignal.reason
+          yield { type: 'text-delta', text: 'unreachable' }
+        },
+      },
+      finishReason: Promise.resolve('stop'),
+    }))
+    const runtime = new ConversationRuntime({
+      providers: createManager(provider),
+      threads: stores.threads,
+      events: stores.eventStore,
+      stream: stream as unknown as typeof import('ai').streamText,
+      generateTurnId: () => 'turn-watchdog-fail',
+      firstTokenTimeoutMs: 5,
+    })
+
+    const handle = await runtime.startTurn(baseInput)
+    expect(await handle.completion).toBe('failed')
+    expect(stream).toHaveBeenCalledTimes(2)
+    const terminal = stores.events[stores.events.length - 1]?.event
+    expect(terminal).toMatchObject({ type: 'turn.failed' })
+    expect((terminal as { message: string }).message).toContain('no output within 5ms')
+  })
+
+  it('does not fire the watchdog once the first stream part arrived', async () => {
+    const { provider } = createProvider()
+    const stores = createStores()
+    let releaseTail: (() => void) | undefined
+    const tail = new Promise<void>((resolve) => {
+      releaseTail = resolve
+    })
+    const stream = vi.fn(() => ({
+      stream: {
+        async *[Symbol.asyncIterator]() {
+          yield { type: 'text-delta', text: 'first token' }
+          await tail
+          yield { type: 'text-delta', text: 'late token' }
+        },
+      },
+      finishReason: Promise.resolve('stop'),
+    }))
+    const runtime = new ConversationRuntime({
+      providers: createManager(provider),
+      threads: stores.threads,
+      events: stores.eventStore,
+      stream: stream as unknown as typeof import('ai').streamText,
+      generateTurnId: () => 'turn-slow-tail',
+      firstTokenTimeoutMs: 5,
+    })
+
+    const handle = await runtime.startTurn(baseInput)
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    releaseTail?.()
+
+    expect(await handle.completion).toBe('completed')
+    expect(stream).toHaveBeenCalledOnce()
+  })
+
+  it('reports a user abort as an interruption rather than a watchdog timeout', async () => {
+    const { provider } = createProvider()
+    const stores = createStores()
+    const stream = vi.fn((options: { abortSignal?: AbortSignal }) => ({
+      stream: {
+        async *[Symbol.asyncIterator]() {
+          await new Promise<void>((resolve) => {
+            options.abortSignal?.addEventListener('abort', () => resolve(), { once: true })
+          })
+          if (options.abortSignal?.aborted) throw options.abortSignal.reason
+          yield { type: 'text-delta', text: 'unreachable' }
+        },
+      },
+      finishReason: Promise.resolve('other'),
+    }))
+    const runtime = new ConversationRuntime({
+      providers: createManager(provider),
+      threads: stores.threads,
+      events: stores.eventStore,
+      stream: stream as unknown as typeof import('ai').streamText,
+      generateTurnId: () => 'turn-user-abort',
+      firstTokenTimeoutMs: 10_000,
+    })
+
+    const handle = await runtime.startTurn(baseInput)
+    expect(await handle.abort('user cancelled')).toBe(true)
+    expect(await handle.completion).toBe('interrupted')
+    expect(stream).toHaveBeenCalledOnce()
+  })
 })

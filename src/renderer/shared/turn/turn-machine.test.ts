@@ -155,7 +155,7 @@ describe('reduceTurn — conflicts & reset', () => {
       { type: 'initiate', kind: 'chat' },
       { type: 'started', kind: 'chat', sessionId: 's1', turnId: 't1' },
     ]).state
-    const reset = run([{ type: 'overlayReset' }], start)
+    const reset = run([{ type: 'reset', stopActive: true }], start)
     expect(reset.state.phase).toBe('idle')
     expect(reset.effects).toContainEqual({ type: 'stopTurn', turnId: 't1' })
   })

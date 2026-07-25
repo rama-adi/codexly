@@ -3,6 +3,7 @@ import type { StoreApi } from 'zustand/vanilla'
 
 import { DEFAULT_SHORTCUTS } from '../../../shared/schemas/settings'
 import { desktopClient } from '../../desktop'
+import { createTranscriptSync } from '../../shared/turn/transcript-sync'
 import type { OverlayStoreState } from '../store/contract'
 import type { Attachment } from '../types'
 
@@ -15,6 +16,11 @@ function errorText(error: unknown, fallback: string): string {
  * is the counterpart to the store's turn dispatch: every event is fed to the
  * turn machine (which decides acceptance / stops / errors), and only accepted
  * events mutate the transcript, activities, or attachment queue.
+ *
+ * Accepted events are then checked for continuity: the sequence stamped by the
+ * main process tells a replayed event (skip) apart from a dropped one (re-sync
+ * against the authoritative snapshot instead of appending onto a transcript with
+ * a hole in it).
  */
 export function useProductEventBridge(store: StoreApi<OverlayStoreState>): void {
   useEffect(() => {
@@ -27,6 +33,18 @@ export function useProductEventBridge(store: StoreApi<OverlayStoreState>): void 
       .catch((error) =>
         state().reportError(errorText(error, 'Could not load the screenshot queue.')),
       )
+
+    const sync = createTranscriptSync({
+      fetchSnapshot: (turnId) => desktopClient.transcriptSnapshot(turnId),
+      applySnapshot: (snapshot) => {
+        // The turn may have been superseded while the snapshot was in flight.
+        const turn = state().turn
+        if (turn.phase !== 'active' || turn.scope.turnId !== snapshot.turnId) return
+        state().replaceTranscript({ answer: snapshot.answer, reasoning: snapshot.reasoning })
+        state().replaceToolOutputs(snapshot.toolOutputs)
+      },
+      onError: (message) => state().reportError(message),
+    })
 
     return desktopClient.onProductEvent((event) => {
       // Turns started from the homepage stream into that window; the overlay
@@ -60,7 +78,7 @@ export function useProductEventBridge(store: StoreApi<OverlayStoreState>): void 
 
         case 'overlay.opened': {
           if (!event.fresh && event.sessionId === state().sessionId) return
-          state().dispatch({ type: 'overlayReset' })
+          state().dispatch({ type: 'reset', stopActive: true })
           state().resetTranscript()
           state().clearActivities()
           state().set({ messages: [] })
@@ -102,6 +120,18 @@ export function useProductEventBridge(store: StoreApi<OverlayStoreState>): void 
           return
         }
 
+        case 'transcript.gap': {
+          // The transport told us it discarded part of this turn's stream.
+          const { accepted } = state().dispatch({
+            type: 'streamEvent',
+            sessionId: event.sessionId,
+            turnId: event.turnId,
+          })
+          if (!accepted) return
+          sync.noteGap(event.turnId)
+          return
+        }
+
         case 'transcript.reasoning': {
           const { accepted } = state().dispatch({
             type: 'streamEvent',
@@ -109,6 +139,7 @@ export function useProductEventBridge(store: StoreApi<OverlayStoreState>): void 
             turnId: event.turnId,
           })
           if (!accepted) return
+          if (!sync.gate(event)) return
           if (!state().sessionId) state().setSessionId(event.sessionId)
           state().appendTranscript({ reasoning: event.text })
           return
@@ -121,6 +152,7 @@ export function useProductEventBridge(store: StoreApi<OverlayStoreState>): void 
             turnId: event.turnId,
           })
           if (!accepted) return
+          if (!sync.gate(event)) return
           if (!state().sessionId) state().setSessionId(event.sessionId)
           state().set({ streamError: undefined })
           state().appendTranscript({ answer: event.text })
@@ -128,42 +160,46 @@ export function useProductEventBridge(store: StoreApi<OverlayStoreState>): void 
         }
 
         case 'transcript.complete': {
-          const { accepted } = state().dispatch({
-            type: 'terminal',
-            sessionId: event.sessionId,
-            turnId: event.turnId,
-            outcome: 'complete',
-          })
-          if (!accepted) return
-          state().flushTranscript()
-          const answer = state().answer
-          if (!answer.trim()) {
-            state().set({
-              streamError: 'Codex completed without returning an answer. Please try again.',
+          sync.settleTerminal(event, () => {
+            const { accepted } = state().dispatch({
+              type: 'terminal',
+              sessionId: event.sessionId,
+              turnId: event.turnId,
+              outcome: 'complete',
             })
-          }
-          if (answer) state().appendMessage({ role: 'assistant', content: answer })
-          state().set({ notice: 'Response complete.' })
+            if (!accepted) return
+            state().flushTranscript()
+            const answer = state().answer
+            if (!answer.trim()) {
+              state().set({
+                streamError: 'Codex completed without returning an answer. Please try again.',
+              })
+            }
+            if (answer) state().appendMessage({ role: 'assistant', content: answer })
+            state().set({ notice: 'Response complete.' })
+          })
           return
         }
 
         case 'transcript.failed': {
-          const kindBefore = state().turn.kind
-          const { accepted } = state().dispatch({
-            type: 'terminal',
-            sessionId: event.sessionId,
-            turnId: event.turnId,
-            outcome: 'failed',
+          sync.settleTerminal(event, () => {
+            const kindBefore = state().turn.kind
+            const { accepted } = state().dispatch({
+              type: 'terminal',
+              sessionId: event.sessionId,
+              turnId: event.turnId,
+              outcome: 'failed',
+            })
+            if (!accepted) return
+            state().flushTranscript()
+            state().set({ streamError: event.message })
+            const answer = state().answer
+            if (kindBefore === 'chat' && answer) {
+              state().appendMessage({ role: 'assistant', content: answer })
+              state().set({ answer: '' })
+            }
+            state().set({ notice: event.message })
           })
-          if (!accepted) return
-          state().flushTranscript()
-          state().set({ streamError: event.message })
-          const answer = state().answer
-          if (kindBefore === 'chat' && answer) {
-            state().appendMessage({ role: 'assistant', content: answer })
-            state().set({ answer: '' })
-          }
-          state().set({ notice: event.message })
           return
         }
 
@@ -174,11 +210,16 @@ export function useProductEventBridge(store: StoreApi<OverlayStoreState>): void 
             turnId: event.turnId,
           })
           if (!accepted) return
+          // Not gated: a status event carries the activity's identity, which no
+          // snapshot can restore, so skipping it would lose the activity row for
+          // good. Continuity is still tracked, so a hole here re-syncs the text.
+          sync.noteUnrecoverable(event)
           state().applyToolStatus({
             activityId: event.activityId,
             name: event.name,
             state: event.state,
             detail: event.detail,
+            sequence: event.sequence,
           })
           return
         }
@@ -190,6 +231,7 @@ export function useProductEventBridge(store: StoreApi<OverlayStoreState>): void 
             turnId: event.turnId,
           })
           if (!accepted) return
+          if (!sync.gate(event)) return
           state().applyToolOutput({ activityId: event.activityId, text: event.text })
           return
         }

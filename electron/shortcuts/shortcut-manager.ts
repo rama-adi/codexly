@@ -1,3 +1,7 @@
+import { logger } from '../shared/logger'
+
+const log = logger.child('shortcuts')
+
 export interface GlobalShortcutAdapter {
   register(accelerator: string, callback: () => void): boolean
   unregister(accelerator: string): void
@@ -233,8 +237,17 @@ export class ShortcutManager {
   private reportError(failure: ShortcutManagerError): void {
     try {
       this.onError?.(failure)
-    } catch {
-      // Error observers are diagnostic and cannot control shortcut dispatch.
+    } catch (observerError) {
+      // Invariant: the observer is purely diagnostic (it publishes a
+      // shortcut.error event) and cannot control shortcut dispatch, so a broken
+      // observer must not mask the failure being reported. Logged rather than
+      // silent so a throwing observer is still debuggable.
+      log.warn('shortcut error observer threw', {
+        action: failure.action,
+        phase: failure.phase,
+        reportedError: errorMessage(failure.error),
+        observerError: errorMessage(observerError),
+      })
     }
   }
 }

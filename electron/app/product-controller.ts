@@ -14,7 +14,13 @@ import os from 'node:os'
 import path from 'node:path'
 import { z } from 'zod'
 
-import type { ProductCommand, ProductEvent, TurnOrigin } from '../../src/shared/ipc/product'
+import {
+  TranscriptSnapshotSchema,
+  type ProductCommand,
+  type ProductEvent,
+  type TranscriptSnapshot,
+  type TurnOrigin,
+} from '../../src/shared/ipc/product'
 import {
   DEFAULT_SHORTCUTS,
   SHORTCUT_ACTIONS,
@@ -55,12 +61,20 @@ import {
   type ConversationTurnHandle,
 } from '../conversation/conversation-runtime'
 import type { TurnEventEnvelope } from '../conversation/turn-controller'
+import { retry } from '../effects/retry'
 import { AtomicJsonStore } from '../persistence/atomic-json-store'
 import { SessionStore, type SessionRecord } from '../persistence/session-store'
 import { SettingsStore } from '../persistence/settings-store'
 import { WorkspaceStore } from '../persistence/workspace-store'
 import { ShortcutManager } from '../shortcuts/shortcut-manager'
-import { logger } from '../shared/logger'
+import { logger, serializeErrorForLog } from '../shared/logger'
+import {
+  decideTurnEventDisposition,
+  isFreshOverlayOpen,
+  mergePendingAttachmentIds,
+  shouldOverlayStream,
+  TurnRegistry,
+} from './turn-registry'
 
 const log = logger.child('product')
 
@@ -81,10 +95,13 @@ type RuntimeStatus = Readonly<{
  */
 export const PRODUCT_SHORTCUT_ACCELERATORS = DEFAULT_SHORTCUTS
 
-type TurnContext = Readonly<{
-  origin: TurnOrigin
-  persistConversation: boolean
-}>
+/** Used only when the settings file cannot be read; logged when it happens. */
+const FALLBACK_MODEL_ID = 'gpt-5.5'
+
+const WARMUP_RETRY_ATTEMPTS = 3
+
+/** How many finished turns stay re-syncable after their records are closed. */
+const MAX_RETAINED_TERMINAL_SNAPSHOTS = 8
 
 export interface ProductControllerOptions {
   userDataPath: string
@@ -132,6 +149,26 @@ export async function restoreCapturePresentation(
   // Only a Codexly window that was key before capture is made key again.
   if (snapshot.homepage.focused) homepage?.focus()
   else if (snapshot.overlay.focused) overlay?.focus()
+}
+
+/**
+ * Keeps the final transcript of the most recent turns after their records are
+ * gone, so a renderer that only notices a dropped event on the terminal signal
+ * can still re-sync — including for ephemeral sessions, which persist nothing.
+ * Insertion order is oldest-first, so the eviction is a plain LRU by arrival.
+ */
+export function retainTranscriptSnapshot(
+  retained: Map<string, TranscriptSnapshot>,
+  snapshot: TranscriptSnapshot,
+  limit = MAX_RETAINED_TERMINAL_SNAPSHOTS,
+): void {
+  retained.delete(snapshot.turnId)
+  retained.set(snapshot.turnId, { ...snapshot, live: false })
+  while (retained.size > limit) {
+    const oldest = retained.keys().next()
+    if (oldest.done) break
+    retained.delete(oldest.value)
+  }
 }
 
 export async function announceTurnBeforeDeferredEvents(
@@ -242,15 +279,17 @@ export class ProductController {
   readonly #runtime: ConversationRuntime | null
   readonly #capture: CaptureCoordinator
   readonly #shortcuts: ShortcutManager
-  readonly #activeTurns = new Map<string, { sessionId: string; abort(reason?: string): Promise<boolean> }>()
-  readonly #turnContexts = new Map<string, TurnContext>()
-  readonly #initializingTurns = new Set<string>()
-  readonly #deferredTurnEvents = new Map<string, TurnEventEnvelope[]>()
-  readonly #assistantBuffers = new Map<string, string>()
+  readonly #turns: TurnRegistry
   readonly #pendingAttachmentIds: string[] = []
   readonly #reservedAttachmentIds = new Set<string>()
   readonly #ephemeralSessions = new Map<string, SessionRecord>()
   readonly #ephemeralThreadIds = new Map<string, string | null>()
+  /**
+   * The final transcript of the most recent turns, kept after their records are
+   * closed. A renderer that only notices a dropped event on the terminal signal
+   * can still re-sync, including for ephemeral sessions that persist nothing.
+   */
+  readonly #terminalSnapshots = new Map<string, TranscriptSnapshot>()
   readonly #userDataPath: string
   #runtimeError: string | null = null
   #screenAccessEnsured = false
@@ -318,8 +357,15 @@ export class ProductController {
       })
     } catch (error) {
       this.#runtimeError = errorMessage(error)
+      log.error('Codex runtime construction failed', error)
     }
     this.#runtime = runtime
+    this.#turns = new TurnRegistry({
+      // Reaches a turn whose handle has not attached yet: the runtime already
+      // knows the caller-supplied turn id while startTurn is still resolving.
+      fallbackAbort: async (turnId, reason) =>
+        (await this.#runtime?.abortTurn(turnId, reason)) ?? false,
+    })
 
     const displayCapture = new DisplayCapture({
       getAllDisplays: () =>
@@ -377,8 +423,12 @@ export class ProductController {
       if (!(await this.#workspaces.getSelected())) {
         await this.#workspaces.registerApprovedPath(home, 'Home')
       }
-    } catch {
+    } catch (error) {
       // Workspace selection remains optional when the home directory is unavailable.
+      log.warn('default workspace registration failed', {
+        home,
+        error: serializeErrorForLog(error),
+      })
     }
 
     let shortcuts: Shortcuts = { ...DEFAULT_SHORTCUTS }
@@ -386,9 +436,13 @@ export class ProductController {
       const settings = await this.#settings.load()
       this.#windowManager.setOverlayContentProtection(settings.privacy.stealthMode)
       shortcuts = settings.shortcuts
-    } catch {
+    } catch (error) {
       // Stealth defaults to on inside the window manager if settings are unreadable.
-      // Shortcuts fall back to their documented defaults.
+      // Shortcuts fall back to their documented defaults — which silently
+      // replaces the user's custom accelerators, so this must be visible.
+      log.error('settings load failed; reverting shortcuts to defaults', error, {
+        shortcuts: DEFAULT_SHORTCUTS,
+      })
     }
     this.#configureShortcuts(shortcuts)
 
@@ -461,6 +515,8 @@ export class ProductController {
         return this.#sendFromSurface(command, role === 'homepage' ? 'homepage' : 'overlay')
       case 'conversation.stop':
         return this.#stop(command.turnId)
+      case 'conversation.transcriptSnapshot':
+        return this.#transcriptSnapshot(command.turnId)
       case 'conversation.solvePending':
         return this.#solvePending(command.modelId)
       case 'attachments.capture':
@@ -512,11 +568,8 @@ export class ProductController {
   async dispose(): Promise<void> {
     this.#shortcuts.dispose()
     await this.#runtime?.dispose()
-    this.#activeTurns.clear()
-    this.#turnContexts.clear()
-    this.#initializingTurns.clear()
-    this.#deferredTurnEvents.clear()
-    this.#assistantBuffers.clear()
+    await this.#turns.closeAll('Product controller disposed')
+    this.#terminalSnapshots.clear()
     this.#reservedAttachmentIds.clear()
     this.#ephemeralSessions.clear()
     this.#ephemeralThreadIds.clear()
@@ -564,12 +617,18 @@ export class ProductController {
     const reasoningEffort = textOnlyTurn ? 'minimal' : settings.assistant.reasoningEffort
     const webSearch = !textOnlyTurn && settings.assistant.webSearchEnabled
     const turnId = crypto.randomUUID()
-    const context: TurnContext = { origin, persistConversation }
     const messageId = crypto.randomUUID()
     const association = { ownerType: 'session' as const, ownerId: session.id }
     let handle: ConversationTurnHandle | null = null
-    this.#turnContexts.set(turnId, context)
-    this.#initializingTurns.add(turnId)
+    // Registered synchronously, before the first await of turn startup: the
+    // id-free abort paths and the overlay fresh-session check must be able to
+    // see this turn while the runtime is still starting it.
+    const record = this.#turns.register({
+      turnId,
+      conversationId: session.id,
+      origin,
+      persistConversation,
+    })
     try {
       handle = await this.#runtime.startTurn({
         conversationId: session.id,
@@ -584,6 +643,8 @@ export class ProductController {
         reasoningEffort,
         settings: toPromptSettings(settings),
       })
+      // Any abort that arrived while the turn was initiating fires here.
+      record.attachAbort(handle)
       if (persistConversation) {
         await persistTurnSetupTransaction({
           attachmentIds: command.attachmentIds,
@@ -605,29 +666,26 @@ export class ProductController {
         })
       }
     } catch (error) {
-      if (handle) await handle.abort('Turn setup failed').catch(() => false)
+      await record.requestAbort('Turn setup failed').catch(() => false)
+      // Compensating writes for a turn that never became live. They are not
+      // scope finalizers: an ephemeral session must survive a successful turn.
       if (createdSession) {
         await this.#sessions.delete(session.id).catch(() => false)
       }
       if (!persistConversation) this.#removeEphemeralSession(session.id)
-      this.#initializingTurns.delete(turnId)
-      this.#deferredTurnEvents.delete(turnId)
-      this.#turnContexts.delete(turnId)
-      this.#assistantBuffers.delete(turnId)
+      await record.close('Turn setup failed')
+      await this.#syncOverlayStreaming()
       throw error
     }
 
-    this.#activeTurns.set(turnId, { sessionId: session.id, abort: handle.abort })
     if (origin === 'overlay') {
       // Release focus only after startup and local bookkeeping have succeeded.
       this.#windowManager.releaseOverlayFocus()
-      await this.#windowManager.setOverlayStreaming(true).catch(() => undefined)
     }
+    await this.#syncOverlayStreaming()
     void handle.completion.finally(() => {
-      this.#activeTurns.delete(turnId)
-      if (origin === 'overlay') {
-        void this.#windowManager.setOverlayStreaming(false)
-      }
+      record.markCompletionSettled()
+      void this.#syncOverlayStreaming()
     })
     return { sessionId: session.id, turnId, persistConversation }
   }
@@ -682,18 +740,64 @@ export class ProductController {
     event: Extract<ProductEvent, { type: 'conversation.started' }>,
     roles: readonly WindowRole[],
   ): Promise<void> {
-    const deferred = this.#deferredTurnEvents.get(event.turnId) ?? []
-    this.#deferredTurnEvents.set(event.turnId, deferred)
+    const record = this.#turns.get(event.turnId)
+    if (!record) {
+      // The turn was finalized before it could be announced; the renderer never
+      // learned about it, so there is nothing to start or replay.
+      log.warn('skipping announcement for an already-finalized turn', {
+        turnId: event.turnId,
+        sessionId: event.sessionId,
+      })
+      return
+    }
+    // The drain awaits persistence between envelopes, and the provider keeps
+    // producing during those awaits. Holding the turn in "draining" makes those
+    // arrivals queue behind the backlog instead of being published from inside
+    // one of the gaps, which is what would reorder the transcript.
+    record.beginDrain()
     try {
       await announceTurnBeforeDeferredEvents(
-        () => this.#publish(event, roles),
-        deferred,
+        () => {
+          this.#publish(event, roles)
+          record.markAnnounced()
+        },
+        record.deferred,
         (envelope) => this.#recordTurnEventNow(envelope),
       )
     } finally {
-      this.#deferredTurnEvents.delete(event.turnId)
-      this.#initializingTurns.delete(event.turnId)
+      record.endDrain()
     }
+  }
+
+  /**
+   * Answers a renderer that detected a dropped event: the authoritative
+   * transcript for one turn, live from the registry when the turn is still
+   * running, otherwise the retained final copy. `null` means the turn is unknown
+   * here, in which case the caller must keep what it has.
+   */
+  #transcriptSnapshot(turnId: string): TranscriptSnapshot | null {
+    const record = this.#turns.get(turnId)
+    const snapshot = record?.transcriptSnapshot() ?? this.#terminalSnapshots.get(turnId) ?? null
+    if (!snapshot) {
+      log.warn('transcript snapshot requested for an unknown turn', { turnId })
+      return null
+    }
+    return TranscriptSnapshotSchema.parse(snapshot)
+  }
+
+  /**
+   * Drives the overlay streaming affordance from registry state rather than
+   * per-turn toggles, so a superseded turn settling after a newer one started
+   * cannot switch the affordance back off underneath it.
+   */
+  async #syncOverlayStreaming(): Promise<void> {
+    const streaming = shouldOverlayStream(this.#turns.snapshots())
+    await this.#windowManager.setOverlayStreaming(streaming).catch((error: unknown) => {
+      log.warn('overlay streaming transition failed', {
+        streaming,
+        error: serializeErrorForLog(error),
+      })
+    })
   }
 
   async #solvePending(modelId: string) {
@@ -714,8 +818,11 @@ export class ProductController {
   async #defaultModelId(): Promise<string> {
     try {
       return (await this.#settings.load()).assistant.model
-    } catch {
-      return 'gpt-5.5'
+    } catch (error) {
+      log.error('settings load failed; falling back to the built-in model id', error, {
+        modelId: FALLBACK_MODEL_ID,
+      })
+      return FALLBACK_MODEL_ID
     }
   }
 
@@ -742,8 +849,14 @@ export class ProductController {
     return this.#runtime.testConnection(await this.#providerRevisionInput())
   }
 
+  /**
+   * Memoizes one warmup per (workspace, credential) key. A failed warmup clears
+   * the memo so the next caller retries instead of inheriting the failure for
+   * the rest of the process lifetime.
+   */
   async #warmRuntime(): Promise<void> {
-    if (!this.#runtime) return
+    const runtime = this.#runtime
+    if (!runtime) return
     const input = await this.#providerRevisionInput()
     const key = JSON.stringify({
       workspacePath: input.workspacePath,
@@ -752,7 +865,20 @@ export class ProductController {
     if (this.#warmup?.key === key) {
       return this.#warmup.promise
     }
-    const promise = this.#runtime.warm(input).catch(() => undefined)
+    const promise = retry(
+      {
+        attempts: WARMUP_RETRY_ATTEMPTS,
+        delayMs: (attempt) => 250 * 2 ** (attempt - 1),
+      },
+      () => runtime.warm(input),
+    ).catch((error: unknown) => {
+      if (this.#warmup?.promise === promise) this.#warmup = null
+      log.warn('runtime warmup failed; the next send will retry', {
+        workspacePath: input.workspacePath,
+        attempts: WARMUP_RETRY_ATTEMPTS,
+        error: serializeErrorForLog(error),
+      })
+    })
     this.#warmup = { key, promise }
     await promise
   }
@@ -779,16 +905,28 @@ export class ProductController {
         },
       })
       await importer.importOnce()
-    } catch {
+    } catch (error) {
       // A failed or absent legacy import must never block startup.
+      log.warn('legacy state import failed', {
+        legacyStatePath,
+        error: serializeErrorForLog(error),
+      })
     }
   }
 
   async #listPendingAttachments() {
+    const before = [...this.#pendingAttachmentIds]
     const pending = (await this.#attachments.list()).filter(
       (attachment) => attachment.associations.length === 0,
     )
-    this.#pendingAttachmentIds.splice(0, this.#pendingAttachmentIds.length, ...pending.map((attachment) => attachment.id))
+    // A capture that completed during the await above is already queued; merging
+    // keeps it instead of clobbering it with the older listing.
+    const merged = mergePendingAttachmentIds(
+      before,
+      this.#pendingAttachmentIds,
+      pending.map((attachment) => attachment.id),
+    )
+    this.#pendingAttachmentIds.splice(0, this.#pendingAttachmentIds.length, ...merged)
     return Promise.all(
       pending.map(async (attachment) => {
         const verified = await this.#attachments.resolveVerifiedBytes(attachment.id)
@@ -849,24 +987,31 @@ export class ProductController {
     return this.#sessions.delete(sessionId)
   }
 
+  /** Aborts every turn of a session, including turns still initiating. */
   async #abortTurnsForSession(sessionId: string, reason: string): Promise<void> {
-    await Promise.all(
-      [...this.#activeTurns.values()]
-        .filter((turn) => turn.sessionId === sessionId)
-        .map((turn) => turn.abort(reason)),
+    await this.#turns.requestAbortWhere(
+      (snapshot) => snapshot.conversationId === sessionId,
+      reason,
     )
+    await this.#syncOverlayStreaming()
   }
 
+  /** Aborts every overlay turn, including turns still initiating. */
   async #abortOverlayTurns(reason: string): Promise<void> {
-    await Promise.all(
-      [...this.#activeTurns.entries()]
-        .filter(([turnId]) => this.#turnContexts.get(turnId)?.origin === 'overlay')
-        .map(([, turn]) => turn.abort(reason)),
+    await this.#turns.requestAbortWhere(
+      (snapshot) => snapshot.origin === 'overlay',
+      reason,
     )
+    await this.#syncOverlayStreaming()
   }
 
   async #stop(turnId: string): Promise<boolean> {
-    return (await this.#activeTurns.get(turnId)?.abort('Stopped by user')) ?? false
+    const record = this.#turns.get(turnId)
+    if (record) return record.requestAbort('Stopped by user')
+    // The record is gone (late stop, or a turn finalized between the renderer's
+    // decision and this call); the runtime may still know the turn id.
+    log.info('stop for an unregistered turn; falling back to the runtime', { turnId })
+    return (await this.#runtime?.abortTurn(turnId, 'Stopped by user')) ?? false
   }
 
   async #captureDisplay() {
@@ -920,11 +1065,14 @@ export class ProductController {
       const settings = await this.#settings.load()
       if (!settings.capture.autoAnswer) return
       modelId = settings.assistant.model
-    } catch {
+    } catch (error) {
+      log.warn('auto-answer skipped; settings are unreadable', {
+        error: serializeErrorForLog(error),
+      })
       return
     }
     if (this.#pendingAttachmentIds.length === 0) return
-    if (this.#hasActiveOverlayTurn()) return
+    if (this.#turns.hasActive('overlay')) return
     try {
       // Surface the overlay if it is hidden so the streamed answer is visible.
       // preserveSession keeps any in-progress conversation and avoids clearing
@@ -936,13 +1084,6 @@ export class ProductController {
     } catch (error) {
       log.warn('auto-answer failed', { error: errorMessage(error) })
     }
-  }
-
-  #hasActiveOverlayTurn(): boolean {
-    for (const context of this.#turnContexts.values()) {
-      if (context.origin === 'overlay') return true
-    }
-    return false
   }
 
   /**
@@ -1048,7 +1189,7 @@ export class ProductController {
     log.info('toggleOverlay', {
       preserveSession,
       overlayVisible: overlay?.isVisible() ?? false,
-      activeTurns: this.#activeTurns.size,
+      liveTurns: this.#turns.size,
     })
     if (overlay?.isVisible()) {
       // The overlay and homepage are exclusive surfaces: dismissing the HUD
@@ -1064,12 +1205,21 @@ export class ProductController {
   /**
    * Shows the overlay on user intent (shortcut, tray, toggle). Each open
    * starts a fresh conversation — the next send creates a new session instead
-   * of resuming the last active one — except while a turn is still streaming
-   * or when the caller explicitly continues a session (history "Continue").
+   * of resuming the last active one — except while a turn is still live or when
+   * the caller explicitly continues a session (history "Continue").
+   *
+   * "Live" includes a turn that is still initiating: clearing the active session
+   * under a mid-flight turn strands it, and in ephemeral mode the runtime's
+   * thread-id callback then writes a session that was never persisted.
    */
   async openOverlay(preserveSession = false): Promise<void> {
-    const fresh = !preserveSession && this.#activeTurns.size === 0
-    log.info('openOverlay', { preserveSession, fresh, activeTurns: this.#activeTurns.size })
+    const snapshots = this.#turns.snapshots()
+    const fresh = isFreshOverlayOpen(snapshots, preserveSession)
+    log.info('openOverlay', {
+      preserveSession,
+      fresh,
+      turnStates: snapshots.map((snapshot) => `${snapshot.origin}:${snapshot.state}`),
+    })
     if (fresh) {
       await this.#sessions.clearActive()
       if (this.#activeEphemeralSessionId) {
@@ -1122,28 +1272,61 @@ export class ProductController {
   }
 
   async #recordTurnEvent(envelope: TurnEventEnvelope): Promise<void> {
-    if (this.#initializingTurns.has(envelope.turnId)) {
-      const deferred = this.#deferredTurnEvents.get(envelope.turnId) ?? []
-      deferred.push(envelope)
-      this.#deferredTurnEvents.set(envelope.turnId, deferred)
-      return
+    const record = this.#turns.get(envelope.turnId)
+    switch (decideTurnEventDisposition(record?.snapshot())) {
+      case 'defer':
+        record?.deferred.push(envelope)
+        return
+      case 'drop':
+        this.#logDroppedTurnEvent(envelope)
+        return
+      case 'deliver':
+        await this.#recordTurnEventNow(envelope)
     }
-    await this.#recordTurnEventNow(envelope)
+  }
+
+  #logDroppedTurnEvent(envelope: TurnEventEnvelope): void {
+    log.warn('dropping a turn event with no live record', {
+      turnId: envelope.turnId,
+      sessionId: envelope.conversationId,
+      eventType: envelope.event.type,
+      sequence: envelope.sequence,
+    })
   }
 
   async #recordTurnEventNow(envelope: TurnEventEnvelope): Promise<void> {
     const { conversationId: sessionId, turnId, event } = envelope
-    const context = this.#turnContexts.get(turnId)
-    const origin = context?.origin ?? 'overlay'
-    const persistConversation = context?.persistConversation ?? true
+    const record = this.#turns.get(turnId)
+    if (!record) {
+      // Never guess the origin: a mis-routed event would drive the wrong surface.
+      this.#logDroppedTurnEvent(envelope)
+      return
+    }
+    const { origin, persistConversation } = record.context
     if (event.type === 'assistant.delta') {
-      const text = (this.#assistantBuffers.get(turnId) ?? '') + event.text
-      this.#assistantBuffers.set(turnId, text)
-      this.#publish({ type: 'transcript.delta', sessionId, turnId, origin, text: event.text })
+      record.markStreaming()
+      record.appendAssistantText(event.text)
+      this.#publish({
+        type: 'transcript.delta',
+        sessionId,
+        turnId,
+        origin,
+        sequence: record.nextSequence(),
+        text: event.text,
+      })
       return
     }
     if (event.type === 'reasoning.delta') {
-      this.#publish({ type: 'transcript.reasoning', sessionId, turnId, origin, text: event.text })
+      record.markStreaming()
+      record.appendReasoningText(event.text)
+      this.#publish({
+        type: 'transcript.reasoning',
+        sessionId,
+        turnId,
+        origin,
+        sequence: record.nextSequence(),
+        text: event.text,
+      })
       return
     }
     if (event.type === 'activity.started' || event.type === 'activity.completed') {
@@ -1158,13 +1341,21 @@ export class ProductController {
           state: event.type === 'activity.started' ? 'started' : event.activity.status === 'failed' ? 'failed' : 'completed',
           input: event.activity.details,
           createdAt: envelope.occurredAt,
-        }).catch(() => undefined)
+        }).catch((error: unknown) => {
+          log.warn('tool event persistence failed', {
+            sessionId,
+            turnId,
+            activityId: event.activity.id,
+            error: serializeErrorForLog(error),
+          })
+        })
       }
       this.#publish({
         type: 'tool.status',
         sessionId,
         turnId,
         origin,
+        sequence: record.nextSequence(),
         activityId: event.activity.id,
         name: event.activity.title ?? event.activity.kind,
         state: event.type === 'activity.started' ? 'running' : event.activity.status === 'failed' ? 'error' : 'complete',
@@ -1173,20 +1364,22 @@ export class ProductController {
       return
     }
     if (event.type === 'activity.output') {
+      const text = truncateOutput(event.text)
+      record.appendToolOutput(event.activityId, text)
       this.#publish({
         type: 'tool.output',
         sessionId,
         turnId,
         origin,
+        sequence: record.nextSequence(),
         activityId: event.activityId,
-        text: truncateOutput(event.text),
+        text,
         preliminary: event.preliminary,
       })
       return
     }
     if (event.type === 'turn.completed' || event.type === 'turn.interrupted' || event.type === 'turn.failed') {
-      const content = this.#assistantBuffers.get(turnId) ?? ''
-      this.#assistantBuffers.delete(turnId)
+      const content = record.assistantText
       const { hasAnswer, state, failureMessage } = resolveTurnTerminalPresentation(
         event,
         content,
@@ -1210,16 +1403,33 @@ export class ProductController {
         }
         await persistTerminalBestEffort(persistenceOperations, () => {
           if (failureMessage) {
-            this.#publish({ type: 'transcript.failed', sessionId, turnId, origin, message: failureMessage })
+            this.#publish({
+              type: 'transcript.failed',
+              sessionId,
+              turnId,
+              origin,
+              sequence: record.nextSequence(),
+              message: failureMessage,
+            })
           } else {
-            this.#publish({ type: 'transcript.complete', sessionId, turnId, origin })
+            this.#publish({
+              type: 'transcript.complete',
+              sessionId,
+              turnId,
+              origin,
+              sequence: record.nextSequence(),
+            })
           }
         })
       } finally {
         if (persistConversation) this.#publish({ type: 'sessions.changed' }, ['homepage'])
-        this.#turnContexts.delete(turnId)
-        this.#assistantBuffers.delete(turnId)
-        this.#deferredTurnEvents.delete(turnId)
+        // Retained before the record is torn down so a renderer that detects a
+        // gap on the terminal event can still re-sync against the final text.
+        retainTranscriptSnapshot(this.#terminalSnapshots, record.transcriptSnapshot())
+        // The single cleanup path for a turn: every per-turn structure lives on
+        // the record and its scope runs exactly once.
+        await record.close(`turn ${event.type}`)
+        await this.#syncOverlayStreaming()
       }
     }
   }
@@ -1234,8 +1444,12 @@ export class ProductController {
       const title = sanitizeThreadTitle(firstUserMessage.content)
       if (title === TITLE_FALLBACK) return
       await this.#sessions.update(sessionId, (current) => ({ ...current, title }))
-    } catch {
+    } catch (error) {
       // Titling is best-effort and must never disrupt turn completion.
+      log.warn('session titling failed', {
+        sessionId,
+        error: serializeErrorForLog(error),
+      })
     }
   }
 

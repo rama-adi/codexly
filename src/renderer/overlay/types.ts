@@ -9,6 +9,11 @@ export type ToolActivity = {
   state: 'running' | 'complete' | 'error'
   detail?: string
   output?: string
+  /**
+   * Sequence of the status event that last set `state`, so a status reordered by
+   * the transport cannot roll the row back to an older state.
+   */
+  sequence?: number
 }
 
 export type ChatMessage = {

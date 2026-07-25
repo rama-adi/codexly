@@ -15,7 +15,7 @@ import {
   type CaptureTarget,
   type Point,
 } from './selection-models'
-import { logger } from '../shared/logger'
+import { logger, serializeErrorForLog } from '../shared/logger'
 
 const log = logger.child('selection')
 
@@ -150,7 +150,14 @@ export class SelectionSurfaceController {
       if (!entry) {
         try {
           entry = this.#createWindow(display)
-        } catch {
+        } catch (error) {
+          // The remaining displays can still host the selector; this one is
+          // dropped from the round rather than failing the whole selection.
+          log.warn('selector window creation failed', {
+            displayId: display.id,
+            pending: active.pending.size,
+            error: serializeErrorForLog(error),
+          })
           active.pending.delete(display.id)
           this.#finishIfUnavailable(active)
           continue
@@ -294,7 +301,15 @@ export class SelectionSurfaceController {
         pending: active.pending.size,
       })
       if (takesFocus) entry.window.focus()
-    } catch {
+    } catch (error) {
+      // This selector window is unusable (channel, postMessage or show failed);
+      // retire it and let the other displays finish the selection.
+      log.warn('selector window activation failed', {
+        displayId: entry.display.id,
+        ready: active.ready.size,
+        pending: active.pending.size,
+        error: serializeErrorForLog(error),
+      })
       active.pending.delete(entry.display.id)
       active.ready.delete(entry.display.id)
       this.#retire(entry)

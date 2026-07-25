@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { matchTurnScope } from './stream-state'
+import { matchTurnScope } from './turn-scope'
 
 describe('matchTurnScope', () => {
   it('latches identifiers when events beat the command response', () => {

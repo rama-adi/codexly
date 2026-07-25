@@ -1,4 +1,7 @@
 import * as React from 'react'
+import { useStore } from 'zustand'
+import { useShallow } from 'zustand/react/shallow'
+import type { StoreApi } from 'zustand/vanilla'
 import {
   ChevronRight,
   Loader2,
@@ -22,29 +25,19 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import type { SessionDetail, SessionSummary } from '../../desktop'
 import { desktopClient } from '../../desktop'
+import { activeTurnId, isBusy, isStreaming } from '../../shared/turn/turn-machine'
+import { useConversationEventBridge } from '../hooks/useConversationEventBridge'
 import { useSettings } from '../hooks/useSettings'
 import { Markdown } from '../lib/markdown'
+import { createConversationActions } from '../store/conversation-actions'
+import { createConversationStore } from '../store/conversation-store'
+import type { ConversationStoreState } from '../store/contract'
 
 interface HistoryPageProps {
   sessions: SessionSummary[]
   available: boolean
   onReactivate: (id: string) => void
   onDelete: (id: string) => Promise<void>
-}
-
-type StreamingTurn = {
-  turnId: string
-  sessionId: string
-  answer: string
-  reasoning: string
-  phase: 'reasoning' | 'answering'
-}
-
-type PendingUserMessage = {
-  id: string
-  sessionId: string
-  content: string
-  createdAt: string
 }
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
@@ -60,49 +53,91 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
   onReactivate,
   onDelete,
 }) => {
-  const [selectedId, setSelectedId] = React.useState<string | null>(
-    sessions[0]?.id ?? null,
+  // Assigned below, once `loadDetail` exists. The store only reads it when a
+  // turn actually ends, which is always after the first render.
+  const onTurnEnded = React.useRef<(sessionId: string) => void>(() => undefined)
+
+  // One store per mount, mirroring the overlay: fresh transcript buffers per
+  // mount keep test runs isolated.
+  const storeRef = React.useRef<StoreApi<ConversationStoreState>>()
+  if (!storeRef.current) {
+    storeRef.current = createConversationStore({
+      transport: { stopTurn: (id) => desktopClient.stopTurn(id) },
+      onTurnEnded: (sessionId) => onTurnEnded.current(sessionId),
+    })
+  }
+  const store = storeRef.current
+
+  const actions = React.useMemo(
+    () =>
+      createConversationActions(store, {
+        sendMessage: (payload) => desktopClient.sendMessage(payload),
+      }),
+    [store],
   )
+
+  const s = useStore(
+    store,
+    useShallow((state) => ({
+      sessionId: state.sessionId,
+      turn: state.turn,
+      answer: state.answer,
+      reasoning: state.reasoning,
+      thinkingExpanded: state.thinkingExpanded,
+      pendingUser: state.pendingUser,
+      composerText: state.composerText,
+      composerError: state.composerError,
+    })),
+  )
+
   const [detail, setDetail] = React.useState<SessionDetail | null>(null)
   const [detailLoading, setDetailLoading] = React.useState(false)
   const [confirmTarget, setConfirmTarget] = React.useState<SessionSummary | null>(null)
   const [deleting, setDeleting] = React.useState(false)
-
-  const { settings } = useSettings()
-  const modelId = settings?.assistant.model
-
-  const [composerText, setComposerText] = React.useState('')
-  const [sending, setSending] = React.useState(false)
-  const [pendingUser, setPendingUser] = React.useState<PendingUserMessage | null>(null)
-  const [streamingTurn, setStreamingTurn] = React.useState<StreamingTurn | null>(null)
-  const [composerError, setComposerError] = React.useState<string | null>(null)
-  const [thinkingExpanded, setThinkingExpanded] = React.useState(true)
   // Resolved image previews for message attachments, keyed by attachment id.
   const [attachmentPreviews, setAttachmentPreviews] = React.useState<
     Record<string, { name: string; preview: string }>
   >({})
 
-  const selectedIdRef = React.useRef(selectedId)
-  selectedIdRef.current = selectedId
+  const { settings } = useSettings()
+  const modelId = settings?.assistant.model
 
   const scrollAnchorRef = React.useRef<HTMLDivElement | null>(null)
   const conversationRef = React.useRef<HTMLDivElement | null>(null)
 
-  const isStreamingCurrent =
-    streamingTurn !== null && streamingTurn.sessionId === selectedId
+  const streaming = isStreaming(s.turn)
+  const busy = isBusy(s.turn)
+  const stopTurnId = activeTurnId(s.turn)
+  const selectedId = s.sessionId
 
-  // Keep a valid selection as the session list changes.
+  const loadDetail = React.useCallback(
+    (sessionId: string) => {
+      desktopClient
+        .getSession(sessionId)
+        .then((next) => {
+          if (store.getState().sessionId === sessionId) setDetail(next)
+        })
+        .catch(() => undefined)
+    },
+    [store],
+  )
+  onTurnEnded.current = loadDetail
+
+  useConversationEventBridge(store)
+
+  // Keep a valid selection as the session list changes. Switching sessions
+  // abandons any in-flight turn in the store (it keeps running, and the refetch
+  // below brings in whatever got persisted).
   React.useEffect(() => {
+    const current = store.getState().sessionId
     if (sessions.length === 0) {
-      setSelectedId(null)
+      store.getState().selectSession(null)
       return
     }
-    setSelectedId((current) =>
-      current && sessions.some((session) => session.id === current)
-        ? current
-        : sessions[0].id,
-    )
-  }, [sessions])
+    if (!current || !sessions.some((session) => session.id === current)) {
+      store.getState().selectSession(sessions[0].id)
+    }
+  }, [sessions, store])
 
   React.useEffect(() => {
     if (!selectedId || !available) {
@@ -127,14 +162,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
     }
   }, [selectedId, available, sessions])
 
-  // Switching sessions drops any in-flight composer state for the previous
-  // one; the refetch above brings in whatever got persisted server-side.
   React.useEffect(() => {
-    setPendingUser(null)
-    setStreamingTurn(null)
-    setComposerError(null)
-    setSending(false)
-    setThinkingExpanded(true)
     setAttachmentPreviews({})
   }, [selectedId])
 
@@ -165,113 +193,23 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
   }, [detail, available, attachmentPreviews])
 
   React.useEffect(() => {
-    if (!available) return
-    const unsubscribe = desktopClient.onProductEvent((event) => {
-      const currentId = selectedIdRef.current
-      switch (event.type) {
-        case 'transcript.reasoning': {
-          if (event.sessionId !== currentId) return
-          setStreamingTurn((current) => {
-            if (current && current.turnId !== event.turnId) return current
-            const base: StreamingTurn = current ?? {
-              turnId: event.turnId,
-              sessionId: event.sessionId,
-              answer: '',
-              reasoning: '',
-              phase: 'reasoning',
-            }
-            return { ...base, reasoning: base.reasoning + event.text, phase: 'reasoning' }
-          })
-          setThinkingExpanded(true)
-          return
-        }
-        case 'transcript.delta': {
-          if (event.sessionId !== currentId) return
-          setStreamingTurn((current) => {
-            const base: StreamingTurn = current ?? {
-              turnId: event.turnId,
-              sessionId: event.sessionId,
-              answer: '',
-              reasoning: '',
-              phase: 'answering',
-            }
-            if (base.turnId !== event.turnId && current) return current
-            return { ...base, answer: base.answer + event.text, phase: 'answering' }
-          })
-          setThinkingExpanded(false)
-          return
-        }
-        case 'transcript.complete': {
-          if (event.sessionId !== currentId) return
-          setStreamingTurn(null)
-          setPendingUser(null)
-          setSending(false)
-          desktopClient
-            .getSession(event.sessionId)
-            .then((next) => {
-              if (selectedIdRef.current === event.sessionId) setDetail(next)
-            })
-            .catch(() => undefined)
-          return
-        }
-        case 'transcript.failed': {
-          if (event.sessionId !== currentId) return
-          setStreamingTurn(null)
-          setSending(false)
-          setComposerError(event.message)
-          return
-        }
-        default:
-          return
-      }
-    })
-    return unsubscribe
-  }, [available])
-
-  React.useEffect(() => {
-    if (!isStreamingCurrent && !pendingUser) return
+    if (!streaming && !s.pendingUser) return
     scrollAnchorRef.current?.scrollIntoView({ block: 'end' })
-  }, [streamingTurn?.answer, streamingTurn?.reasoning, pendingUser, isStreamingCurrent])
+  }, [s.answer, s.reasoning, s.pendingUser, streaming])
 
   const canSend = Boolean(
-    available && selectedId && modelId && composerText.trim() && !sending && !isStreamingCurrent,
+    available && selectedId && modelId && s.composerText.trim() && !busy,
   )
 
-  const handleSend = async () => {
-    const message = composerText.trim()
-    if (!message || !selectedId || !modelId || sending || isStreamingCurrent) return
-    setComposerError(null)
-    setComposerText('')
-    setSending(true)
-    setPendingUser({
-      id: `pending-${Date.now()}`,
-      sessionId: selectedId,
-      content: message,
-      createdAt: new Date().toISOString(),
-    })
-    try {
-      await desktopClient.sendMessage({
-        sessionId: selectedId,
-        message,
-        modelId,
-        attachmentIds: [],
-      })
-    } catch (cause) {
-      setSending(false)
-      setPendingUser(null)
-      setComposerError(cause instanceof Error ? cause.message : 'The message could not be sent.')
-      setComposerText(message)
-    }
-  }
-
-  const handleStop = () => {
-    if (streamingTurn) void desktopClient.stopTurn(streamingTurn.turnId)
+  const handleSend = () => {
+    if (!canSend || !modelId) return
+    void actions.send(modelId)
   }
 
   const handleComposerKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
-      if (canSend) void handleSend()
+      handleSend()
     }
   }
 
@@ -310,7 +248,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                 <button
                   key={session.id}
                   type="button"
-                  onClick={() => setSelectedId(session.id)}
+                  onClick={() => store.getState().selectSession(session.id)}
                   className={cn(
                     'flex w-full flex-col items-start gap-0.5 border-b border-border px-4 py-3 text-left transition-colors',
                     active ? 'bg-card' : 'hover:bg-card/60',
@@ -375,8 +313,8 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                 {detail.messages.filter((message) =>
                   message.role === 'user' || message.role === 'assistant',
                 ).length === 0 &&
-                !pendingUser &&
-                !isStreamingCurrent ? (
+                !s.pendingUser &&
+                !streaming ? (
                   <p className="py-10 text-center text-sm text-muted-foreground">
                     This session has no messages yet.
                   </p>
@@ -432,41 +370,43 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                     ))
                 )}
 
-                {pendingUser && pendingUser.sessionId === selectedId && (
+                {s.pendingUser && (
                   <div className="flex justify-end">
                     <div className="max-w-[86%] rounded-2xl bg-primary px-3.5 py-2.5 text-sm leading-relaxed text-primary-foreground">
-                      <p className="whitespace-pre-wrap">{pendingUser.content}</p>
+                      <p className="whitespace-pre-wrap">{s.pendingUser.content}</p>
                     </div>
                   </div>
                 )}
 
-                {isStreamingCurrent && (
+                {streaming && (
                   <div className="flex justify-start">
                     <div className="max-w-[86%] rounded-2xl border border-border bg-card px-3.5 py-2.5 text-sm leading-relaxed text-card-foreground">
-                      {streamingTurn && streamingTurn.reasoning && (
+                      {s.reasoning && (
                         <div className="mb-2 border-b border-border/60 pb-2">
                           <button
                             type="button"
-                            onClick={() => setThinkingExpanded((current) => !current)}
+                            onClick={() =>
+                              store.getState().set({ thinkingExpanded: !s.thinkingExpanded })
+                            }
                             className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground"
                           >
                             <ChevronRight
                               className={cn(
                                 'size-3 transition-transform',
-                                thinkingExpanded && 'rotate-90',
+                                s.thinkingExpanded && 'rotate-90',
                               )}
                             />
                             Thinking
                           </button>
-                          {thinkingExpanded && (
+                          {s.thinkingExpanded && (
                             <p className="mt-1 whitespace-pre-wrap text-xs italic leading-relaxed text-muted-foreground">
-                              {streamingTurn.reasoning}
+                              {s.reasoning}
                             </p>
                           )}
                         </div>
                       )}
-                      {streamingTurn?.answer ? (
-                        <Markdown text={streamingTurn.answer} />
+                      {s.answer ? (
+                        <Markdown text={s.answer} />
                       ) : (
                         <div className="flex items-center gap-2 text-muted-foreground">
                           <Loader2 className="size-3.5 animate-spin" />
@@ -480,34 +420,37 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
               </div>
             </div>
 
-            {composerError && (
+            {s.composerError && (
               <div className="mx-6 mb-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                {composerError}
+                {s.composerError}
               </div>
             )}
 
             <div className="shrink-0 border-t border-border px-6 py-3">
               <div className="mx-auto flex w-full max-w-3xl items-end gap-2">
                 <Textarea
-                  value={composerText}
-                  onChange={(event) => setComposerText(event.target.value)}
+                  value={s.composerText}
+                  onChange={(event) =>
+                    store.getState().set({ composerText: event.target.value })
+                  }
                   onKeyDown={handleComposerKeyDown}
                   placeholder={
                     available
                       ? 'Send a message to continue this conversation…'
                       : 'The desktop runtime is unavailable.'
                   }
-                  disabled={!available || sending || isStreamingCurrent}
+                  disabled={!available || busy}
                   className="min-h-[44px] max-h-40 flex-1 resize-none"
                   rows={1}
                 />
-                {isStreamingCurrent ? (
+                {busy ? (
                   <Button
                     type="button"
                     variant="outline"
                     size="icon-sm"
                     aria-label="Stop generating"
-                    onClick={handleStop}
+                    disabled={!stopTurnId}
+                    onClick={() => actions.stop()}
                   >
                     <Square />
                   </Button>
@@ -517,7 +460,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                     size="icon-sm"
                     aria-label="Send message"
                     disabled={!canSend}
-                    onClick={() => void handleSend()}
+                    onClick={handleSend}
                   >
                     <Send />
                   </Button>

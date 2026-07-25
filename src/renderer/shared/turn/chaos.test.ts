@@ -292,29 +292,44 @@ describe('chaos — conflicting commandSettled', () => {
   })
 })
 
-describe('chaos — overlayReset', () => {
+describe('chaos — reset', () => {
   it('stops the active turn while active', () => {
     const active = runInputs([
       { type: 'initiate', kind: 'chat' },
       { type: 'started', kind: 'chat', sessionId: 's1', turnId: 't1' },
     ]).state
-    const reset = reduceTurn(active, { type: 'overlayReset' })
+    const reset = reduceTurn(active, { type: 'reset', stopActive: true })
     expect(reset.state.phase).toBe('idle')
     expect(stopTurnIds([...reset.effects])).toEqual(['t1'])
     expect(reset.state.ignoredTurnIds).toContain('t1')
   })
 
   it('is a pure no-op (no effects) while idle', () => {
-    const reset = reduceTurn(IDLE_TURN, { type: 'overlayReset' })
+    const reset = reduceTurn(IDLE_TURN, { type: 'reset', stopActive: true })
     expect(reset.state.phase).toBe('idle')
     expect(reset.effects).toEqual([])
   })
 
   it('while active before the turnId is known emits no stop', () => {
     const active = runInputs([{ type: 'initiate', kind: 'chat' }]).state
-    const reset = reduceTurn(active, { type: 'overlayReset' })
+    const reset = reduceTurn(active, { type: 'reset', stopActive: true })
     expect(reset.state.phase).toBe('idle')
     expect(stopTurnIds([...reset.effects])).toEqual([])
+  })
+
+  it('abandons without stopping when stopActive is false, and still retires the id', () => {
+    const active = runInputs([
+      { type: 'initiate', kind: 'chat' },
+      { type: 'started', kind: 'chat', sessionId: 's1', turnId: 't1' },
+    ]).state
+    const reset = reduceTurn(active, { type: 'reset', stopActive: false })
+    expect(reset.state.phase).toBe('idle')
+    expect(reset.effects).toEqual([])
+    // The turn keeps running remotely, but its late events can never be applied.
+    expect(reset.state.ignoredTurnIds).toContain('t1')
+    expect(
+      reduceTurn(reset.state, { type: 'streamEvent', sessionId: 's1', turnId: 't1' }).accepted,
+    ).toBe(false)
   })
 })
 
@@ -332,7 +347,7 @@ describe('invariant 1 — no stop effects when idle', () => {
     { type: 'dismiss' },
     { type: 'stopSettled', ok: true },
     { type: 'stopSettled', ok: false },
-    { type: 'overlayReset' },
+    { type: 'reset', stopActive: true },
     { type: 'started', kind: 'solve', sessionId: 's1', turnId: 't1' },
   ]
 

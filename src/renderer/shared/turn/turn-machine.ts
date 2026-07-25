@@ -1,9 +1,10 @@
-import { matchTurnScope, type TurnScope } from '../stream-state'
+import { matchTurnScope, type TurnScope } from './turn-scope'
 
 /**
- * The overlay's turn lifecycle, modeled as a pure state machine.
+ * A renderer surface's turn lifecycle, modeled as a pure state machine. Both the
+ * overlay and the homepage history view drive this same reducer.
  *
- * The overlay reconciles THREE independent async sources that race to define a
+ * A surface reconciles THREE independent async sources that race to define a
  * single Codex turn's identity, while the user can preempt at any moment:
  *
  *   1. the optimistic local request (created before the IPC command resolves),
@@ -15,6 +16,9 @@ import { matchTurnScope, type TurnScope } from '../stream-state'
  * {@link TurnEffect} descriptors for the caller to interpret. This is what makes
  * the machine exhaustively chaos-testable — feed it any adversarial ordering of
  * inputs and assert on the resulting state + effects without touching IPC.
+ *
+ * Nothing here knows about screenshots, panels, or views: the surface-specific
+ * projection lives in each renderer's store.
  */
 
 export type TurnKind = 'solve' | 'chat'
@@ -43,7 +47,7 @@ export interface TurnState {
   /**
    * Turn ids that completed, failed, or were force-stopped. Late events for
    * these ids are dropped, and they can never spawn a fresh request. Bounded so
-   * a long-lived overlay never grows this set without bound.
+   * a long-lived window never grows this set without bound.
    */
   readonly ignoredTurnIds: readonly string[]
 }
@@ -78,8 +82,13 @@ export type TurnInput =
   | { type: 'dismiss' }
   /** A previously-emitted stopTurn effect resolved. */
   | { type: 'stopSettled'; ok: boolean }
-  /** The overlay was re-summoned or switched sessions. */
-  | { type: 'overlayReset' }
+  /**
+   * The surface was re-summoned or switched sessions, so it stops tracking the
+   * current turn. `stopActive` decides whether the remote turn is torn down with
+   * it (the overlay owns its single turn and stops it) or merely abandoned (the
+   * homepage leaves a background turn running so it still persists).
+   */
+  | { type: 'reset'; stopActive: boolean }
 
 export type TurnEffect =
   | { type: 'stopTurn'; turnId: string }
@@ -106,6 +115,16 @@ function retire(ignored: readonly string[], turnId: string): readonly string[] {
   return next.length > MAX_IGNORED_TURN_IDS
     ? next.slice(next.length - MAX_IGNORED_TURN_IDS)
     : next
+}
+
+/**
+ * True when `turnId` is retired AND is not the id this request already owns:
+ * taking it on would bind the live request to an identity whose events are
+ * permanently ignored. The latched-id case is excluded because a turn retires
+ * itself on `terminal`, and its own `commandSettled` still has to reconcile it.
+ */
+function adoptsRetiredId(state: TurnState, turnId: string): boolean {
+  return state.scope.turnId !== turnId && state.ignoredTurnIds.includes(turnId)
 }
 
 function idleWith(ignored: readonly string[]): TurnState {
@@ -158,6 +177,10 @@ export function reduceTurn(state: TurnState, input: TurnInput): TurnResult {
           { accepted: true, freshStart: true },
         )
       }
+      // A late `started` for a RETIRED turn must not latch its dead id onto the
+      // live request: every stream/terminal event for that id is dropped, so the
+      // request could never be completed by the stream again.
+      if (adoptsRetiredId(state, input.turnId)) return result(state)
       const scope = matchTurnScope(state.scope, input)
       if (!scope) return result(state)
       const next = { ...state, scope }
@@ -172,7 +195,11 @@ export function reduceTurn(state: TurnState, input: TurnInput): TurnResult {
 
     case 'commandSettled': {
       if (state.phase === 'idle') return result(state)
-      const scope = matchTurnScope(state.scope, input)
+      // Adopting a retired id would wedge the request (its stream events are all
+      // dropped), so it counts as an unreconcilable identity.
+      const scope = adoptsRetiredId(state, input.turnId)
+        ? undefined
+        : matchTurnScope(state.scope, input)
       if (!scope) {
         // The command returned an identity we cannot reconcile with what the
         // event stream already latched — stop the conflicting turn and reset.
@@ -271,12 +298,12 @@ export function reduceTurn(state: TurnState, input: TurnInput): TurnResult {
       return result({ ...cleared, dismissed: false })
     }
 
-    case 'overlayReset': {
+    case 'reset': {
       if (state.phase === 'idle') return result(idleWith(state.ignoredTurnIds))
       const turnId = state.scope.turnId
       const ignored = turnId ? retire(state.ignoredTurnIds, turnId) : state.ignoredTurnIds
       return result(idleWith(ignored), {
-        effects: turnId ? [{ type: 'stopTurn', turnId }] : [],
+        effects: input.stopActive && turnId ? [{ type: 'stopTurn', turnId }] : [],
       })
     }
   }
@@ -287,7 +314,7 @@ export function reduceTurn(state: TurnState, input: TurnInput): TurnResult {
 export const isActive = (s: TurnState): boolean => s.phase === 'active'
 /** The stream indicator: a request is running and has not terminated. */
 export const isStreaming = (s: TurnState): boolean => s.phase === 'active' && !s.terminal
-/** The command is in flight / the overlay is working. */
+/** The command is in flight / the surface is working. */
 export const isBusy = (s: TurnState): boolean => s.phase === 'active'
 /**
  * The active turn id while it can still be stopped — known, not terminal, and

@@ -15,6 +15,12 @@ import type {
   CodexProviderLease,
   ProviderRevisionInput,
 } from './codex-provider-manager'
+import { createScope } from '../effects/scope'
+import { logger } from '../shared/logger'
+import {
+  ProviderTimeoutError,
+  toTaggedProviderError,
+} from './provider-errors'
 import {
   buildPrompt,
   buildPromptAttachments,
@@ -27,6 +33,14 @@ import {
   type TurnEventEnvelope,
   type TurnTerminalState,
 } from './turn-controller'
+
+const log = logger.child('conversation')
+
+/** Initial attempt plus one stale-thread, one minimal-effort and one timeout retry. */
+const MAX_TURN_ATTEMPTS = 4
+
+/** How long a turn may produce no stream part at all before it is retried. */
+const DEFAULT_FIRST_TOKEN_TIMEOUT_MS = 60_000
 
 export interface ConversationThreadStore {
   getThreadId(conversationId: string): Promise<string | null>
@@ -70,6 +84,8 @@ export interface ConversationRuntimeOptions {
   generateTurnId?: () => string
   now?: () => Date
   interruptTimeoutMs?: number
+  /** First-token watchdog window; defaults to {@link DEFAULT_FIRST_TOKEN_TIMEOUT_MS}. */
+  firstTokenTimeoutMs?: number
 }
 
 type EventListener = (event: TurnEventEnvelope) => void
@@ -86,6 +102,7 @@ export class ConversationRuntime {
   readonly #generateTurnId: () => string
   readonly #now?: () => Date
   readonly #interruptTimeoutMs?: number
+  readonly #firstTokenTimeoutMs: number
   readonly #listeners = new Set<EventListener>()
   readonly #activeByConversation = new Map<string, ActiveTurn>()
   readonly #activeByTurn = new Map<string, ActiveTurn>()
@@ -106,6 +123,8 @@ export class ConversationRuntime {
     this.#generateTurnId = options.generateTurnId ?? randomUUID
     this.#now = options.now
     this.#interruptTimeoutMs = options.interruptTimeoutMs
+    this.#firstTokenTimeoutMs =
+      options.firstTokenTimeoutMs ?? DEFAULT_FIRST_TOKEN_TIMEOUT_MS
   }
 
   subscribe(listener: EventListener): () => void {
@@ -285,10 +304,33 @@ export class ConversationRuntime {
       let effort = input.reasoningEffort as ReasoningEffort | undefined
       let staleRetried = false
       let minimalEffortRetried = false
-      // At most three attempts: initial, one stale-thread retry, one minimal→low
-      // effort retry. Every iteration returns, continues on a retry, or throws.
-      for (let attempt = 0; attempt < 3; attempt += 1) {
+      let firstTokenRetried = false
+      // At most four attempts: initial, one stale-thread retry, one minimal→low
+      // effort retry, one first-token-timeout retry. Every iteration returns,
+      // continues on a retry, or throws.
+      for (let attempt = 0; attempt < MAX_TURN_ATTEMPTS; attempt += 1) {
+        // Per-attempt abort so the watchdog can end a silent attempt without
+        // cancelling the turn; a real turn abort is forwarded into it.
+        const attemptScope = createScope({ label: `turn-attempt:${active.controller.generation}` })
+        const attemptAbort = new AbortController()
+        let timedOut: ProviderTimeoutError | null = null
         try {
+          if (abortController.signal.aborted) {
+            attemptAbort.abort(abortController.signal.reason)
+          }
+          const forwardAbort = () => attemptAbort.abort(abortController.signal.reason)
+          abortController.signal.addEventListener('abort', forwardAbort, { once: true })
+          attemptScope.defer(() =>
+            abortController.signal.removeEventListener('abort', forwardAbort),
+          )
+          const watchdog = setTimeout(() => {
+            timedOut = new ProviderTimeoutError(
+              `Codex produced no output within ${this.#firstTokenTimeoutMs}ms.`,
+            )
+            attemptAbort.abort(timedOut)
+          }, this.#firstTokenTimeoutMs)
+          attemptScope.defer(() => clearTimeout(watchdog))
+
           // Keep model-construction settings stable per conversation. In
           // persistent mode the provider then reuses one language-model/session
           // wrapper while all wrappers share the provider's single RPC client.
@@ -316,13 +358,14 @@ export class ConversationRuntime {
               },
             ],
             maxRetries: 0,
-            abortSignal: abortController.signal,
+            abortSignal: attemptAbort.signal,
             providerOptions: {
               'codex-app-server': providerOptions as unknown as Record<string, JSONValue>,
             },
           })
 
           for await (const part of result.stream) {
+            clearTimeout(watchdog)
             if (!this.#isCurrent(input.conversationId, active)) {
               break
             }
@@ -334,27 +377,47 @@ export class ConversationRuntime {
             await active.controller.completed(finishReason)
           }
           return
-        } catch (error) {
-          if (!staleRetried && existingThreadId && isStaleThreadError(error)) {
-            staleRetried = true
-            existingThreadId = null
-            this.#sessions.delete(input.conversationId)
-            await this.#threads.setThreadId(input.conversationId, null)
-            this.#persistedThreadIds.set(input.conversationId, null)
-            continue
-          }
-          // Some models reject 'minimal' reasoning effort when tools are active.
-          // Retry once at 'low' effort, matching the legacy behavior.
-          if (
-            !minimalEffortRetried &&
-            effort === 'minimal' &&
-            isMinimalToolIncompatibilityError(error)
-          ) {
-            minimalEffortRetried = true
-            effort = 'low'
-            continue
+        } catch (rawError) {
+          // The watchdog aborts the attempt, so the stream reports a generic
+          // abort; the recorded timeout is the accurate cause.
+          const error = toTaggedProviderError(timedOut ?? rawError)
+          switch (error._tag) {
+            case 'StaleThreadError':
+              if (!staleRetried && existingThreadId) {
+                staleRetried = true
+                existingThreadId = null
+                this.#sessions.delete(input.conversationId)
+                await this.#threads.setThreadId(input.conversationId, null)
+                this.#persistedThreadIds.set(input.conversationId, null)
+                continue
+              }
+              break
+            case 'MinimalEffortUnsupportedError':
+              // Some models reject 'minimal' reasoning effort when tools are
+              // active. Retry once at 'low' effort, matching legacy behavior.
+              if (!minimalEffortRetried && effort === 'minimal') {
+                minimalEffortRetried = true
+                effort = 'low'
+                continue
+              }
+              break
+            case 'ProviderTimeoutError':
+              if (!firstTokenRetried && !abortController.signal.aborted) {
+                firstTokenRetried = true
+                log.warn('no first token before the watchdog fired; retrying the turn', {
+                  conversationId: input.conversationId,
+                  modelId: input.modelId,
+                  firstTokenTimeoutMs: this.#firstTokenTimeoutMs,
+                })
+                continue
+              }
+              break
+            case 'ProviderRequestError':
+              break
           }
           throw error
+        } finally {
+          await attemptScope.close('attempt finished')
         }
       }
     } catch (error) {
@@ -419,19 +482,6 @@ export class ConversationRuntime {
       }
     }
   }
-}
-
-function isStaleThreadError(value: unknown): boolean {
-  // Codex has phrased this differently across releases:
-  //   "thread '<id>' not found"  (≤0.13x)
-  //   "no rollout found for thread id <id>"  (0.14x)
-  return /thread ['"]?.+['"]? not found|no rollout found for thread/i.test(errorMessage(value))
-}
-
-function isMinimalToolIncompatibilityError(value: unknown): boolean {
-  return /reasoning\.effort ['"]minimal['"]|cannot be used with reasoning\.effort/i.test(
-    errorMessage(value),
-  )
 }
 
 function normalizeModelOption(model: Record<string, unknown>): ModelOption | null {

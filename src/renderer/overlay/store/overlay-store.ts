@@ -6,7 +6,7 @@ import {
   reduceTurn,
   type TurnInput,
   type TurnResult,
-} from '../machine/turn-machine'
+} from '../../shared/turn/turn-machine'
 import type { Attachment, ModelChoice, ToolActivity } from '../types'
 import {
   MAX_ATTACHMENTS,
@@ -171,20 +171,38 @@ export function createOverlayStore(
         setState({ answer: '', reasoning: '', streamError: undefined })
       },
 
+      replaceTranscript: ({ answer, reasoning }) => {
+        cancelFrame()
+        answerBuffer = answer
+        reasoningBuffer = reasoning
+        renderTranscript()
+      },
+
       // --- tool activity reconciliation -------------------------------------
       applyToolStatus: (event: ToolStatusEvent) => {
         const key = event.activityId ?? event.name
         const current = getState().activities
         const index = current.findIndex((activity) => activity.key === key)
+        const existing = index >= 0 ? current[index] : undefined
+        // A status the transport reordered must not roll an existing row back to
+        // an older state. The row's identity is already established, so dropping
+        // the stale state is safe — unlike skipping a status for an unseen
+        // activity, which would lose the row entirely.
+        const stale =
+          existing !== undefined &&
+          existing.sequence !== undefined &&
+          event.sequence !== undefined &&
+          event.sequence <= existing.sequence
         const next: ToolActivity = {
           key,
-          activityId: event.activityId,
-          name: event.name,
-          state: event.state,
-          detail: event.detail,
+          activityId: event.activityId ?? existing?.activityId,
+          name: stale ? existing.name : event.name,
+          state: stale ? existing.state : event.state,
+          detail: stale ? existing.detail : event.detail,
+          sequence: stale ? existing.sequence : event.sequence,
           output:
             (event.activityId && pendingToolOutputs.get(event.activityId)) ??
-            (index >= 0 ? current[index].output : undefined),
+            existing?.output,
         }
         if (event.activityId) pendingToolOutputs.delete(event.activityId)
         if (index >= 0) {
@@ -216,6 +234,27 @@ export function createOverlayStore(
         })
       },
 
+      replaceToolOutputs: (outputs) => {
+        const byActivity = new Map(outputs.map((output) => [output.activityId, output.text]))
+        setState({
+          activities: getState().activities.map((activity) =>
+            activity.activityId !== undefined && byActivity.has(activity.activityId)
+              ? { ...activity, output: byActivity.get(activity.activityId) }
+              : activity,
+          ),
+        })
+        // Output whose status event has not arrived yet stays buffered, so
+        // applyToolStatus attaches the authoritative text when it does.
+        const known = new Set(
+          getState()
+            .activities.map((activity) => activity.activityId)
+            .filter((id): id is string => id !== undefined),
+        )
+        for (const [activityId, text] of byActivity) {
+          if (!known.has(activityId)) pendingToolOutputs.set(activityId, text)
+        }
+      },
+
       clearActivities: () => setState({ activities: [] }),
 
       // --- attachment queue reconciliation ----------------------------------
@@ -235,15 +274,16 @@ export function createOverlayStore(
       mergeLoadedAttachments: (loaded: Attachment[]) => {
         if (attachmentLoadInvalidated) return
         const current = getState().attachments
-        const currentIds = new Set(current.map((item) => item.id))
-        setState({
-          attachments: [
-            ...current,
-            ...loaded.filter(
-              (item) => !removedAttachmentIds.has(item.id) && !currentIds.has(item.id),
-            ),
-          ].slice(0, MAX_ATTACHMENTS),
-        })
+        // `seen` grows as the batch is walked, so a batch that repeats an id
+        // cannot land the same screenshot in the queue twice.
+        const seen = new Set(current.map((item) => item.id))
+        const additions: Attachment[] = []
+        for (const item of loaded) {
+          if (removedAttachmentIds.has(item.id) || seen.has(item.id)) continue
+          seen.add(item.id)
+          additions.push(item)
+        }
+        setState({ attachments: [...current, ...additions].slice(0, MAX_ATTACHMENTS) })
       },
 
       clearAttachments: () => {

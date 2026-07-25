@@ -1,5 +1,6 @@
 import type { CodexAppServerSession } from 'ai-sdk-provider-codex-cli'
 
+import { withTimeout } from '../effects/with-timeout'
 import {
   normalizeCodexEvent,
   type NormalizedCodexEvent,
@@ -144,7 +145,13 @@ export class TurnController {
     this.#abortController.abort(new Error(reason))
     const session = this.#session
     if (session?.isActive()) {
-      await withTimeout(session.interrupt(), this.#interruptTimeoutMs)
+      // A provider interrupt that hangs or fails must not hold up the abort:
+      // the terminal state is already claimed above.
+      await withTimeout(
+        session.interrupt().catch(() => undefined),
+        this.#interruptTimeoutMs,
+        () => undefined,
+      )
     }
     await this.#emit({ type: 'turn.interrupted', reason })
     return true
@@ -202,22 +209,6 @@ export class TurnController {
       occurredAt: this.#now().toISOString(),
       event,
     })
-  }
-}
-
-async function withTimeout(operation: Promise<unknown>, timeoutMs: number) {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    await Promise.race([
-      operation.catch(() => undefined),
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, timeoutMs)
-      }),
-    ])
-  } finally {
-    if (timer) {
-      clearTimeout(timer)
-    }
   }
 }
 

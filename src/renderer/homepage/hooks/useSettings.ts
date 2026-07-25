@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 
 import type { CanonicalSettings } from '../../../shared/schemas/settings'
 import { desktopClient } from '../../desktop'
@@ -33,7 +33,12 @@ export interface UseSettingsResult {
   update: (patch: SettingsPatch) => Promise<CanonicalSettings | null>
 }
 
-export function useSettings(): UseSettingsResult {
+/**
+ * The window's single settings subscription. Mounted exactly once, by
+ * `SettingsProvider`; every consumer reads it through {@link useSettings} so a
+ * window never holds two independent copies of the canonical settings.
+ */
+export function useSettingsSource(): UseSettingsResult {
   const [settings, setSettings] = useState<CanonicalSettings | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -96,6 +101,14 @@ export function useSettings(): UseSettingsResult {
   )
 
   return { settings, loading, saving, error, update }
+}
+
+export const SettingsContext = createContext<UseSettingsResult | null>(null)
+
+export function useSettings(): UseSettingsResult {
+  const value = useContext(SettingsContext)
+  if (!value) throw new Error('useSettings requires a <SettingsProvider> ancestor.')
+  return value
 }
 
 function errorText(cause: unknown): string {

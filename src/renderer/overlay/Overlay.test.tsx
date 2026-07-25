@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   createSession: vi.fn(async () => ({ id: 'session-reset' })),
   sendMessage: vi.fn(),
   stopTurn: vi.fn(async () => true),
+  transcriptSnapshot: vi.fn(),
   discardAttachment: vi.fn(async () => undefined),
   listAttachments: vi.fn(async () => [
     { id: 'shot-1', name: 'Screenshot.png', preview: 'data:image/png;base64,eA==' },
@@ -42,6 +43,7 @@ vi.mock('../desktop', () => ({
     discardAttachment: mocks.discardAttachment,
     sendMessage: mocks.sendMessage,
     stopTurn: mocks.stopTurn,
+    transcriptSnapshot: mocks.transcriptSnapshot,
     openHome: vi.fn(),
     toggleOverlay: vi.fn(),
   },
@@ -81,6 +83,7 @@ beforeEach(() => {
   mocks.clearAttachments.mockResolvedValue(undefined)
   mocks.createSession.mockResolvedValue({ id: 'session-reset' })
   mocks.stopTurn.mockResolvedValue(true)
+  mocks.transcriptSnapshot.mockResolvedValue(null)
   mocks.discardAttachment.mockResolvedValue(undefined)
   mocks.listAttachments.mockResolvedValue([
     { id: 'shot-1', name: 'Screenshot.png', preview: 'data:image/png;base64,eA==' },
@@ -493,5 +496,76 @@ describe('overlay failure recovery and external commands', () => {
     )
 
     expect(screen.queryByAltText('Screenshot 1')).not.toBeInTheDocument()
+  })
+})
+
+describe('overlay transcript gap recovery', () => {
+  it('replaces a transcript with a dropped middle by the authoritative snapshot', async () => {
+    const command = deferred<{ sessionId: string; turnId: string }>()
+    mocks.solvePending.mockReturnValue(command.promise)
+    mocks.transcriptSnapshot.mockResolvedValue({
+      turnId: 'turn-gap',
+      sessionId: 'session-gap',
+      origin: 'overlay',
+      sequence: 4,
+      answer: 'The whole answer, middle included.',
+      reasoning: 'full reasoning',
+      toolOutputs: [{ activityId: 'tool-1', text: 'authoritative output' }],
+      live: true,
+    })
+    await startSolve()
+    const scope = { sessionId: 'session-gap', turnId: 'turn-gap' }
+
+    emit({
+      type: 'tool.status',
+      origin: 'overlay',
+      ...scope,
+      sequence: 1,
+      activityId: 'tool-1',
+      name: 'Inspect screenshot',
+      state: 'running',
+    })
+    emit({ type: 'transcript.delta', origin: 'overlay', ...scope, sequence: 2, text: 'The ' })
+    // Sequence 3 was dropped by the transport; 4 must not be appended onto it.
+    emit({ type: 'transcript.delta', origin: 'overlay', ...scope, sequence: 4, text: 'included.' })
+
+    expect(await screen.findByText('The whole answer, middle included.')).toBeVisible()
+    expect(mocks.transcriptSnapshot).toHaveBeenCalledWith('turn-gap')
+
+    // The recovered text survives the terminal event and the tool output pane
+    // shows the authoritative copy rather than the partial one.
+    emit({ type: 'transcript.complete', origin: 'overlay', ...scope, sequence: 5 })
+    expect(screen.getByText('The whole answer, middle included.')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: /Inspect screenshot/i }))
+    expect(screen.getByText('authoritative output')).toBeVisible()
+  })
+
+  it('recovers on a transport gap marker before settling the turn', async () => {
+    const command = deferred<{ sessionId: string; turnId: string }>()
+    mocks.solvePending.mockReturnValue(command.promise)
+    mocks.transcriptSnapshot.mockResolvedValue({
+      turnId: 'turn-marker',
+      sessionId: 'session-marker',
+      origin: 'overlay',
+      sequence: 6,
+      answer: 'Restored from the snapshot.',
+      reasoning: '',
+      toolOutputs: [],
+      live: false,
+    })
+    await startSolve()
+    const scope = { sessionId: 'session-marker', turnId: 'turn-marker' }
+
+    emit({ type: 'transcript.delta', origin: 'overlay', ...scope, sequence: 1, text: 'partial' })
+    emit({
+      type: 'transcript.gap',
+      origin: 'overlay',
+      ...scope,
+      evictedThrough: 5,
+      droppedCount: 3,
+    })
+    emit({ type: 'transcript.complete', origin: 'overlay', ...scope, sequence: 6 })
+
+    expect(await screen.findByText('Restored from the snapshot.')).toBeVisible()
   })
 })

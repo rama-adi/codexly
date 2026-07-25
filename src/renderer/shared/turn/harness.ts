@@ -1,5 +1,5 @@
 /**
- * Test harness for the overlay turn state machine.
+ * Test harness for the shared turn state machine.
  *
  * Provides:
  *   - `runInputs` / `traceInputs`: fold `reduceTurn` over a sequence, capturing
@@ -64,6 +64,25 @@ export function runInputs(
   const effects = results.flatMap((r) => [...r.effects])
   const state = steps.length ? steps[steps.length - 1].result.state : start
   return { state, effects, results }
+}
+
+/**
+ * Fold `reduceTurn` over `inputs` and, whenever the machine asks for a stop,
+ * immediately feed the successful `stopSettled` back in — the closed loop both
+ * stores' effect interpreters implement. Liveness can only be stated against
+ * this loop, because a stop that is never acknowledged legitimately keeps the
+ * surface busy.
+ */
+export function driveWithStops(start: TurnState, inputs: readonly TurnInput[]): TurnState {
+  let state = start
+  for (const input of inputs) {
+    const result = reduceTurn(state, input)
+    state = result.state
+    if (result.effects.some((effect) => effect.type === 'stopTurn')) {
+      state = reduceTurn(state, { type: 'stopSettled', ok: true }).state
+    }
+  }
+  return state
 }
 
 /** Every `stopTurn` effect id emitted across a set of effects. */
@@ -145,7 +164,7 @@ const INPUT_TYPES: readonly TurnInput['type'][] = [
   'terminal',
   'dismiss',
   'stopSettled',
-  'overlayReset',
+  'reset',
 ]
 
 /** Draw a single random, well-typed input from the pool. */
@@ -172,8 +191,9 @@ export function randomInput(rng: Prng, pool: InputPool = DEFAULT_POOL): TurnInpu
       return { type }
     case 'stopSettled':
       return { type, ok: rng.chance(0.5) }
-    case 'overlayReset':
-      return { type }
+    case 'reset':
+      // Exercise both the tearing-down and the abandoning reset.
+      return { type, stopActive: rng.chance(0.5) }
   }
 }
 
@@ -277,14 +297,14 @@ export function checkInvariants(steps: readonly TurnStep[], seed?: number): stri
     //
     // Two paths are deliberate FORCED teardowns that may re-issue a stop
     // defensively and are therefore exempt:
-    //   - `overlayReset` (user re-summoned / switched sessions), and
+    //   - `reset` (user re-summoned / switched sessions), and
     //   - the `commandSettled` CONFLICT path (an unreconcilable identity), which
     //     is identifiable because it also emits a `reportError`.
     // In both cases stopTurn is expected to be idempotent at the caller. The
     // conflict re-issue only arises from a physically-impossible input (the same
     // turnId reappearing under a different sessionId mid-stop); it is pinned by
     // an explicit named test rather than treated as a machine defect.
-    const forcedTeardown = input.type === 'overlayReset' || effects.some((e) => e.type === 'reportError')
+    const forcedTeardown = input.type === 'reset' || effects.some((e) => e.type === 'reportError')
     for (const s of stops) {
       if (!forcedTeardown && pendingStop === s.turnId) {
         fail(i, `redundant stopTurn for '${s.turnId}' while a stop was already in flight (input '${input.type}')`)

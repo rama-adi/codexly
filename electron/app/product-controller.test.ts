@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import type { TranscriptSnapshot } from '../../src/shared/ipc/product'
+
 vi.mock('electron', () => ({
   app: { once: vi.fn() },
   BrowserWindow: class {},
@@ -28,6 +30,7 @@ import {
   consumePendingAttachmentSnapshot,
   createBoundedAttachmentPreview,
   persistTurnSetupTransaction,
+  retainTranscriptSnapshot,
   persistTerminalBestEffort,
   PRODUCT_SHORTCUT_ACCELERATORS,
   restoreCapturePresentation,
@@ -306,5 +309,43 @@ describe('ProductController terminal presentation', () => {
     expect(result.hasAnswer).toBe(Boolean(row.content))
     if (row.message) expect(result.failureMessage).toContain(row.message)
     else expect(result.failureMessage).toBeUndefined()
+  })
+})
+
+describe('ProductController retained transcript snapshots', () => {
+  const snapshot = (turnId: string): TranscriptSnapshot => ({
+    turnId,
+    sessionId: 'session-1',
+    origin: 'overlay',
+    sequence: 3,
+    answer: `answer-${turnId}`,
+    reasoning: '',
+    toolOutputs: [],
+    live: true,
+  })
+
+  it('marks a retained snapshot as no longer live', () => {
+    const retained = new Map<string, TranscriptSnapshot>()
+    retainTranscriptSnapshot(retained, snapshot('turn-1'))
+    expect(retained.get('turn-1')).toMatchObject({ live: false, answer: 'answer-turn-1' })
+  })
+
+  it('keeps only the most recent turns re-syncable', () => {
+    const retained = new Map<string, TranscriptSnapshot>()
+    for (const turnId of ['turn-1', 'turn-2', 'turn-3']) {
+      retainTranscriptSnapshot(retained, snapshot(turnId), 2)
+    }
+    expect([...retained.keys()]).toEqual(['turn-2', 'turn-3'])
+  })
+
+  it('refreshes a re-retained turn instead of duplicating it', () => {
+    const retained = new Map<string, TranscriptSnapshot>()
+    retainTranscriptSnapshot(retained, snapshot('turn-1'), 2)
+    retainTranscriptSnapshot(retained, snapshot('turn-2'), 2)
+    retainTranscriptSnapshot(retained, { ...snapshot('turn-1'), answer: 'newer' }, 2)
+    retainTranscriptSnapshot(retained, snapshot('turn-3'), 2)
+    // turn-1 was refreshed, so turn-2 is the oldest arrival and the one dropped.
+    expect([...retained.keys()]).toEqual(['turn-1', 'turn-3'])
+    expect(retained.get('turn-1')?.answer).toBe('newer')
   })
 })

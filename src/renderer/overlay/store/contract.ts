@@ -1,5 +1,5 @@
 import type { Shortcuts } from '../../../shared/schemas/settings'
-import type { TurnInput, TurnState } from '../machine/turn-machine'
+import type { TurnInput, TurnState } from '../../shared/turn/turn-machine'
 import type { Attachment, ChatMessage, ModelChoice, ToolActivity, View } from '../types'
 
 /**
@@ -19,7 +19,7 @@ export interface OverlayTransport {
 }
 
 export interface OverlayState {
-  /** The turn lifecycle machine state (see machine/turn-machine.ts). */
+  /** The turn lifecycle machine state (see shared/turn/turn-machine.ts). */
   turn: TurnState
   view: View
   /** Rendered transcript (updated via the batched appendTranscript path). */
@@ -47,6 +47,8 @@ export interface ToolStatusEvent {
   name: string
   state: 'running' | 'complete' | 'error'
   detail?: string
+  /** Transport sequence, when the producer stamped one. Orders status updates. */
+  sequence?: number
 }
 
 export interface ToolOutputEvent {
@@ -65,7 +67,7 @@ export interface OverlayActions {
    * calls dispatch) to decide whether to apply transcript/activity mutations.
    * Returns the full TurnResult so callers can act on `accepted`/`freshStart`.
    */
-  dispatch(input: TurnInput): import('../machine/turn-machine').TurnResult
+  dispatch(input: TurnInput): import('../../shared/turn/turn-machine').TurnResult
 
   /** Shallow-merge for trivial scalar/array fields (view, modelId, models, …). */
   set(partial: Partial<OverlayState>): void
@@ -76,10 +78,18 @@ export interface OverlayActions {
   flushTranscript(): void
   /** Clear transcript buffers + rendered answer/reasoning + streamError. */
   resetTranscript(): void
+  /**
+   * Overwrite the transcript with an authoritative main-side copy. Used when the
+   * event stream is found to have a gap: the locally accumulated text is missing
+   * a middle and cannot be repaired by appending.
+   */
+  replaceTranscript(transcript: { answer: string; reasoning: string }): void
 
   // --- tool activity reconciliation -----------------------------------------
   applyToolStatus(event: ToolStatusEvent): void
   applyToolOutput(event: ToolOutputEvent): void
+  /** Overwrite (rather than append) tool output during a gap recovery. */
+  replaceToolOutputs(outputs: readonly { activityId: string; text: string }[]): void
   clearActivities(): void
 
   // --- attachment queue reconciliation --------------------------------------
